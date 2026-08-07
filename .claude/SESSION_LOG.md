@@ -12430,3 +12430,317 @@ Connector auto-update fix present: `new_version` key, `id`, /update-now reading 
 auto_update_plugin opt-in, sha256 pre-download guard.
 Carried forward: all four scraper markup sources, model retry walk, live pcm_models rows,
 logo demotion, writable_owner_id x9, 0 caller-scoped writes.
+
+## 2026-08-06 — "Connector predates self-update" loop: two hub-side defects, now self-healing
+Reported: brizy.profitmedia.pro shows the predates-self-update message EVERY time, and reverts after a
+manual reinstall.
+
+TWO DEFECTS, and together they explain the loop exactly.
+
+1. THE HUB READ THE WRONG COPY. remote_connector_version() asked for `_fields=name,version` — no
+   `status` — and returned the FIRST plugin whose name matched. The connector package installs to
+   `pcm-connector/pcm-connector.php`; when an older copy already sits at a different plugin path
+   (e.g. a flat `pcm-connector.php`), re-uploading the zip leaves BOTH installed and the OLD one still
+   ACTIVE. Only the active plugin registers the /pcm-conn/v1 routes. So the hub happily reported the new
+   inactive copy's version — "up to date" — while every connector call was served by the old build.
+   That is why reinstalling appeared to change nothing.
+
+2. A 404 WAS TREATED AS TERMINAL. update_connector()/update_connectors() read 404 from /update-now as
+   "this connector predates self-update, go and upload a file by hand" — even when a newer copy was
+   already sitting on the site, one API call away from working.
+
+FIX (hub only — no connector change, so it works against sites running ANY connector build)
+  - NEW remote_connector_plugins(): every copy with plugin path, version and status, sorted newest
+    first by version_compare (not lexically — '3.0.8.220' must beat '3.0.8.9').
+  - remote_connector_version() now reports the ACTIVE copy, falling back to the newest installed so a
+    deactivated connector is not mistaken for an uninstalled one.
+  - NEW activate_newest_connector(): switches to the newest installed copy via
+    PUT /wp/v2/plugins/<plugin> {status:'active'} — `status` is the one plugin field WordPress core's
+    REST API permits writing, so this needs only the app password already in use.
+  - Both update paths now attempt that heal on a 404 and RETRY /update-now before reporting the
+    manual-reinstall message. When nothing newer is installed the message still appears, correctly.
+
+VERIFIED
+- NEW tests/standalone/connector_activation_test.php — 25/25. Section 1 reproduces the reported state
+  (two copies, old one active) and asserts the version reported is the ACTIVE one; section 2 asserts the
+  heal activates the FOLDER copy and the site then runs the new version; sections 3-4 assert no write is
+  issued when there is nothing to switch to (a genuinely old single-copy install still needs the manual
+  step — the fix must not paper over that); section 5 asserts a failed activation degrades with the HTTP
+  status and leaves the active copy untouched; section 7 pins numeric version ordering; section 8 checks
+  both controller paths are wired and the bulk loop resets per site.
+- NEGATIVE CONTROL: restoring the first-match version read fails "version reported is the ACTIVE copy"
+  with got '3.0.8.220' — the misreport itself — exit 1; restored -> 25/25.
+- A BUG I INTRODUCED AND CAUGHT: $heal leaked across iterations of the bulk loop, so a site that healed
+  early would have mislabelled a LATER site's network error as the too-old case. Replaced with a
+  per-iteration $retried flag; there is now a test asserting the leak is gone.
+- php -l clean on both files. Full suite 13/13 PASS. No frontend change.
+- Zip rebuilt (3.50 MB, 685 files); all five behaviours verified inside the archive.
+- NOT verified live: whether brizy actually holds a second inactive copy. If it holds only the one old
+  copy, the manual reinstall is still needed ONCE — but it will now stick, because the hub will read the
+  active copy honestly afterwards.
+
+## 2026-08-06 — Zip build 17:22 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.50 MB, 685 files. Folder had been emptied again.
+dist unchanged at 03:07:57 and still current — the connector self-heal was PHP-only.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Connector self-heal present: remote_connector_plugins, ACTIVE-copy preference, activation via core's
+PUT /wp/v2/plugins/<plugin>, numeric version ordering, wired into both update paths, per-iteration
+retry flag.
+Carried forward: connector new_version + auto_update opt-in, all four scraper markup sources,
+model retry walk, logo demotion.
+
+## 2026-08-06 — Review step now explains each rewrite; ```html can no longer reach the page
+Two reported defects in the SEO optimizer's review step.
+
+1. ```html FRAGMENTS ON THE PAGE. parse_section_reply() stripped only a fence wrapping the WHOLE reply.
+   Two leaks survived: a fence INSIDE the envelope's `html` field, and — the worse one — the fallback
+   `array('value' => $raw)`, which returned the model's reply verbatim whenever the envelope was absent
+   or unparseable. A chatty non-JSON answer therefore became page content, backticks and all.
+   Added strip_code_fences(): removes a wrapping fence, markers left on their own line mid-document,
+   and inline leftovers (```html before ``` so the longer token wins). MARKERS ONLY — content between
+   them survives, so genuinely fenced markup is never destroyed. Applied on EVERY exit of
+   parse_section_reply(), fallback included, plus an empty-after-strip guard that falls back rather
+   than saving a blank section.
+
+2. NO "WHY" ON A CHANGE. Cards showed `what` plus a lowercase teacher tag — which teacher asked, never
+   what the rewrite was for. Everything needed was already in the rail and NO new model call was
+   required: each teacher is grouped `search`|`ai` (TeacherMeta.group) and the run's CompiledDirectives
+   carry `text` + `purposes`. Added to ReviewRail:
+     Category — the teacher's group: SEO (sky) · AI (violet) · BOTH (amber) when the directive behind
+                the change serves purposes spanning both groups.
+     Why      — the compiled directive's own text, preferring one routed at THIS section
+                (targets includes i) over an unrouted one; falls back to the purpose label.
+     What     — c.what, now the emphasised line.
+   Nothing is shown that the run did not itself state.
+
+VERIFIED
+- NEW tests/standalone/seo_review_explain_test.php — 28/28. Fence stripping across 9 shapes (wrapping,
+  language-less, uppercase, mid-document stray, orphan closer, inline, clean-untouched, empty,
+  content-survives); parse_section_reply on all three exits incl. the unparseable fallback; and the
+  verification laws it must NOT have weakened (unverifiable claim still dropped, out-of-run purpose
+  still blanked). Section 3 pins the data contract the UI depends on.
+- NEGATIVE CONTROLS, both: restoring the raw fallback fails 2 checks with the backticks visible in the
+  output; removing the "Why:" line fails the card check. Restored -> 28/28.
+- php -l clean. tsc 59 = baseline, no ReviewRail errors. Build 15.20s.
+- Bundle carries categoryOf x4, purposeOf x2, directiveFor x3, the BOTH badge, and the Why: label.
+- Full suite 14/14 PASS. Zip rebuilt; both fixes verified inside the archive.
+- NOT verified visually — the three-line card has not been seen rendering in the real rail.
+
+## 2026-08-07 — Zip build 02:02 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.50 MB, 686 files. dist current (01:58:52).
+NOTE: past midnight, so the dated copy is now `power-creatives-2026-08-07.zip`; the 08-06 file still
+sitting in that folder is STALE.
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Review-step fixes present: strip_code_fences x3 with BOTH leak paths covered (fallback + envelope html),
+and Category/Why/BOTH in the bundle.
+Carried forward: connector self-heal, connector new_version, all four scraper markup sources,
+model retry walk, logo demotion.
+
+## 2026-08-07 — Optimizer 502s: analyze-all was fanning out 8 concurrent PHP requests
+Reported: every teacher returns "API error: 502" except "Keyword placement — 1 passed".
+
+ROOT CAUSE — analyzeAll() did `teachers.forEach((t) => analyzeOne(t.id))`, firing EVERY teacher
+simultaneously. Each is a PHP request that holds a worker for many seconds while it calls an LLM or an
+external API (SERP/GSC/Ahrefs). Eight at once exhausts the worker pool a typical WordPress host allows
+and the proxy answers 502 for the losers. That explains the exact shape of the report: the ONE fast,
+purely local check (keyword placement) completed and everything slower came back 502. The teachers were
+never broken — they were starved.
+
+FIX (frontend only, no server change)
+- MAX_PARALLEL = 2 with a real worker pool: a queue drained by a fixed number of `await`-ing workers,
+  so the host never sees more than two long analyses at once however many teachers exist. Worker count
+  is also capped by queue length, so a single teacher does not spawn an idle second worker.
+- ONE silent retry on a transient gateway failure (502/503/504, by status or message) after 1.2s. A
+  teacher that lost the race almost always wins a moment later; making the author press retry per
+  section for that is pure friction. 500 is deliberately NOT retried — that is a real fault, and
+  retrying only doubles the wait before showing the same error.
+- The retry re-checks runSeq after the backoff, so a superseded run cannot land a stale result.
+- The failure text now explains itself instead of "API error: 502".
+
+VERIFIED
+- NEW tests/standalone/optimizer_concurrency_test.mjs — 29/29. Transient vs real-fault classification
+  (6 + 5 cases), peak-concurrency measured at 2 for an 8-teacher run with all 8 still executing exactly
+  once, short-queue and empty-queue behaviour, and retry-exactly-once semantics.
+- NEGATIVE CONTROLS, both meaningful: restoring the forEach fan-out fails 3 checks; removing just the
+  `await` inside the worker (which makes the cap cosmetic while still LOOKING like a pool) fails the
+  await check, exit 1. Restored -> 29/29.
+- tsc 59 = baseline, no useOptimizer errors. Build 13.05s. Bundle carries MAX_PARALLEL, the queue
+  drain, isTransient and the new message.
+- Full suite 15/15 PASS. Zip rebuilt; verified inside the archive.
+- NOT verified live: whether 2 is low enough for THIS host. If 502s persist the number is the dial —
+  drop it to 1. Also unverified: whether any individual teacher exceeds the host's max_execution_time
+  on its own, which no amount of queueing fixes.
+
+## 2026-08-07 — Zip build 02:14 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.51 MB, 687 files. Folder had been emptied again.
+dist current (02:12:15).
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Optimizer 502 fix present (MAX_PARALLEL=2, queue drain, isTransient, self-explaining busy message);
+review-step fixes present (strip_code_fences x3, Category/Why in the bundle).
+
+## 2026-08-07 — Optimizer 502s, round 2: the real killer was the 300s LLM timeout vs the gateway
+The new build's message text appeared in the report, which proved two things at once: the deploy landed,
+and the CONCURRENCY theory was insufficient — at 2-at-a-time with a retry, every LLM teacher still
+502'd. All failing (rather than some) means each individual request dies, not the pool.
+
+ROOT CAUSE — no optimizer call passed a timeout, so every analysis rode PCM_LLM's 300-SECOND default
+(blocking_request even raises set_time_limit to match). The HOST'S gateway kills the connection at
+30-120s and serves an HTML 502 page; the shim can't parse it, hence the bare fallback message. The
+one purely-local teacher passing while every LLM teacher failed is exactly this signature.
+Also confirmed before fixing: a cURL timeout propagates out of invoke_json immediately — 
+is_response_format_unsupported() requires the message to mention response_format/json_schema, so the
+three-tier fallback CANNOT cascade on a timeout and multiply the wait.
+
+FIX
+- `PCM_Optimizer_Service::ANALYZE_TIMEOUT = 60` and every analysis LLM call in the module now carries
+  it — 7 invoke_json sites (service compile + 6 teachers) plus the mention teacher's
+  invoke/invoke_with_grounding options. 8 call sites + 1 definition = 9 refs, and the test counts them.
+  A call that exceeds 60s now fails CLEANLY inside PHP: the controller returns its message as JSON, the
+  UI shows a real diagnosis, and the retry button still works.
+- Frontend correction to my previous fix: the "too busy" wording now applies ONLY to a genuine gateway
+  page (the shim's unparseable-body fallback, `^API error: 50[234]`). A 502 WITH a served message — the
+  optimizer controller maps teacher exceptions to 502 — keeps its own words. Without this, the new
+  clean timeout messages would have been buried under "too busy".
+
+VERIFIED
+- optimizer_concurrency_test.mjs 29 -> 36: isGatewayPage classification (3 shapes), the busy-text gate,
+  and a PHP scan asserting all 8 call sites + the 60s const. NEGATIVE CONTROL: removing one teacher's
+  cap fails the count (got 8), exit 1; restored -> 36/36.
+- php -l clean on all 8 touched PHP files. tsc 59 = baseline. Build 17.06s. Full suite 15/15 PASS.
+- Zip rebuilt (3.51 MB, 687 files); 9 cap refs + gate verified inside the archive.
+- HONEST LIMIT: if this host's gateway cuts below ~60s, the boundary moves but the symptom stays; the
+  next dial is ANALYZE_TIMEOUT down to ~25s. And if a teacher's model genuinely needs >60s (huge page,
+  slow model), its clean error will now SAY so — which finally makes the failure diagnosable.
+
+## 2026-08-07 — Zip build 02:24 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.51 MB, 687 files. Folder had been emptied again.
+dist current (02:23:15).
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Optimizer timeout fix present: ANALYZE_TIMEOUT x9 (const 60s + all 8 call sites), isGatewayPage gate,
+MAX_PARALLEL pool. Review-step fixes intact: strip_code_fences x3, Category/Why cards.
+
+## 2026-08-07 — Second admin saw an empty platform: workspace law applied to the missing five
+Reported: logged in as another admin, the platform's data is invisible. "Are the other admins not the
+same thing here?" — they were not, and inconsistently so.
+
+ROOT CAUSE — every table scopes rows per PCM user, and the workspace law ("admins see every X —
+team-wide oversight") had been applied to brands, deliveries and approvals but NEVER to sites,
+strategies, articles, templates, or automation rules. A second admin owns no rows, so those five
+modules rendered empty while Brands looked fine — exactly the confusing half-empty platform reported.
+
+FIX (class-pcm-db.php + automations/service.php)
+- Lists: get_user_sites / get_user_strategies / get_user_articles (both branches) /
+  get_user_templates (both branches) / automations list_rules now return ALL rows for an admin,
+  copying the exact get_user_brands pattern. Non-admins unchanged.
+- Getters: get_site / get_strategy / get_article gained get_brand_by_id's admin fallback — owned
+  first, then admin re-read — because an admin-wide list whose detail view 404s is worse than no list.
+- Writes: update_strategy / update_article / update_site resolve the row's REAL owner for an admin
+  and write by id. Without this the admin's WHERE (caller id) matches zero rows and $wpdb->update
+  returns 0 — reported as TRUE: the fake-save trap from the brands saga, which the new visibility
+  would have walked straight into.
+- Deletes DELIBERATELY stay owner-only, consistent with the brands ruling; flagged, not widened.
+
+VERIFIED
+- NEW tests/standalone/admin_workspace_scope_test.php — 25/25 against a scriptable $wpdb that mimics
+  the one behaviour the bug hinged on (update() returning 0, not false, on a zero-row match).
+  Covers: admin2 sees all rows across the four tables (with status/module filters), plain user still
+  sees only their own, teammate detail views open, admin edits LAND and are written by id, a missing
+  id fails honestly, a plain user still cannot write a foreign row, deletes still owner-scoped.
+- NEGATIVE CONTROL: removing the sites admin branch fails with got: 0 — the reported symptom
+  verbatim; restored -> 25/25.
+- One stub bug found while testing: the fake wpdb ignored module/status WHERE clauses, failing a
+  correct implementation. Fixed the stub, not the code.
+- php -l clean on both files. Full suite 16/16 PASS. No frontend change (dist untouched).
+- Zip rebuilt (3.51 MB, 688 files); 8 team-wide branches + fallbacks verified inside the archive.
+- NOT verified live. Also NOT touched: per-user preference stores (seo_views pins, prompt_overrides,
+  settings, integrations/models keys) — those are correctly personal, and models/integrations already
+  have their own workspace fallback.
+
+## 2026-08-07 — Zip build 17:29 (via scripts/build_zip.py)
+`~/Desktop/powercreatives/power-creatives.zip` — 3.51 MB, 688 files. dist current (02:23:15 — the
+admin-scope fix was PHP-only).
+Verified inside the archive: root `powerplatform/`, main plugin file, 0 app/src, 0 vendor.
+Admin workspace fix present: 11 team-wide list branches, 3 admin getter fallbacks, 3 owner-resolved
+writes, automations admin list. Carried forward: ANALYZE_TIMEOUT 60s, MAX_PARALLEL pool +
+isGatewayPage gate, strip_code_fences x3, Category/Why cards.
+
+## 2026-08-07 — Round 2 of admin workspace: integrations/projects/models + deletes, via the central lever
+Reported: own integrations visible but not the shared ones; same for projects; "scan for the pattern".
+The screenshot's toast told the rest: "Deleted 0, 4 failed" — admin2 tried to delete 4 teammate
+strategies and every delete missed.
+
+SYSTEMATIC SCAN (grep for `userId = %d` SELECTs across includes/) found the full remainder:
+  - get_user_integrations / get_user_models: workspace fallback fired ONLY when the caller owned
+    nothing — an admin with one row of their own lost sight of everything shared. Now: admin sees all.
+  - projects (assets/controller get_projects) + single-asset ownership checks: all ride
+    PCM_Access::scope_clause(), so ONE change — an admin short-circuit in scope_clause() returning
+    `'%d = %d', [1,1]` (placeholder-shaped so every caller's prepare() stays happy) — fixed them all.
+    Audited all 5 callers: brands/deliveries (non-admin path only), projects list, 2 asset checks. 
+  - scraper collections list, copy get_results_for_project: admin branches added.
+  - prompts/settings/seo rules/notifications: per-user by design, left alone.
+
+DELETES — and a REAL BUG MY LAST FIX INTRODUCED: delete_strategy() verified ownership via
+get_strategy(), which NOW admits admins; it then cascade-deleted the strategy_items and ran the parent
+delete WHERE userId = CALLER — which missed. Result: items orphaned, "Deleted 0, N failed". Fixed by
+scoping the final delete to the FETCHED row's owner (identical behaviour for non-admins, whose fetched
+owner is themselves). delete_article / delete_site got the update-path owner-resolution. Deletes are
+now deliberately widened for admins — the user is actively trying to delete teammate strategies.
+
+VERIFIED
+- admin_workspace_scope_test.php 25 -> 33 (fake wpdb gained delete(); its get_var now honours the
+  SELECTed column — it returned the first property and two correct checks failed against the stub).
+  New coverage: admin strategy delete lands WITH its items (no orphans), site/article admin deletes,
+  plain user still blocked, integrations/models all-rows-despite-owning-some, scope_clause lever.
+- NEGATIVE CONTROL: reverting the delete to caller-scoped reproduces the toast exactly (delete false,
+  row survives, items already cascaded), exit 1; restored -> 33/33.
+- php -l clean x4. Full suite 16/16 PASS. No frontend change. Zip rebuilt (3.51 MB, 688 files);
+  all seven behaviours verified inside the archive.
+- NOT DONE, needs a decision: the "dropdowns fixed or moved up" UI ask — ambiguous (which dropdowns,
+  moved where?). Asked the user for one clarifying sentence instead of guessing at a redesign.
+
+## 2026-08-07 — Web version (shortcode SPA) vs wp-admin: model queries scoped to the wrong user
+Reported: works at /wp-admin/admin.php?page=power-creatives, broken at https://create.widgetify.co/ —
+"the models aren't visible here", and the earlier admin-visibility complaints were web-only too.
+
+THE ASYMMETRY. wp-admin resolves the caller to the PCM row `wp_<ID>`, which owns the integrations and
+model rows. The public page authenticates through the shortcode gate cookie
+(base-controller.php:409 get_current_pcm_user) → a DIFFERENT platform user row that owns nothing.
+PCM_DB::get_user_models() already had an admin-owned fallback for exactly this; three other model
+queries did not, so they returned zero rows on the public page ONLY:
+  - models/service.php get_by_capability() — feeds every generation dropdown. THE SCREENSHOT.
+  - optimizer/service.php text_engines() — the SEO AI panel's engines (zero engines = empty panel).
+  - llm/class-pcm-llm.php detect_provider() — worse: compared get_current_user_id() (a WORDPRESS id)
+    against models.userId (a PCM id), two unrelated id spaces. On the shortcode page there is no WP
+    login so it was always 0, never matched, and every model fell through to the prefix heuristic —
+    which defaults to 'openai' and mis-routed any provider without a prefix rule. Provider is a
+    property of the MODEL, identical for every owner, so the user scope was pure loss: removed.
+
+FIX — one shared lever rather than a third copy of the tiering: PCM_Access::model_scope($col,$uid)
+returns {sql, params} shaped exactly like scope_clause(), always ≥1 placeholder so interpolating
+callers keep a valid prepare(). Tiers mirror get_user_models(): admin → every row; owns models →
+own; else → admin-owned fallback. Both call sites now route through it; the i.userId join stays in
+every tier, so a model is still only offered when ITS OWN owner's integration is active. Team-wide
+tiers can surface one modelId from two owners → deduped (the dropdowns key on modelId).
+
+NOT CHANGED, deliberate: scope_clause() (projects/brands/assets) has no such fallback and should not
+get one — those are content, not shared credentials; widening them would leak teammates' work to
+every plain platform user. A web login that needs full oversight must have platform role 'admin'
+(PUT /users/{id}/role, users module). Flagged to the user — I can't read their DB to confirm theirs.
+Also left alone: PCM_LLM lines 96/1335 pass get_current_user_id() as a PCM id, but they only feed
+get_api_key() → PCM_Access::workspace_api_key(), which already falls back to an admin's key.
+
+VERIFIED
+- NEW tests/standalone/model_scope_web_test.php — 30 checks against the REAL PCM_Access (fake $wpdb):
+  three tiers, placeholder/param parity per tier (what actually breaks prepare()), memo doesn't bleed
+  across users, both call sites route through the lever and still require an active integration.
+- NEGATIVE CONTROL, 4/4 caught: re-scoping each call site, reverting detect_provider, and removing
+  the lever's tier-3 fallback each turn the suite red; all restored, 30/30.
+  (Anchors needed \r\n — the tree is 100% CRLF and multi-line \n anchors silently never match.)
+- php -l clean x4. FULL SUITE 20/20 files. npm run build clean. tsc 59 = baseline.
+- Zip via scripts/build_zip.py (3.52 MB, 690 files); all 20 behaviours re-verified INSIDE the archive.
+
+ALSO IN THIS BUILD — the Strategies card layout (owner pick (a)) from the interrupted previous task:
+both control rows moved out of the always-visible header into the expanded settings panel, so a
+collapsed card is one identity row. Recovered from three failed edit attempts via `git checkout --`
+then a tag-depth (not line-arithmetic) move; tests/standalone/strategy_card_layout_test.mjs 39 checks
+on order/containment. UNVERIFIED VISUALLY — no dev server for this WP-embedded SPA.

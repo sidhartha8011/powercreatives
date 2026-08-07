@@ -159,11 +159,31 @@ class PCM_REST_Sites extends PCM_REST_Base
         $code = (int) ($r['status'] ?? 0);
         $body = is_array($r['body'] ?? null) ? $r['body'] : array();
         if ($code === 404) {
-            return $this->error(
-                __('This site’s connector predates self-update (no /update-now). Reinstall the connector once (Download connector), then it self-updates from here on.', 'power-creatives'),
-                409,
-                'pcm_conn_too_old'
-            );
+            // A 404 does NOT necessarily mean the connector is too old — it means
+            // whatever copy is ACTIVE does not serve /update-now. Very often a newer
+            // copy is already installed and simply inactive (re-uploading the zip
+            // when the old copy lived at a different plugin path leaves both). Try
+            // switching to it over the same channel before telling anyone to go and
+            // upload a file by hand.
+            $heal = PCM_Sites_Service::activate_newest_connector($site);
+            if ($heal['switched']) {
+                $r2   = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/update-now', array(), array(), 120);
+                $code = is_wp_error($r2) ? 0 : (int) ($r2['status'] ?? 0);
+                $body = (!is_wp_error($r2) && is_array($r2['body'] ?? null)) ? $r2['body'] : array();
+            }
+            if ($code === 404 || $code === 0) {
+                return $this->error(
+                    $heal['message'] !== '' && !$heal['switched']
+                        ? sprintf(
+                            /* translators: %s: why the self-heal could not run. */
+                            __('This site’s connector does not serve /update-now. %s Reinstall the connector once (Download connector), then it self-updates from here on.', 'power-creatives'),
+                            $heal['message']
+                        )
+                        : __('This site’s connector predates self-update (no /update-now). Reinstall the connector once (Download connector), then it self-updates from here on.', 'power-creatives'),
+                    409,
+                    'pcm_conn_too_old'
+                );
+            }
         }
         if ($code >= 300) {
             return $this->error((string) ($body['message'] ?? ('HTTP ' . $code)), 502, 'pcm_conn_update_failed');
@@ -198,7 +218,22 @@ class PCM_REST_Sites extends PCM_REST_Base
             }
             $code = (int) ($r['status'] ?? 0);
             $body = is_array($r['body'] ?? null) ? $r['body'] : array();
+            // Per-iteration, never carried over: a site that healed earlier in the
+            // loop must not colour how a later site's failure is reported.
+            $retried = false;
             if ($code === 404) {
+                // Same self-heal as the per-site route: activate a newer copy that
+                // is already installed but inactive, then retry, before reporting
+                // this as a manual-reinstall case.
+                $heal = PCM_Sites_Service::activate_newest_connector($site);
+                if ($heal['switched']) {
+                    $retried = true;
+                    $r2   = PCM_Sites_Service::remote_rest($site, 'POST', '/pcm-conn/v1/update-now', array(), array(), 120);
+                    $code = is_wp_error($r2) ? 0 : (int) ($r2['status'] ?? 0);
+                    $body = (!is_wp_error($r2) && is_array($r2['body'] ?? null)) ? $r2['body'] : array();
+                }
+            }
+            if ($code === 404 || ($code === 0 && $retried)) {
                 $results[] = array('id' => (int)$site->id, 'name' => (string)$site->name, 'status' => 'error', 'message' => 'This site’s connector predates self-update (no /update-now). Reinstall the connector once (Download connector), then it self-updates from here on.');
             } elseif ($code >= 300) {
                 $results[] = array('id' => (int)$site->id, 'name' => (string)$site->name, 'status' => 'error', 'message' => (string) ($body['message'] ?? ('HTTP ' . $code)));

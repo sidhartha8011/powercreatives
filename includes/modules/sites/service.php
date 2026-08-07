@@ -331,18 +331,118 @@ class PCM_Sites_Service
      * connector installed, or the plugin list isn't readable by the app-password
      * user). THE single reader — the SEO module delegates here; never duplicate.
      */
+    /**
+     * Every installed copy of the connector on a site, newest first.
+     *
+     * A site can genuinely hold MORE THAN ONE: re-uploading the zip when an older
+     * copy sits at a different plugin path leaves both installed, and only the
+     * ACTIVE one registers the /pcm-conn/v1 routes. Reading just the first match
+     * (as this used to) could report the shiny new inactive copy's version while
+     * the old active one kept serving REST — the hub then showed "up to date"
+     * while every connector call behaved like a pre-self-update build.
+     *
+     * @param object $site Site DB row.
+     * @return array<int,array{plugin:string,version:string,active:bool}> Newest first.
+     */
+    public static function remote_connector_plugins(object $site): array
+    {
+        $res = self::remote_rest($site, 'GET', '/wp/v2/plugins', array('_fields' => 'plugin,name,version,status'));
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return array();
+        }
+        $found = array();
+        foreach ($res['body'] as $plugin) {
+            if (stripos((string) ($plugin['name'] ?? ''), 'Power Creatives Connector') === false) {
+                continue;
+            }
+            $found[] = array(
+                'plugin'  => (string) ($plugin['plugin'] ?? ''),
+                'version' => (string) ($plugin['version'] ?? ''),
+                'active'  => ($plugin['status'] ?? '') === 'active',
+            );
+        }
+        usort($found, static fn($a, $b) => version_compare($b['version'], $a['version']));
+        return $found;
+    }
+
+    /**
+     * The connector version the site is actually RUNNING.
+     *
+     * Prefers the active copy — that is the one serving the routes. Falls back to
+     * the newest installed copy so a deactivated connector still reports something
+     * rather than looking uninstalled.
+     *
+     * @param object $site Site DB row.
+     * @return string Version, or '' when no connector is installed/readable.
+     */
     public static function remote_connector_version(object $site): string
     {
-        $res = self::remote_rest($site, 'GET', '/wp/v2/plugins', array('_fields' => 'name,version'));
-        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
-            return '';
-        }
-        foreach ($res['body'] as $plugin) {
-            if (stripos((string) ($plugin['name'] ?? ''), 'Power Creatives Connector') !== false) {
-                return (string) ($plugin['version'] ?? '');
+        $copies = self::remote_connector_plugins($site);
+        foreach ($copies as $c) {
+            if ($c['active']) {
+                return $c['version'];
             }
         }
-        return '';
+        return (string) ($copies[0]['version'] ?? '');
+    }
+
+    /**
+     * Activate the newest installed connector copy when the running one is older.
+     *
+     * The self-heal for "this connector predates self-update": if a newer copy is
+     * already sitting on the site but inactive, the hub can switch to it over the
+     * SAME app-password channel — `status` is the one plugin field WordPress core's
+     * REST API lets you write — and the new copy brings /update-now with it. This
+     * turns the dead end into a one-call fix with no manual upload.
+     *
+     * @param object $site Site DB row.
+     * @return array{switched:bool,from:string,to:string,message:string}
+     */
+    public static function activate_newest_connector(object $site): array
+    {
+        $out = array('switched' => false, 'from' => '', 'to' => '', 'message' => '');
+        $copies = self::remote_connector_plugins($site);
+        if (count($copies) === 0) {
+            $out['message'] = 'No connector plugin is installed on this site.';
+            return $out;
+        }
+
+        $newest = $copies[0];
+        $active = null;
+        foreach ($copies as $c) {
+            if ($c['active']) { $active = $c; break; }
+        }
+        $out['from'] = (string) ($active['version'] ?? '');
+        $out['to']   = $newest['version'];
+
+        if ($active !== null && $active['plugin'] === $newest['plugin']) {
+            $out['message'] = 'The newest installed connector is already the active one.';
+            return $out;
+        }
+        if ($newest['plugin'] === '') {
+            $out['message'] = 'Could not identify the connector plugin file.';
+            return $out;
+        }
+
+        // Core exposes plugin activation as PUT /wp/v2/plugins/<plugin> {status}.
+        $res = self::remote_rest(
+            $site,
+            'PUT',
+            '/wp/v2/plugins/' . $newest['plugin'],
+            array(),
+            array('status' => 'active'),
+            60
+        );
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300) {
+            $out['message'] = is_wp_error($res)
+                ? $res->get_error_message()
+                : 'Activation failed (HTTP ' . (int) ($res['status'] ?? 0) . ').';
+            return $out;
+        }
+
+        $out['switched'] = true;
+        $out['message']  = 'Activated the newer connector already installed on this site.';
+        return $out;
     }
 
     /**

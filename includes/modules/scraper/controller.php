@@ -80,10 +80,16 @@ class PCM_REST_Scraper extends PCM_REST_Base
         $user = $this->get_current_pcm_user();
         $table = PCM_Schema::prefix() . 'scraped_collections';
 
-        $collections = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM {$table} WHERE userId = %d ORDER BY createdAt DESC",
-            $user->id
-        ));
+        // Admins see every collection (team-wide oversight).
+        if (class_exists('PCM_Access') && PCM_Access::is_admin((int) $user->id)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $collections = $wpdb->get_results("SELECT * FROM {$table} ORDER BY createdAt DESC");
+        } else {
+            $collections = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$table} WHERE userId = %d ORDER BY createdAt DESC",
+                $user->id
+            ));
+        }
 
         // Cast numeric types — wpdb returns everything as strings
         foreach ($collections as &$col) {

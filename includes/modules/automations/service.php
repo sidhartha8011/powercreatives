@@ -661,10 +661,17 @@ class PCM_Automation_Engine
         global $wpdb;
         $table = PCM_Schema::table('automations');
 
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $rows = $wpdb->get_results(
-            $wpdb->prepare("SELECT * FROM {$table} WHERE userId = %d ORDER BY createdAt DESC", $user_id)
-        ) ?: array();
+        // Admins see every user's rules (team-wide oversight — same law as
+        // brands/deliveries/approvals lists).
+        if (class_exists('PCM_Access') && PCM_Access::is_admin($user_id)) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $rows = $wpdb->get_results("SELECT * FROM {$table} ORDER BY createdAt DESC") ?: array();
+        } else {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $rows = $wpdb->get_results(
+                $wpdb->prepare("SELECT * FROM {$table} WHERE userId = %d ORDER BY createdAt DESC", $user_id)
+            ) ?: array();
+        }
 
         return array_map(static function ($row) {
             $config = json_decode((string) $row->config, true);

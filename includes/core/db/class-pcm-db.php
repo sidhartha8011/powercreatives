@@ -302,6 +302,12 @@ class PCM_DB
         return self::cached(self::cache_key('integrations', $user_id), function () use ($user_id) {
             global $wpdb;
             $table = self::t('integrations');
+            // Admins see EVERY integration (team-wide oversight). The fallback
+            // below only fired when the caller owned none — an admin with one
+            // key of their own lost sight of everything added by teammates.
+            if (PCM_Access::is_admin($user_id)) {
+                return $wpdb->get_results("SELECT * FROM {$table} ORDER BY createdAt DESC") ?: array(); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            }
             $own   = $wpdb->get_results(
                 $wpdb->prepare("SELECT * FROM {$table} WHERE userId = %d ORDER BY createdAt DESC", $user_id)
             ) ?: array();
@@ -384,6 +390,11 @@ class PCM_DB
         return self::cached(self::cache_key('models', $user_id), function () use ($user_id) {
             global $wpdb;
             $table = self::t('models');
+            // Admins see EVERY model row (team-wide oversight) — same reasoning
+            // as get_user_integrations above.
+            if (PCM_Access::is_admin($user_id)) {
+                return $wpdb->get_results("SELECT * FROM {$table} ORDER BY sortOrder ASC, displayName ASC") ?: array(); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            }
             $own   = $wpdb->get_results(
                 $wpdb->prepare(
                 "SELECT * FROM {$table} WHERE userId = %d ORDER BY sortOrder ASC, displayName ASC",
@@ -828,7 +839,14 @@ class PCM_DB
             global $wpdb;
             $table = self::t('templates');
 
+            // Admins see every user's templates (team-wide oversight).
+            $is_admin = PCM_Access::is_admin($user_id);
             if ($module) {
+                if ($is_admin) {
+                    return $wpdb->get_results(
+                        $wpdb->prepare("SELECT * FROM {$table} WHERE module = %s ORDER BY name ASC", $module)
+                    );
+                }
                 return $wpdb->get_results(
                     $wpdb->prepare(
                     "SELECT * FROM {$table} WHERE userId = %d AND module = %s ORDER BY name ASC",
@@ -836,6 +854,9 @@ class PCM_DB
                     $module
                 )
                 );
+            }
+            if ($is_admin) {
+                return $wpdb->get_results("SELECT * FROM {$table} ORDER BY name ASC"); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             }
 
             return $wpdb->get_results(
@@ -960,6 +981,10 @@ class PCM_DB
         return self::cached(self::cache_key('strategies', $user_id), function () use ($user_id) {
             global $wpdb;
             $table = self::t('strategies');
+            // Admins see every user's strategies (team-wide oversight).
+            if (PCM_Access::is_admin($user_id)) {
+                return $wpdb->get_results("SELECT * FROM {$table} ORDER BY createdAt DESC"); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            }
             return $wpdb->get_results(
                 $wpdb->prepare(
                 "SELECT * FROM {$table} WHERE userId = %d ORDER BY createdAt DESC",
@@ -980,9 +1005,21 @@ class PCM_DB
     {
         global $wpdb;
         $table = self::t('strategies');
-        return $wpdb->get_row(
+        $row = $wpdb->get_row(
             $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d AND userId = %d", $id, $user_id)
         );
+        if ($row) {
+            return $row;
+        }
+        // Not owned — readable by an admin (team-wide oversight), the same law
+        // get_brand_by_id() applies. Without this the admin-wide LIST below
+        // shows a teammate's row whose detail view then 404s.
+        if (PCM_Access::is_admin($user_id)) {
+            return $wpdb->get_row(
+                $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id)
+            );
+        }
+        return null;
     }
 
     /**
@@ -997,7 +1034,23 @@ class PCM_DB
     {
         global $wpdb;
         $data['updatedAt'] = current_time('mysql');
-        $rows = $wpdb->update(self::t('strategies'), $data, array('id' => $id, 'userId' => $user_id));
+        // An admin may edit a teammate's row. Writing with the CALLER in the
+        // WHERE matches zero rows and $wpdb->update() returns 0 — reported as
+        // success while saving nothing (the brands add_asset lesson). Resolve
+        // the row's real owner: the write lands, and the OWNER's list cache is
+        // the one invalidated.
+        $where = array('id' => $id, 'userId' => $user_id);
+        if (PCM_Access::is_admin($user_id)) {
+            $owner = $wpdb->get_var(
+                $wpdb->prepare('SELECT userId FROM ' . self::t('strategies') . ' WHERE id = %d', $id)
+            );
+            if ($owner === null) {
+                return false;
+            }
+            $where   = array('id' => $id);
+            $user_id = (int) $owner;
+        }
+        $rows = $wpdb->update(self::t('strategies'), $data, $where);
         if ($rows !== false) {
             self::invalidate('strategies', $user_id);
             return true;
@@ -1022,13 +1075,19 @@ class PCM_DB
             return false;
         }
 
+        // The fetched row's owner, not the caller: get_strategy() admits admins,
+        // and deleting WHERE userId = CALLER after passing that check cascaded
+        // the child items and then MISSED the parent — items orphaned, delete
+        // reported failed. For a non-admin the fetched owner is the caller.
+        $owner_id = (int) ($strategy->userId ?? $user_id);
+
         // Delete child items first
         $wpdb->delete(self::t('strategy_items'), array('strategyId' => $id), array('%d'));
 
         // Delete the strategy
-        $rows = $wpdb->delete(self::t('strategies'), array('id' => $id, 'userId' => $user_id), array('%d', '%d'));
+        $rows = $wpdb->delete(self::t('strategies'), array('id' => $id, 'userId' => $owner_id), array('%d', '%d'));
         if ($rows > 0) {
-            self::invalidate('strategies', $user_id);
+            self::invalidate('strategies', $owner_id);
             return true;
         }
         return false;
@@ -1546,7 +1605,14 @@ class PCM_DB
         global $wpdb;
         $table = self::t('articles');
 
+        // Admins see every user's articles (team-wide oversight).
+        $is_admin = PCM_Access::is_admin($user_id);
         if ($status) {
+            if ($is_admin) {
+                return $wpdb->get_results(
+                    $wpdb->prepare("SELECT * FROM {$table} WHERE status = %s ORDER BY updatedAt DESC", $status)
+                );
+            }
             return $wpdb->get_results(
                 $wpdb->prepare(
                 "SELECT * FROM {$table} WHERE userId = %d AND status = %s ORDER BY updatedAt DESC",
@@ -1554,6 +1620,9 @@ class PCM_DB
                 $status
             )
             );
+        }
+        if ($is_admin) {
+            return $wpdb->get_results("SELECT * FROM {$table} ORDER BY updatedAt DESC"); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
         }
 
         return $wpdb->get_results(
@@ -1575,9 +1644,21 @@ class PCM_DB
     {
         global $wpdb;
         $table = self::t('articles');
-        return $wpdb->get_row(
+        $row = $wpdb->get_row(
             $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d AND userId = %d", $id, $user_id)
         );
+        if ($row) {
+            return $row;
+        }
+        // Not owned — readable by an admin (team-wide oversight), the same law
+        // get_brand_by_id() applies. Without this the admin-wide LIST below
+        // shows a teammate's row whose detail view then 404s.
+        if (PCM_Access::is_admin($user_id)) {
+            return $wpdb->get_row(
+                $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id)
+            );
+        }
+        return null;
     }
 
     /**
@@ -1592,7 +1673,23 @@ class PCM_DB
     {
         global $wpdb;
         $data['updatedAt'] = current_time('mysql');
-        $rows = $wpdb->update(self::t('articles'), $data, array('id' => $id, 'userId' => $user_id));
+        // An admin may edit a teammate's row. Writing with the CALLER in the
+        // WHERE matches zero rows and $wpdb->update() returns 0 — reported as
+        // success while saving nothing (the brands add_asset lesson). Resolve
+        // the row's real owner: the write lands, and the OWNER's list cache is
+        // the one invalidated.
+        $where = array('id' => $id, 'userId' => $user_id);
+        if (PCM_Access::is_admin($user_id)) {
+            $owner = $wpdb->get_var(
+                $wpdb->prepare('SELECT userId FROM ' . self::t('articles') . ' WHERE id = %d', $id)
+            );
+            if ($owner === null) {
+                return false;
+            }
+            $where   = array('id' => $id);
+            $user_id = (int) $owner;
+        }
+        $rows = $wpdb->update(self::t('articles'), $data, $where);
         if ($rows !== false) {
             self::invalidate('articles', $user_id);
             return true;
@@ -1610,6 +1707,16 @@ class PCM_DB
     public static function delete_article(int $id, int $user_id): bool
     {
         global $wpdb;
+        // An admin may delete a teammate's row (the same owner-resolution the
+        // update path uses; caller-scoped WHERE misses and reports not-found).
+        if (PCM_Access::is_admin($user_id)) {
+            $owner = $wpdb->get_var(
+                $wpdb->prepare('SELECT userId FROM ' . self::t('articles') . ' WHERE id = %d', $id)
+            );
+            if ($owner !== null) {
+                $user_id = (int) $owner;
+            }
+        }
         $rows = $wpdb->delete(self::t('articles'), array('id' => $id, 'userId' => $user_id), array('%d', '%d'));
         if ($rows > 0) {
             self::invalidate('articles', $user_id);
@@ -1801,6 +1908,10 @@ class PCM_DB
         return self::cached(self::cache_key('sites', $user_id), function () use ($user_id) {
             global $wpdb;
             $table = self::t('sites');
+            // Admins see every user's sites (team-wide oversight).
+            if (PCM_Access::is_admin($user_id)) {
+                return $wpdb->get_results("SELECT * FROM {$table} ORDER BY name ASC"); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            }
             return $wpdb->get_results(
                 $wpdb->prepare("SELECT * FROM {$table} WHERE userId = %d ORDER BY name ASC", $user_id)
             );
@@ -1818,9 +1929,21 @@ class PCM_DB
     {
         global $wpdb;
         $table = self::t('sites');
-        return $wpdb->get_row(
+        $row = $wpdb->get_row(
             $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d AND userId = %d", $id, $user_id)
         );
+        if ($row) {
+            return $row;
+        }
+        // Not owned — readable by an admin (team-wide oversight), the same law
+        // get_brand_by_id() applies. Without this the admin-wide LIST below
+        // shows a teammate's row whose detail view then 404s.
+        if (PCM_Access::is_admin($user_id)) {
+            return $wpdb->get_row(
+                $wpdb->prepare("SELECT * FROM {$table} WHERE id = %d", $id)
+            );
+        }
+        return null;
     }
 
     /**
@@ -1835,7 +1958,23 @@ class PCM_DB
     {
         global $wpdb;
         $data['updatedAt'] = current_time('mysql');
-        $rows = $wpdb->update(self::t('sites'), $data, array('id' => $id, 'userId' => $user_id));
+        // An admin may edit a teammate's row. Writing with the CALLER in the
+        // WHERE matches zero rows and $wpdb->update() returns 0 — reported as
+        // success while saving nothing (the brands add_asset lesson). Resolve
+        // the row's real owner: the write lands, and the OWNER's list cache is
+        // the one invalidated.
+        $where = array('id' => $id, 'userId' => $user_id);
+        if (PCM_Access::is_admin($user_id)) {
+            $owner = $wpdb->get_var(
+                $wpdb->prepare('SELECT userId FROM ' . self::t('sites') . ' WHERE id = %d', $id)
+            );
+            if ($owner === null) {
+                return false;
+            }
+            $where   = array('id' => $id);
+            $user_id = (int) $owner;
+        }
+        $rows = $wpdb->update(self::t('sites'), $data, $where);
         if ($rows !== false) {
             self::invalidate('sites', $user_id);
             return true;
@@ -1853,6 +1992,16 @@ class PCM_DB
     public static function delete_site(int $id, int $user_id): bool
     {
         global $wpdb;
+        // An admin may delete a teammate's row (the same owner-resolution the
+        // update path uses; caller-scoped WHERE misses and reports not-found).
+        if (PCM_Access::is_admin($user_id)) {
+            $owner = $wpdb->get_var(
+                $wpdb->prepare('SELECT userId FROM ' . self::t('sites') . ' WHERE id = %d', $id)
+            );
+            if ($owner !== null) {
+                $user_id = (int) $owner;
+            }
+        }
         $rows = $wpdb->delete(self::t('sites'), array('id' => $id, 'userId' => $user_id), array('%d', '%d'));
         if ($rows > 0) {
             self::invalidate('sites', $user_id);

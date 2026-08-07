@@ -1110,10 +1110,9 @@ export function StrategiesModule() {
               className="rounded-lg overflow-hidden"
               style={{ border: `1px solid ${colors.border}`, background: colors.bgSurface, boxShadow: shadows.card }}
             >
-              {/* Strategy header — two lines so the ~10 controls never squeeze
-                  the title into wrap/overlap chaos: line 1 is identity (name,
-                  badges, meta — full width) + icon utilities; line 2 is every
-                  editing control and action button. */}
+              {/* Strategy header — ONE clean identity row: name, badges, meta,
+                  progress and the icon utilities. Every dropdown and action moved
+                  into the expanded settings panel below. */}
               <div
                 className="px-4 py-2 cursor-pointer"
                 style={{ borderBottom: expandedId === strategy.id ? `1px solid ${colors.borderLight}` : 'none' }}
@@ -1263,345 +1262,346 @@ export function StrategiesModule() {
                   </Button>
                 </div>
               </div>
-
-              {/* Line 2 — every editing control + action button. flex-wrap here
-                  only ever wraps CONTROLS (never the identity line above).
-                  Controls stay h-7 (matching the per-item overrides row and the
-                  Writer module), but they are GROUPED — destination · content ·
-                  workflow · actions — with hairline dividers. Nine same-sized
-                  boxes at gap-1.5 read as one undifferentiated clump; the dividers
-                  give the eye anchors WITHOUT adding height, and gap-y-2 keeps the
-                  wrapped second line from colliding with the first. */}
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5 mt-2.5" onClick={(e) => e.stopPropagation()}>
-
-                {/* Publishing Mode — inline-editable (AutoPress row parity).
-                    Switching an existing draft strategy to Auto-publish makes
-                    FUTURE generations publish; already-completed items get the
-                    per-item Publish button below. */}
-                <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <Select
-                    value={strategy.publishingMode || 'draft'}
-                    onValueChange={(value) => handlePublishingModeChange(strategy.id, value)}
-                  >
-                    <SelectTrigger className="h-7 w-full text-xs bg-card">
-                      <SelectValue placeholder="Draft" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="draft">{PUBLISHING_MODE_LABELS.draft}</SelectItem>
-                      <SelectItem value="publish">{PUBLISHING_MODE_LABELS.publish}</SelectItem>
-                      <SelectItem value="schedule">{PUBLISHING_MODE_LABELS.schedule}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Target Site — inline-editable, merges onto the strategy's
-                    existing config (see handleSiteChange) rather than replacing it.
-                    w-40: hostnames like "massagegoteborg.nu" were truncating at w-32. */}
-                <div className="w-40 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <Select value={siteIdValue} onValueChange={(value) => handleSiteChange(strategy.id, value)}>
-                    <SelectTrigger className="h-7 w-full text-xs bg-card">
-                      <SelectValue placeholder="No site" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {sites.length > 0 ? (
-                        sites.map((s: any) => (
-                          <SelectItem key={s.id} value={String(s.id)}>{s.name || s.url}</SelectItem>
-                        ))
-                      ) : (
-                        <div className="p-2 text-xs text-muted-foreground text-center">
-                          No sites — connect one in Sites
-                        </div>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Reuse source image as featured image — SOCIAL ONLY. Reuse is
-                    implemented by social_source_image() (service.php), which
-                    returns null unless the item config carries `social`; RSS
-                    items never set it, so on an RSS strategy this control could
-                    never reuse anything — it silently fell through to the AI
-                    generator, making the label a lie. RSS (like keyword
-                    strategies, which have never shown this checkbox) toggles
-                    featured images from the strategy settings dialog instead.
-                    Partial config merge; defaults OFF so existing strategies
-                    are unaffected until the user opts in. */}
-                {isSocial && (
-                  <label
-                    className="shrink-0 flex items-center gap-1.5 cursor-pointer text-xs"
-                    style={{ color: colors.textSecondary }}
-                    onClick={(e) => e.stopPropagation()}
-                    title="When enabled, the source post's image is reused as the blog article's featured image."
-                  >
-                    <Checkbox
-                      checked={!!config.featuredImages}
-                      onCheckedChange={(checked) => handleFeaturedImagesChange(strategy.id, checked === true)}
-                      aria-label={`Reuse source image as featured image for ${strategy.name}`}
-                    />
-                    Reuse image
-                  </label>
-                )}
-
-                {/* ── divider: destination │ workflow ── */}
-                <div className="h-5 w-px shrink-0" style={{ background: colors.border }} aria-hidden="true" />
-
-                {/* Approval mode — inline-editable (partial config merge).
-                    Affects items generated AFTER the change. */}
-                <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <Select
-                    value={config.approvalMode || 'none'}
-                    onValueChange={(value) => handleApprovalChange(strategy.id, value)}
-                  >
-                    <SelectTrigger className="h-7 w-full text-xs bg-card">
-                      <SelectValue placeholder="Approvals" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No approval</SelectItem>
-                      <SelectItem value="internal">Internal</SelectItem>
-                      <SelectItem value="client">Client</SelectItem>
-                      <SelectItem value="both">Internal + Client</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Edit schedule — ALWAYS available. This used to render only when
-                    publishingMode was already 'schedule', which was a catch-22: you
-                    could not set a schedule on a Draft/Auto-publish strategy because
-                    the only way in was hidden until it already had one. Saving a
-                    recurrence now also switches the strategy into schedule mode (see
-                    handleRecurrenceSave), so the button always does something. */}
-                <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 w-full justify-start text-xs font-normal bg-card overflow-hidden"
-                    title={strategy.publishingMode === 'schedule'
-                      ? 'Edit the posting schedule'
-                      : 'Set a posting schedule — this switches the strategy to Scheduled'}
-                    onClick={() => setRecurrenceDialog({
-                      strategyId: strategy.id,
-                      value: recurrenceFromConfig(config.scheduleConfig ?? {}),
-                    })}
-                  >
-                    <CalendarClock className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">
-                      {strategy.publishingMode === 'schedule'
-                        ? summarizeRecurrence(recurrenceFromConfig(config.scheduleConfig ?? {}))
-                        : 'Set schedule'}
-                    </span>
-                  </Button>
-                </div>
-
-                {/* ── divider: workflow │ actions ── */}
-                <div className="h-5 w-px shrink-0" style={{ background: colors.border }} aria-hidden="true" />
-
-                {/* Actions */}
-                <div className="flex items-center gap-2 shrink-0">
-                  {strategy.status !== 'completed' && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="h-7"
-                      disabled={bulkStrategyId === strategy.id || generatingItemId === strategy.id}
-                      onClick={() => handleGenerateAll(strategy)}
-                    >
-                      {bulkStrategyId === strategy.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Zap className="w-3.5 h-3.5" />
-                      )}
-                      Generate All
-                    </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7"
-                    disabled={strategy.status === 'completed' || generatingItemId === strategy.id || bulkStrategyId === strategy.id}
-                    onClick={() => handleGenerate(strategy.id)}
-                  >
-                    {generatingItemId === strategy.id ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Play className="w-3.5 h-3.5" />
-                    )}
-                    Generate
-                  </Button>
-                  {/* Scan now — force an immediate pull for RSS/Social strategies,
-                      independent of the auto-scan 4h cadence. */}
-                  {(isRss || isSocial) && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7"
-                      title="Check the source for new posts right now, instead of waiting for the auto-scan"
-                      disabled={scanningId === strategy.id}
-                      onClick={() => handleScanNow(strategy.id)}
-                    >
-                      {scanningId === strategy.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <RefreshCw className="w-3.5 h-3.5" />
-                      )}
-                      {scanningId === strategy.id ? 'Scanning…' : 'Scan now'}
-                    </Button>
-                  )}
-                  {Number(strategy.completedItems) >= 2 && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7"
-                      title="Insert internal links between this strategy's generated articles"
-                      onClick={() => setInterlinkModalStrategy({ id: strategy.id, name: strategy.name, interlinksConfig: parseStrategyConfig(strategy.config)?.interlinksConfig })}
-                    >
-                      <Link2 className="w-3.5 h-3.5" />
-                      Interlinks
-                    </Button>
-                  )}
-                  {/* Pause / Resume generation (D2) — shown while the strategy is
-                      actively working, queued, or already paused. */}
-                  {['in_progress', 'pending', 'paused'].includes(strategy.status) && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7"
-                      title={strategy.status === 'paused' ? 'Resume generation' : 'Pause generation'}
-                      onClick={() => handleTogglePause(strategy.id, strategy.status)}
-                    >
-                      {strategy.status === 'paused' ? (
-                        <Play className="w-3.5 h-3.5" />
-                      ) : (
-                        <Pause className="w-3.5 h-3.5" />
-                      )}
-                      {strategy.status === 'paused' ? 'Resume' : 'Pause'}
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/* Line 3 — GENERATION settings, on their OWN indented line.
-                  Nine identically-shaped boxes on one line read as an
-                  undifferentiated clump, and no amount of gap/divider tuning fixed
-                  that (tried, reported still cluttered). These four are
-                  set-once-and-forget, unlike the day-to-day controls above, so they
-                  drop to a secondary line marked by a left rule and a quiet caption.
-                  Line 2 keeps what you touch often: destination, approval, schedule,
-                  actions. */}
-              <div
-                className="flex flex-wrap items-center gap-x-4 gap-y-2.5 mt-2.5 ml-1 pl-3"
-                style={{ borderLeft: `2px solid ${colors.borderLight}` }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <span
-                  className="shrink-0 mr-1 select-none"
-                  style={{ fontSize: typography.xs, color: colors.textMuted }}
-                >
-                  Generation
-                </span>
-
-                {/* NB every SelectTrigger in these two rows must carry `w-full`.
-                    The shadcn trigger base is `w-fit whitespace-nowrap`, so without
-                    it the trigger sizes to its TEXT and renders WIDER than its w-36
-                    wrapper — "Default image prompt" overflowed by ~26px and
-                    "Default image model" by ~20px, so the pair visually collided no
-                    matter how much gap-x the row had (the spill simply ate it).
-                    With w-full the trigger obeys the wrapper and the base's
-                    `select-value:line-clamp-1` clips the label instead. */}
-
-                {/* Template (prompt) — inline-editable; drives generation for
-                    items generated AFTER the change. */}
-                <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <Select
-                    value={strategy.templateId ? String(strategy.templateId) : ''}
-                    onValueChange={(value) => handleTemplateChange(strategy.id, value)}
-                  >
-                    <SelectTrigger className="h-7 w-full text-xs bg-card">
-                      <SelectValue placeholder="Template" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {templates.length > 0 ? (
-                        templates.map((t: any) => (
-                          <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                        ))
-                      ) : (
-                        <div className="p-2 text-xs text-muted-foreground text-center">
-                          No Writer templates
-                        </div>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Text AI model — which model WRITES each article. Pairs with the
-                    content Template on its left. "Default" = the server's own default.
-                    w-36: the "Default text model" option truncated at w-28. */}
-                <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <Select
-                    value={config.model ? String(config.model) : 'default'}
-                    onValueChange={(value) => handleTextModelChange(strategy.id, value === 'default' ? '' : value)}
-                  >
-                    <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model writes each article">
-                      <SelectValue placeholder="Text model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="default">Default text model</SelectItem>
-                      {textModels.map((m: any) => (
-                        <SelectItem key={m.modelId} value={m.modelId}>
-                          {(m.customName || m.originalName || m.modelId)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Image prompt template (module 'image') — the wording used to
-                    generate each article's featured image. "Default prompt" keeps the
-                    built-in sentence, so this is purely opt-in.
-                    w-36: the "Default image prompt" option truncated at w-32. */}
-                <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <Select
-                    value={config.imageTemplateId ? String(config.imageTemplateId) : 'default'}
-                    onValueChange={(value) => handleImageTemplateChange(strategy.id, value === 'default' ? '' : value)}
-                  >
-                    <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which template writes the featured-image prompt">
-                      <SelectValue placeholder="Image prompt" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="default">Default image prompt</SelectItem>
-                      {imageTemplates.map((t: any) => (
-                        <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Image AI model — which model DRAWS the featured image. Sits beside
-                    the Image prompt so the pair (wording + model) reads together.
-                    w-36: the "Default image model" option truncated at w-28. */}
-                <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <Select
-                    value={config.imageModel ? String(config.imageModel) : 'default'}
-                    onValueChange={(value) => handleImageModelChange(strategy.id, value === 'default' ? '' : value)}
-                  >
-                    <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model generates the featured image">
-                      <SelectValue placeholder="Image model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="default">Default image model</SelectItem>
-                      {imageModels.map((m: any) => (
-                        <SelectItem key={m.modelId} value={m.modelId}>
-                          {(m.customName || m.originalName || m.modelId)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
               </div>
 
               {/* Expanded items list */}
               {expandedId === strategy.id && strategy.items && (
                 <div style={{ background: colors.bgPage }}>
+                  <div
+                    className="px-4 py-3"
+                    style={{ background: colors.bgSurface, borderBottom: `1px solid ${colors.borderLight}` }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                  {/* SETTINGS PANEL (owner pick (a), 2026-08-07): every per-strategy control
+                      lives behind the expand now, so a collapsed card is ONE identity row.
+                      Four cards of ten dropdowns each was the reported problem. Same controls,
+                      same handlers, same grouping — only the mount point moved. */}
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5" onClick={(e) => e.stopPropagation()}>
+
+                    {/* Publishing Mode — inline-editable (AutoPress row parity).
+                        Switching an existing draft strategy to Auto-publish makes
+                        FUTURE generations publish; already-completed items get the
+                        per-item Publish button below. */}
+                    <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Select
+                        value={strategy.publishingMode || 'draft'}
+                        onValueChange={(value) => handlePublishingModeChange(strategy.id, value)}
+                      >
+                        <SelectTrigger className="h-7 w-full text-xs bg-card">
+                          <SelectValue placeholder="Draft" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="draft">{PUBLISHING_MODE_LABELS.draft}</SelectItem>
+                          <SelectItem value="publish">{PUBLISHING_MODE_LABELS.publish}</SelectItem>
+                          <SelectItem value="schedule">{PUBLISHING_MODE_LABELS.schedule}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Target Site — inline-editable, merges onto the strategy's
+                        existing config (see handleSiteChange) rather than replacing it.
+                        w-40: hostnames like "massagegoteborg.nu" were truncating at w-32. */}
+                    <div className="w-40 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Select value={siteIdValue} onValueChange={(value) => handleSiteChange(strategy.id, value)}>
+                        <SelectTrigger className="h-7 w-full text-xs bg-card">
+                          <SelectValue placeholder="No site" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {sites.length > 0 ? (
+                            sites.map((s: any) => (
+                              <SelectItem key={s.id} value={String(s.id)}>{s.name || s.url}</SelectItem>
+                            ))
+                          ) : (
+                            <div className="p-2 text-xs text-muted-foreground text-center">
+                              No sites — connect one in Sites
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Reuse source image as featured image — SOCIAL ONLY. Reuse is
+                        implemented by social_source_image() (service.php), which
+                        returns null unless the item config carries `social`; RSS
+                        items never set it, so on an RSS strategy this control could
+                        never reuse anything — it silently fell through to the AI
+                        generator, making the label a lie. RSS (like keyword
+                        strategies, which have never shown this checkbox) toggles
+                        featured images from the strategy settings dialog instead.
+                        Partial config merge; defaults OFF so existing strategies
+                        are unaffected until the user opts in. */}
+                    {isSocial && (
+                      <label
+                        className="shrink-0 flex items-center gap-1.5 cursor-pointer text-xs"
+                        style={{ color: colors.textSecondary }}
+                        onClick={(e) => e.stopPropagation()}
+                        title="When enabled, the source post's image is reused as the blog article's featured image."
+                      >
+                        <Checkbox
+                          checked={!!config.featuredImages}
+                          onCheckedChange={(checked) => handleFeaturedImagesChange(strategy.id, checked === true)}
+                          aria-label={`Reuse source image as featured image for ${strategy.name}`}
+                        />
+                        Reuse image
+                      </label>
+                    )}
+
+                    {/* ── divider: destination │ workflow ── */}
+                    <div className="h-5 w-px shrink-0" style={{ background: colors.border }} aria-hidden="true" />
+
+                    {/* Approval mode — inline-editable (partial config merge).
+                        Affects items generated AFTER the change. */}
+                    <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Select
+                        value={config.approvalMode || 'none'}
+                        onValueChange={(value) => handleApprovalChange(strategy.id, value)}
+                      >
+                        <SelectTrigger className="h-7 w-full text-xs bg-card">
+                          <SelectValue placeholder="Approvals" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No approval</SelectItem>
+                          <SelectItem value="internal">Internal</SelectItem>
+                          <SelectItem value="client">Client</SelectItem>
+                          <SelectItem value="both">Internal + Client</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Edit schedule — ALWAYS available. This used to render only when
+                        publishingMode was already 'schedule', which was a catch-22: you
+                        could not set a schedule on a Draft/Auto-publish strategy because
+                        the only way in was hidden until it already had one. Saving a
+                        recurrence now also switches the strategy into schedule mode (see
+                        handleRecurrenceSave), so the button always does something. */}
+                    <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 w-full justify-start text-xs font-normal bg-card overflow-hidden"
+                        title={strategy.publishingMode === 'schedule'
+                          ? 'Edit the posting schedule'
+                          : 'Set a posting schedule — this switches the strategy to Scheduled'}
+                        onClick={() => setRecurrenceDialog({
+                          strategyId: strategy.id,
+                          value: recurrenceFromConfig(config.scheduleConfig ?? {}),
+                        })}
+                      >
+                        <CalendarClock className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">
+                          {strategy.publishingMode === 'schedule'
+                            ? summarizeRecurrence(recurrenceFromConfig(config.scheduleConfig ?? {}))
+                            : 'Set schedule'}
+                        </span>
+                      </Button>
+                    </div>
+
+                    {/* ── divider: workflow │ actions ── */}
+                    <div className="h-5 w-px shrink-0" style={{ background: colors.border }} aria-hidden="true" />
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {strategy.status !== 'completed' && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="h-7"
+                          disabled={bulkStrategyId === strategy.id || generatingItemId === strategy.id}
+                          onClick={() => handleGenerateAll(strategy)}
+                        >
+                          {bulkStrategyId === strategy.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Zap className="w-3.5 h-3.5" />
+                          )}
+                          Generate All
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7"
+                        disabled={strategy.status === 'completed' || generatingItemId === strategy.id || bulkStrategyId === strategy.id}
+                        onClick={() => handleGenerate(strategy.id)}
+                      >
+                        {generatingItemId === strategy.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Play className="w-3.5 h-3.5" />
+                        )}
+                        Generate
+                      </Button>
+                      {/* Scan now — force an immediate pull for RSS/Social strategies,
+                          independent of the auto-scan 4h cadence. */}
+                      {(isRss || isSocial) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7"
+                          title="Check the source for new posts right now, instead of waiting for the auto-scan"
+                          disabled={scanningId === strategy.id}
+                          onClick={() => handleScanNow(strategy.id)}
+                        >
+                          {scanningId === strategy.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          )}
+                          {scanningId === strategy.id ? 'Scanning…' : 'Scan now'}
+                        </Button>
+                      )}
+                      {Number(strategy.completedItems) >= 2 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7"
+                          title="Insert internal links between this strategy's generated articles"
+                          onClick={() => setInterlinkModalStrategy({ id: strategy.id, name: strategy.name, interlinksConfig: parseStrategyConfig(strategy.config)?.interlinksConfig })}
+                        >
+                          <Link2 className="w-3.5 h-3.5" />
+                          Interlinks
+                        </Button>
+                      )}
+                      {/* Pause / Resume generation (D2) — shown while the strategy is
+                          actively working, queued, or already paused. */}
+                      {['in_progress', 'pending', 'paused'].includes(strategy.status) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7"
+                          title={strategy.status === 'paused' ? 'Resume generation' : 'Pause generation'}
+                          onClick={() => handleTogglePause(strategy.id, strategy.status)}
+                        >
+                          {strategy.status === 'paused' ? (
+                            <Play className="w-3.5 h-3.5" />
+                          ) : (
+                            <Pause className="w-3.5 h-3.5" />
+                          )}
+                          {strategy.status === 'paused' ? 'Resume' : 'Pause'}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Line 3 — GENERATION settings, on their OWN indented line.
+                      Nine identically-shaped boxes on one line read as an
+                      undifferentiated clump, and no amount of gap/divider tuning fixed
+                      that (tried, reported still cluttered). These four are
+                      set-once-and-forget, unlike the day-to-day controls above, so they
+                      drop to a secondary line marked by a left rule and a quiet caption.
+                      Line 2 keeps what you touch often: destination, approval, schedule,
+                      actions. */}
+                  <div
+                    className="flex flex-wrap items-center gap-x-4 gap-y-2.5 mt-2.5 ml-1 pl-3"
+                    style={{ borderLeft: `2px solid ${colors.borderLight}` }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span
+                      className="shrink-0 mr-1 select-none"
+                      style={{ fontSize: typography.xs, color: colors.textMuted }}
+                    >
+                      Generation
+                    </span>
+
+                    {/* NB every SelectTrigger in these two rows must carry `w-full`.
+                        The shadcn trigger base is `w-fit whitespace-nowrap`, so without
+                        it the trigger sizes to its TEXT and renders WIDER than its w-36
+                        wrapper — "Default image prompt" overflowed by ~26px and
+                        "Default image model" by ~20px, so the pair visually collided no
+                        matter how much gap-x the row had (the spill simply ate it).
+                        With w-full the trigger obeys the wrapper and the base's
+                        `select-value:line-clamp-1` clips the label instead. */}
+
+                    {/* Template (prompt) — inline-editable; drives generation for
+                        items generated AFTER the change. */}
+                    <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Select
+                        value={strategy.templateId ? String(strategy.templateId) : ''}
+                        onValueChange={(value) => handleTemplateChange(strategy.id, value)}
+                      >
+                        <SelectTrigger className="h-7 w-full text-xs bg-card">
+                          <SelectValue placeholder="Template" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {templates.length > 0 ? (
+                            templates.map((t: any) => (
+                              <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                            ))
+                          ) : (
+                            <div className="p-2 text-xs text-muted-foreground text-center">
+                              No Writer templates
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Text AI model — which model WRITES each article. Pairs with the
+                        content Template on its left. "Default" = the server's own default.
+                        w-36: the "Default text model" option truncated at w-28. */}
+                    <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Select
+                        value={config.model ? String(config.model) : 'default'}
+                        onValueChange={(value) => handleTextModelChange(strategy.id, value === 'default' ? '' : value)}
+                      >
+                        <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model writes each article">
+                          <SelectValue placeholder="Text model" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Default text model</SelectItem>
+                          {textModels.map((m: any) => (
+                            <SelectItem key={m.modelId} value={m.modelId}>
+                              {(m.customName || m.originalName || m.modelId)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Image prompt template (module 'image') — the wording used to
+                        generate each article's featured image. "Default prompt" keeps the
+                        built-in sentence, so this is purely opt-in.
+                        w-36: the "Default image prompt" option truncated at w-32. */}
+                    <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Select
+                        value={config.imageTemplateId ? String(config.imageTemplateId) : 'default'}
+                        onValueChange={(value) => handleImageTemplateChange(strategy.id, value === 'default' ? '' : value)}
+                      >
+                        <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which template writes the featured-image prompt">
+                          <SelectValue placeholder="Image prompt" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Default image prompt</SelectItem>
+                          {imageTemplates.map((t: any) => (
+                            <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Image AI model — which model DRAWS the featured image. Sits beside
+                        the Image prompt so the pair (wording + model) reads together.
+                        w-36: the "Default image model" option truncated at w-28. */}
+                    <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Select
+                        value={config.imageModel ? String(config.imageModel) : 'default'}
+                        onValueChange={(value) => handleImageModelChange(strategy.id, value === 'default' ? '' : value)}
+                      >
+                        <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model generates the featured image">
+                          <SelectValue placeholder="Image model" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Default image model</SelectItem>
+                          {imageModels.map((m: any) => (
+                            <SelectItem key={m.modelId} value={m.modelId}>
+                              {(m.customName || m.originalName || m.modelId)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  </div>
                   {/* Item bulk bar — appears once at least one item in THIS strategy
                       is ticked. Linking opens the same interlink modal the row button
                       uses; Delete and Duplicate run per item and report a combined

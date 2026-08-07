@@ -88,6 +88,13 @@ class PCM_Access
      */
     public static function scope_clause(string $user_column, string $id_column, int $user_id, array $granted_ids): array
     {
+        // Admins are workspace-wide (team-wide oversight): the clause matches
+        // every row. `%d = %d` rather than a bare 1=1 keeps every caller's
+        // $wpdb->prepare() happy — several interpolate this into queries whose
+        // ONLY placeholders come from here.
+        if (self::is_admin($user_id)) {
+            return array('sql' => '%d = %d', 'params' => array(1, 1));
+        }
         if (empty($granted_ids)) {
             return array('sql' => "{$user_column} = %d", 'params' => array($user_id));
         }
@@ -95,6 +102,56 @@ class PCM_Access
         return array(
             'sql'    => "({$user_column} = %d OR {$id_column} IN ({$placeholders}))",
             'params' => array_merge(array($user_id), array_map('intval', $granted_ids)),
+        );
+    }
+
+    /**
+     * Whose MODEL rows $user_id may see, as a WHERE fragment shaped exactly
+     * like scope_clause() — array{sql: string, params: array}, always carrying
+     * at least one placeholder so callers that interpolate it keep a valid
+     * $wpdb->prepare().
+     *
+     * Models and integrations are workspace resources stored per-owner, so a
+     * caller who holds no keys of their own must still see the workspace's.
+     * The tiers mirror PCM_DB::get_user_models():
+     *   1. admin       → every row (team-wide oversight);
+     *   2. owns models → their own;
+     *   3. otherwise   → admin-owned rows (shared-workspace fallback).
+     *
+     * Tier 3 is what the SHORTCODE SPA depends on. A gate login resolves to a
+     * different platform user row than wp-admin's `wp_<ID>` and owns nothing,
+     * so any model query hard-scoped to the caller returns zero rows there
+     * while wp-admin looks perfect — which is exactly how the model dropdowns
+     * came to be empty on the public page only.
+     *
+     * @param string $column  Column holding the model owner id (e.g. 'm.userId').
+     * @param int    $user_id PCM user id.
+     * @return array{sql: string, params: array}
+     */
+    public static function model_scope(string $column, int $user_id): array
+    {
+        if (self::is_admin($user_id)) {
+            return array('sql' => '%d = %d', 'params' => array(1, 1));
+        }
+
+        $key = 'ownsmodels:' . $user_id;
+        if (!isset(self::$memo[$key])) {
+            global $wpdb;
+            $models = PCM_Schema::table('models');
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            self::$memo[$key] = array((bool) $wpdb->get_var($wpdb->prepare(
+                "SELECT 1 FROM {$models} WHERE userId = %d LIMIT 1",
+                $user_id
+            )));
+        }
+        if (self::$memo[$key][0]) {
+            return array('sql' => "{$column} = %d", 'params' => array($user_id));
+        }
+
+        $users = PCM_Schema::table('users');
+        return array(
+            'sql'    => "({$column} IN (SELECT id FROM {$users} WHERE role = 'admin') AND %d = %d)",
+            'params' => array(1, 1),
         );
     }
 

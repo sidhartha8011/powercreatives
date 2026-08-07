@@ -112,6 +112,7 @@ class PCM_Teacher_Search implements PCM_Optimizer_Teacher
         );
 
         $parsed = PCM_LLM::invoke_json($messages, $schema, array(
+            'timeout'  => PCM_Optimizer_Service::ANALYZE_TIMEOUT,
             'model'    => (string) ($context['model'] ?? '') ?: null,
             'provider' => (string) ($context['provider'] ?? '') ?: null,
             'user_id'  => (int) ($context['userId'] ?? 0),

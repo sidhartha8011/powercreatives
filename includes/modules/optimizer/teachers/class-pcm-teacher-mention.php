@@ -177,6 +177,7 @@ class PCM_Teacher_Mention implements PCM_Optimizer_Teacher
 
         $messages = array(array('role' => 'user', 'content' => $prompt));
         $options  = array(
+            'timeout'    => PCM_Optimizer_Service::ANALYZE_TIMEOUT,
             'model'      => $engine['model'],
             'provider'   => $engine['provider'],
             'user_id'    => $user_id,

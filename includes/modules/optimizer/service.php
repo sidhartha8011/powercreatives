@@ -26,6 +26,19 @@ if (!defined('ABSPATH')) {
 
 class PCM_Optimizer_Service
 {
+    /**
+     * Per-attempt cap (seconds) on every analysis LLM call.
+     *
+     * Without it these calls ride PCM_LLM's 300s default while the HOST'S
+     * gateway kills the connection at 30-120s and answers 502 for the whole
+     * request — which is how every slow teacher failed at once while the one
+     * purely-local check passed. A timeout inside the gateway window fails
+     * CLEANLY instead: the exception propagates (a cURL timeout never reads
+     * as a response_format rejection, so the json tier-fallback does not
+     * cascade) and the UI gets a real message plus its retry.
+     */
+    public const ANALYZE_TIMEOUT = 60;
+
     /** Option holding the editable checklist data (seeded on first read). */
     private const CHECKLISTS_OPTION = 'pcm_optimizer_checklists';
 
@@ -234,6 +247,7 @@ class PCM_Optimizer_Service
         );
 
         $parsed = PCM_LLM::invoke_json($messages, $schema, array(
+            'timeout'  => PCM_Optimizer_Service::ANALYZE_TIMEOUT,
             'model'    => (string) ($context['model'] ?? '') ?: null,
             'provider' => (string) ($context['provider'] ?? '') ?: null,
             'user_id'  => (int) ($context['userId'] ?? 0),
@@ -1114,12 +1128,17 @@ class PCM_Optimizer_Service
         global $wpdb;
         $models       = PCM_Schema::table('models');
         $integrations = PCM_Schema::table('integrations');
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        // Workspace-scoped for the same reason workspace_api_key() above is:
+        // a gate-login (shortcode SPA) user owns no models, so a per-user
+        // lookup found ZERO engines and the whole AI panel came back empty on
+        // the public page while wp-admin worked.
+        $scope = PCM_Access::model_scope('m.userId', $user_id);
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT m.provider, m.modelId, m.costTier FROM {$models} m
              INNER JOIN {$integrations} i ON i.provider = m.provider AND i.userId = m.userId AND i.isActive = 1
-             WHERE m.userId = %d AND m.canGenerateText = 1 AND m.isEnabled = 1",
-            $user_id
+             WHERE {$scope['sql']} AND m.canGenerateText = 1 AND m.isEnabled = 1",
+            ...$scope['params']
         ));
         $tier_rank = array('budget' => 0, 'standard' => 1, 'premium' => 2);
         $by_provider = array();

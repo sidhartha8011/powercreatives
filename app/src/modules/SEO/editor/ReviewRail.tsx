@@ -9,6 +9,7 @@
 
 import { useState } from 'react';
 import { Check, Loader2, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { GROUP_PILLS, TEACHER_PILLS, type CompiledDirective, type TeacherMeta } from '../optimizer/types';
 import type { ReviewSection } from './types';
 
@@ -56,6 +57,39 @@ export function ReviewRail({
     if (s.status === 'failed') return true; // failures always show — honesty law
     if (s.status === 'diff' && (s.changes?.length ?? 0) > 0) return (s.changes ?? []).some((c) => changeMatches(c.why));
     return (s.directives ?? []).some((d) => d.purposes.some(tagMatches));
+  };
+
+  /**
+   * The directive that produced a change: the run's own to-do line for this
+   * purpose, preferring one routed at this section over an unrouted one.
+   * That text IS the purpose in the run's words — better than a bare tag.
+   */
+  const directiveFor = (why: string, sectionIdx: number): CompiledDirective | undefined => {
+    const all = runDirectives ?? [];
+    const serving = all.filter((d) => d.purposes.includes(why));
+    return serving.find((d) => (d.targets ?? []).includes(sectionIdx))
+      ?? serving.find((d) => (d.targets ?? []).length === 0)
+      ?? serving[0];
+  };
+
+  /**
+   * SEO · AI · BOTH. The rail already groups every teacher as `search` (search
+   * optimization) or `ai`, so the category is that group — and BOTH when the
+   * directive behind the change serves purposes from both sides at once.
+   */
+  const categoryOf = (why: string, sectionIdx: number): string => {
+    if (why === '') return '';
+    const purposes = directiveFor(why, sectionIdx)?.purposes ?? [why];
+    const groups = new Set(purposes.map(tagGroup));
+    if (groups.size > 1) return 'BOTH';
+    return groups.has('ai') ? 'AI' : 'SEO';
+  };
+
+  /** Why the change was made — the directive's wording, else the purpose label. */
+  const purposeOf = (why: string, sectionIdx: number): string => {
+    const text = directiveFor(why, sectionIdx)?.text?.trim();
+    if (text) return text;
+    return teacherById[why]?.label ?? TEACHER_PILLS[why] ?? why;
   };
 
   /** The Update-proposal note: revert the unticked, keep everything else. */
@@ -272,11 +306,29 @@ export function ReviewRail({
                         onChange={() => onToggleKept(i, k)}
                         className="mt-[2px] h-3 w-3 accent-green-600"
                       />
+                      {/* Category · Why · What (owner request 2026-08-06): the
+                          bare purpose tag said WHICH teacher asked but never
+                          what the rewrite was for, so a reviewer had to take
+                          each edit on faith. Category and Why are derived from
+                          the run's own compiled directives — no extra model
+                          call, and nothing shown that the run did not state. */}
                       <span className="min-w-0 text-[10px] leading-4 text-slate-500">
-                        {c.what}
                         {c.why !== '' && (
-                          <span className="ml-1 text-[8px] italic text-slate-400">
-                            {(teacherById[c.why]?.label ?? TEACHER_PILLS[c.why] ?? c.why).toLowerCase()}
+                          <span
+                            className={cn(
+                              'mr-1 inline-block rounded-sm px-1 py-px align-[1px] text-[8px] font-semibold uppercase tracking-wide',
+                              categoryOf(c.why, i) === 'AI' ? 'bg-violet-100 text-violet-700'
+                                : categoryOf(c.why, i) === 'BOTH' ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-sky-100 text-sky-700',
+                            )}
+                          >
+                            {categoryOf(c.why, i)}
+                          </span>
+                        )}
+                        <span className="font-medium text-slate-600">{c.what}</span>
+                        {c.why !== '' && (
+                          <span className="mt-px block text-[9px] leading-3.5 text-slate-400">
+                            Why: {purposeOf(c.why, i)}
                           </span>
                         )}
                       </span>

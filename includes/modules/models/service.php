@@ -463,15 +463,38 @@ class PCM_Models_Service
         $models_table = PCM_Schema::table('models');
         $integrations_table = PCM_Schema::table('integrations');
 
-        $sql = $wpdb->prepare(
+        // Owner scoping via the shared lever, so this query and the Models page
+        // (PCM_DB::get_user_models) can never drift apart again. They HAD
+        // drifted: only this one stayed hard-scoped to `m.userId = caller`, so
+        // wp-admin (caller owns the keys) looked perfect while the shortcode
+        // SPA — whose gate login is a DIFFERENT platform user row owning
+        // nothing — rendered every model dropdown empty.
+        // The i.userId join stays: a model is only offered when ITS OWN
+        // owner's integration for that provider is still active.
+        $scope = PCM_Access::model_scope('m.userId', $user_id);
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $models = $wpdb->get_results($wpdb->prepare(
             "SELECT m.* FROM {$models_table} m
              INNER JOIN {$integrations_table} i ON m.provider = i.provider AND m.userId = i.userId
-             WHERE m.userId = %d AND m.isEnabled = 1 AND m.{$capability_col} = 1 AND i.isActive = 1
+             WHERE {$scope['sql']} AND m.isEnabled = 1 AND m.{$capability_col} = 1 AND i.isActive = 1
              ORDER BY m.sortOrder ASC, m.displayName ASC",
-            $user_id
-        );
+            ...$scope['params']
+        )) ?: array();
 
-        $models = $wpdb->get_results($sql);
+        // The team-wide and fallback tiers can surface the SAME modelId from
+        // two owners (two people each added a fal key). The dropdowns key on
+        // modelId, so collapse to the first — ordering already put the
+        // lowest sortOrder first.
+        $seen = array();
+        $models = array_values(array_filter($models, function ($model) use (&$seen) {
+            $key = (string) $model->modelId;
+            if (isset($seen[$key])) {
+                return false;
+            }
+            $seen[$key] = true;
+            return true;
+        }));
 
         // Filter by enabledModules — map content type to module name
         // (text → copy, image → image, video → video)

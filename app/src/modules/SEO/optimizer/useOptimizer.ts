@@ -45,6 +45,44 @@ export interface UseOptimizer {
 
 const IDLE: TeacherRun = { status: 'idle', items: [] };
 
+/**
+ * How many teachers may be in flight at once.
+ *
+ * "Analyze all" used to fire EVERY teacher simultaneously. Each one is a PHP
+ * request that calls an LLM or an external API and holds a worker for many
+ * seconds, so eight at once exhausts the pool a typical WordPress host allows
+ * and the proxy answers 502 for the rest — which is exactly what a run looked
+ * like: the single fast local check passed, everything slower came back
+ * "API error: 502". Two at a time keeps the wall-clock benefit of overlapping
+ * without ever asking the host for more workers than it has.
+ */
+const MAX_PARALLEL = 2;
+
+/** Backoff before the single automatic retry. */
+const RETRY_DELAY_MS = 1200;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * A gateway/overload failure — transient by nature, so worth one silent retry.
+ * Deliberately NOT 500: that is the server reporting a real fault, and retrying
+ * it just doubles the wait before showing the same error.
+ */
+/**
+ * The shim's no-JSON fallback ("API error: 502 Bad Gateway") — the proxy
+ * answered with an HTML page instead of our API. Only THIS shape earns the
+ * generic "too busy" wording; a served JSON error keeps its own message.
+ */
+const isGatewayPage = (e: unknown): boolean =>
+  e instanceof Error && /^API error: 50[234]/.test(e.message);
+
+const isTransient = (e: unknown): boolean => {
+  const status = (e as { status?: number } | null)?.status;
+  if (status === 502 || status === 503 || status === 504) return true;
+  const msg = e instanceof Error ? e.message : String(e ?? '');
+  return /\b(50[234])\b|bad gateway|gateway time-?out|service unavailable/i.test(msg);
+};
+
 export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
   const teachersQuery = trpc.optimizer.teachers.useQuery(undefined, { staleTime: 60_000 });
   const teachers: TeacherMeta[] = Array.isArray((teachersQuery.data as any)?.teachers)
@@ -57,56 +95,91 @@ export function useOptimizer(args: UseOptimizerArgs): UseOptimizer {
   // Guard against out-of-order results: only the LATEST run per teacher lands.
   const runSeq = useRef<Record<string, number>>({});
 
-  const analyzeOne = useCallback((teacherId: string) => {
+  const analyzeOne = useCallback(async (teacherId: string): Promise<void> => {
     const seq = (runSeq.current[teacherId] = (runSeq.current[teacherId] ?? 0) + 1);
     setRuns((cur) => ({ ...cur, [teacherId]: { status: 'running', items: cur[teacherId]?.items ?? [] } }));
-    analyzeMutation
-      .mutateAsync({
-        teacherId,
-        siteId: args.siteId,
-        postId: args.postId,
-        html: args.getHtml(),
-        pageType: args.pageType,
-        model: args.model,
-        provider: args.provider,
-        keywords: args.getKeywords(),
-        pages: args.pages,
-      })
-      .then((res: any) => {
-        if (runSeq.current[teacherId] !== seq) return; // superseded — drop
-        const items: OptimizerItem[] = Array.isArray(res?.items) ? res.items : [];
-        // THE PEEK: what this run was actually given (server-reported).
-        const context = res?.contextUsed && typeof res.contextUsed === 'object' ? res.contextUsed : undefined;
-        setRuns((cur) => ({ ...cur, [teacherId]: { status: 'done', items, context } }));
-        // Fresh gaps come PRE-TICKED (owner spec); resolved ones leave the
-        // basket. An informational finding without a directive (e.g. "no
-        // primary keyword set", an unreachable engine) can't ride the
-        // basket — it renders, but never ticks.
-        setBasket((cur) => {
-          const next = new Set(cur);
-          items.forEach((it) => {
-            if (it.found && it.instruction !== '') next.add(itemKey(it));
-            else next.delete(itemKey(it));
-          });
-          return next;
+
+    const send = () => analyzeMutation.mutateAsync({
+      teacherId,
+      siteId: args.siteId,
+      postId: args.postId,
+      html: args.getHtml(),
+      pageType: args.pageType,
+      model: args.model,
+      provider: args.provider,
+      keywords: args.getKeywords(),
+      pages: args.pages,
+    });
+
+    try {
+      let res: any;
+      try {
+        res = await send();
+      }
+      catch (e) {
+        // One silent retry for a busy gateway. A teacher that lost the race for
+        // a worker almost always succeeds a moment later, and making the author
+        // press retry per section for that is pure friction.
+        if (!isTransient(e)) throw e;
+        await sleep(RETRY_DELAY_MS);
+        if (runSeq.current[teacherId] !== seq) return; // superseded while waiting
+        res = await send();
+      }
+
+      if (runSeq.current[teacherId] !== seq) return; // superseded — drop
+      const items: OptimizerItem[] = Array.isArray(res?.items) ? res.items : [];
+      // THE PEEK: what this run was actually given (server-reported).
+      const context = res?.contextUsed && typeof res.contextUsed === 'object' ? res.contextUsed : undefined;
+      setRuns((cur) => ({ ...cur, [teacherId]: { status: 'done', items, context } }));
+      // Fresh gaps come PRE-TICKED (owner spec); resolved ones leave the
+      // basket. An informational finding without a directive (e.g. "no
+      // primary keyword set", an unreachable engine) can't ride the
+      // basket — it renders, but never ticks.
+      setBasket((cur) => {
+        const next = new Set(cur);
+        items.forEach((it) => {
+          if (it.found && it.instruction !== '') next.add(itemKey(it));
+          else next.delete(itemKey(it));
         });
-      })
-      .catch((e: unknown) => {
-        if (runSeq.current[teacherId] !== seq) return;
-        setRuns((cur) => ({
-          ...cur,
-          [teacherId]: {
-            status: 'failed',
-            items: cur[teacherId]?.items ?? [],
-            error: e instanceof Error ? e.message : 'Analysis failed',
-          },
-        }));
+        return next;
       });
+    }
+    catch (e: unknown) {
+      if (runSeq.current[teacherId] !== seq) return;
+      setRuns((cur) => ({
+        ...cur,
+        [teacherId]: {
+          status: 'failed',
+          items: cur[teacherId]?.items ?? [],
+          // A bare "API error: 502" is the shim's fallback for an UNPARSEABLE
+          // body — a real gateway page — and deserves the plain-language line.
+          // A 502 WITH a message is the server reporting an actual fault (the
+          // optimizer controller maps teacher exceptions to 502, e.g. an LLM
+          // timeout), and hiding that behind "too busy" buries the diagnosis.
+          error: isGatewayPage(e)
+            ? 'The site was too busy to answer (502). Already retried once — press retry to try again.'
+            : (e instanceof Error ? e.message : 'Analysis failed'),
+        },
+      }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [args.siteId, args.postId, args.pageType, args.model, args.provider, args.pages]);
 
   const analyzeAll = useCallback(() => {
-    teachers.forEach((t) => analyzeOne(t.id));
+    // A bounded worker pool, NOT forEach: see MAX_PARALLEL. The queue is drained
+    // by a fixed number of workers, so the host never sees more than that many
+    // long-running analyses at once however many teachers exist.
+    const queue = teachers.map((t) => t.id);
+    const drain = async (): Promise<void> => {
+      for (;;) {
+        const id = queue.shift();
+        if (id === undefined) return;
+        await analyzeOne(id);
+      }
+    };
+    void Promise.all(
+      Array.from({ length: Math.min(MAX_PARALLEL, queue.length) }, drain),
+    );
   }, [teachers, analyzeOne]);
 
   const toggle = useCallback((item: OptimizerItem) => {

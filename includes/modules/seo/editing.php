@@ -1988,9 +1988,43 @@ class PCM_SEO_Editing
      * @param bool     $expected Whether the envelope was requested at all.
      * @return array{value:string,changes:array<int,array{what:string,why:string,quote:string}>}
      */
+    /**
+     * Remove markdown code-fence markers from a value destined for the PAGE.
+     *
+     * The section contract forbids fences, but models emit them anyway — as a
+     * wrapper, as a stray ```html on its own line mid-document, or inside the
+     * envelope's html field. Any of those reaches the reader as literal
+     * backticks once the HTML is served.
+     *
+     * Only the MARKERS are removed, never the content between them: if the model
+     * genuinely fenced markup it wanted kept, the markup survives.
+     *
+     * @param string $html Model output.
+     * @return string The same value with fence markers gone.
+     */
+    private static function strip_code_fences(string $html): string
+    {
+        $out = trim($html);
+        if ($out === '') {
+            return '';
+        }
+        // A fence wrapping the whole value.
+        if (preg_match('/^```[a-zA-Z0-9]*\s*(.*?)\s*```$/s', $out, $m)) {
+            $out = trim($m[1]);
+        }
+        // Markers left on their own line mid-document.
+        $out = (string) preg_replace('/^[ 	]*```[a-zA-Z0-9]*[ 	]*\R?/m', '', $out);
+        // Anything still inline, longest token first so ```html goes before ```.
+        $out = str_ireplace(array('```html', '```'), '', $out);
+        return trim($out);
+    }
+
     public static function parse_section_reply(string $raw, array $purposes = array(), bool $expected = true): array
     {
-        $fallback = array('value' => $raw, 'changes' => array());
+        // Fences are stripped on EVERY exit, including this one. When the envelope
+        // is absent or unparseable the raw reply becomes the page content verbatim,
+        // which is how "```html" ended up rendered on live pages.
+        $fallback = array('value' => self::strip_code_fences($raw), 'changes' => array());
         if (!$expected) {
             return $fallback;
         }
@@ -2004,7 +2038,12 @@ class PCM_SEO_Editing
         if (!is_array($decoded) || !isset($decoded['html']) || !is_string($decoded['html']) || trim($decoded['html']) === '') {
             return $fallback;
         }
-        $value      = trim($decoded['html']);
+        // The wrapping fence was handled above, but a model that emits
+        // ```html INSIDE the html field slipped it straight onto the page.
+        $value      = self::strip_code_fences((string) $decoded['html']);
+        if ($value === '') {
+            return $fallback;
+        }
         $norm       = static fn(string $s): string => strtolower(trim((string) preg_replace('/\s+/u', ' ', $s)));
         $value_text = $norm(wp_strip_all_tags($value));
         $allowed    = array_map('sanitize_key', $purposes);

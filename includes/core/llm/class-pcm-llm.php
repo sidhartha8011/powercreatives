@@ -1697,14 +1697,21 @@ class PCM_LLM
             return self::$provider_cache[$model_id];
         }
 
-        // 2. DB lookup — pcm_models stores the authoritative provider per model
+        // 2. DB lookup — pcm_models stores the authoritative provider per model.
+        //    NOT scoped by user, deliberately: a model's provider is a property
+        //    of the MODEL, identical for every owner, so scoping only ever
+        //    caused misses. The previous scope was doubly wrong — it compared
+        //    get_current_user_id() (a WORDPRESS user id) against models.userId
+        //    (a PCM user id), two unrelated id spaces that line up only by
+        //    coincidence. On the shortcode SPA there is no WP login at all, so
+        //    it was always 0, this lookup never matched, and every model fell
+        //    through to the prefix heuristic below — which defaults to 'openai'
+        //    and therefore mis-routed any provider it has no prefix rule for.
         global $wpdb;
         $table = PCM_Schema::table('models');
-        $user_id = get_current_user_id();
         $db_provider = $wpdb->get_var($wpdb->prepare(
-            "SELECT provider FROM {$table} WHERE modelId = %s AND userId = %d LIMIT 1",
-            $model_id,
-            $user_id
+            "SELECT provider FROM {$table} WHERE modelId = %s AND provider <> '' ORDER BY id ASC LIMIT 1",
+            $model_id
         ));
 
         if (!empty($db_provider)) {

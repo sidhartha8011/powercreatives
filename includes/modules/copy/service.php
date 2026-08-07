@@ -972,11 +972,21 @@ class PCM_Copy_Service
 
         $result_table = PCM_Schema::table('copy_results');
 
-        $results = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM $result_table WHERE projectId = %d AND userId = %d ORDER BY id DESC",
-            $project_id,
-            $user_id
-        ));
+        // Admins read the whole project's results (team-wide oversight) — the
+        // project itself is already workspace-visible to them, and a userId
+        // filter here emptied a teammate's project on open.
+        if (class_exists('PCM_Access') && PCM_Access::is_admin($user_id)) {
+            $results = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM $result_table WHERE projectId = %d ORDER BY id DESC",
+                $project_id
+            ));
+        } else {
+            $results = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM $result_table WHERE projectId = %d AND userId = %d ORDER BY id DESC",
+                $project_id,
+                $user_id
+            ));
+        }
 
         return array_map(function ($row) {
             $raw = !empty($row->rawResponse) ? json_decode($row->rawResponse, true) : array();
