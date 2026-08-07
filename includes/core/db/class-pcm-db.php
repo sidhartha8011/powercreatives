@@ -83,24 +83,58 @@ class PCM_DB
      * Deletes the primary list cache key. For tables with variant
      * queries (e.g. templates with module filter), also clears those.
      *
+     * ALSO clears every ADMIN's cache key for the table: the admin branch of
+     * each cached list getter (get_user_strategies etc.) returns team-wide
+     * rows, yet the transient is keyed by the CALLER — so any write to any
+     * row stales every admin's cached list, not just the row owner's.
+     * Before this, an edit from the shortcode SPA (whose gate-login admin is
+     * a DIFFERENT PCM user than the wp_<ID> row owner) wrote correctly,
+     * invalidated only the owner, and the editor's own refetch served the
+     * 300s-old transient — every dropdown said "Strategy updated" and then
+     * snapped back to the old value. wp-admin never showed it because there
+     * caller == owner, so the one key cleared was the one being read.
+     *
      * Public so cross-cutting features (e.g. delivery assignments granting
      * access) can bust a user's cached lists when their visible set changes.
      *
      * @param string $table   Short table name.
-     * @param int    $user_id User ID.
+     * @param int    $user_id User ID (the row owner).
      *
      * @return void
      */
     public static function invalidate(string $table, int $user_id): void
     {
-        delete_transient(self::cache_key($table, $user_id));
+        $ids = array_unique(array_merge(array($user_id), self::admin_user_ids()));
+        foreach ($ids as $uid) {
+            delete_transient(self::cache_key($table, $uid));
 
-        // Templates have module-filtered variants
-        if ('templates' === $table) {
-            foreach (array('copy', 'image', 'video', 'brands', 'scraper') as $module) {
-                delete_transient(self::cache_key($table, $user_id, $module));
+            // Templates have module-filtered variants
+            if ('templates' === $table) {
+                foreach (array('copy', 'image', 'video', 'brands', 'scraper') as $module) {
+                    delete_transient(self::cache_key($table, $uid, $module));
+                }
             }
         }
+    }
+
+    /**
+     * Ids of every admin platform user — the callers whose cached lists are
+     * team-wide and must therefore be busted on ANY write. Memoized per
+     * request: invalidate() runs on every write, and the admin set cannot
+     * change mid-request (set_role is itself a request).
+     *
+     * @return int[]
+     */
+    private static function admin_user_ids(): array
+    {
+        static $memo = null;
+        if ($memo === null) {
+            global $wpdb;
+            $users = self::t('users');
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $memo = array_map('intval', $wpdb->get_col("SELECT id FROM {$users} WHERE role = 'admin'") ?: array());
+        }
+        return $memo;
     }
 
     /**

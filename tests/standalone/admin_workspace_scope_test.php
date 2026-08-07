@@ -100,6 +100,19 @@ class FakeWpdb {
         }
         return $out;
     }
+    public function get_col($sql) {
+        $this->queries[] = $sql;
+        $out = array();
+        foreach ($this->select($sql) as $row) {
+            $arr = (array) $row;
+            if (preg_match('/SELECT\s+([a-zA-Z_]+)\s+FROM/i', $sql, $c) && array_key_exists($c[1], $arr)) {
+                $out[] = $arr[$c[1]];
+            } else {
+                $out[] = reset($arr);
+            }
+        }
+        return $out;
+    }
     public function delete($table, $where, $formats = null) {
         $n = 0;
         $keep = array();

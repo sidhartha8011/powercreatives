@@ -12744,3 +12744,34 @@ both control rows moved out of the always-visible header into the expanded setti
 collapsed card is one identity row. Recovered from three failed edit attempts via `git checkout --`
 then a tag-depth (not line-arithmetic) move; tests/standalone/strategy_card_layout_test.mjs 39 checks
 on order/containment. UNVERIFIED VISUALLY — no dev server for this WP-embedded SPA.
+
+## 2026-08-07 — Web version dropdowns: "Strategy updated" toast but the value snaps back (stale admin cache)
+Reported: on the shortcode SPA, EVERY per-strategy dropdown saves with a success toast but keeps
+showing the old value; identical edits work in wp-admin.
+
+CAUSE — the write landed, the READ was stale. The seven cached list getters (integrations, models,
+brands, deliveries, templates, strategies, sites) key their 300s transient by the CALLER
+(`pcm_<table>_u<caller>`), while last round's owner-resolved writes invalidate the row OWNER's key.
+wp-admin: caller == owner (`wp_<ID>`), cleared key == read key → fresh. Web: gate-login admin is a
+DIFFERENT PCM user → the caller's own transient survived the write, and the frontend's post-save
+refetch (Strategies/index.tsx:362 onSuccess → refetch) faithfully re-served the 300s-old list. The
+DB was right all along — waiting out the TTL would have shown the new value.
+
+FIX (central, cache layer): PCM_DB::invalidate() now clears the owner's key AND every admin's key —
+admins read team-wide lists, so ANY write stales ALL of them (this also fixes admin-A-edits/
+admin-B-stays-stale, which existed even between two wp-admin sessions). New private
+admin_user_ids(): one `role='admin'` query, memoized per request. Plain users' keys untouched.
+No frontend change — its refetch logic was correct.
+
+VERIFIED
+- NEW tests/standalone/stale_admin_cache_test.php (10 checks) — the FIRST harness whose transients
+  actually STORE. Two harness lessons folded in:
+  (1) the sibling admin_workspace_scope_test stubs get_transient()=>false, which is why the whole
+      staleness class was invisible to it (its FakeWpdb gained get_col for admin_user_ids);
+  (2) storing live object references let update()'s in-place mutation "update" the cache and the
+      first negative control MISSED — transients now serialize/unserialize, modeling WP's
+      options-table round-trip, and staleness became reproducible.
+- NEGATIVE CONTROL: single-key invalidate → 3 failures, headlined by the exact symptom
+  ("REFETCH SHOWS THE NEW VALUE" fails); restored → 10/10.
+- php -l clean. FULL SUITE 21/21 files. Zip rebuilt; admin_user_ids + merged-ids invalidate +
+  prior model_scope fix all verified INSIDE the archive.

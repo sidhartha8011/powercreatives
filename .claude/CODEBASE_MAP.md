@@ -714,7 +714,7 @@ replaced by `merge_strategy_config()`, so a partial PATCH preserves everything e
 |---|---|---|
 | `PCM_Settings` | `core/class-pcm-settings.php` | Single-`wp_options` wrapper (`OPTION_KEY='pcm_settings'`); get/set/set_many/install_defaults. |
 | `PCM_Schema` | `core/db/class-pcm-schema.php` | dbDelta DDL for all tables; `prefix()='wp_pcm_'`, `table($short)`; migration helpers. |
-| `PCM_DB` | `core/db/class-pcm-db.php` | Typed CRUD (users/integrations/models/brands/deliveries/templates/strategies+items/articles+revisions/sites); 5-min transient cache + invalidation; atomic claim/complete/reclaim for strategy items. |
+| `PCM_DB` | `core/db/class-pcm-db.php` | Typed CRUD (users/integrations/models/brands/deliveries/templates/strategies+items/articles+revisions/sites); 5-min transient cache keyed per CALLER + invalidation; atomic claim/complete/reclaim for strategy items. **Cache law**: list getters have team-wide admin branches, so `invalidate()` busts the owner's key AND every admin's key (`admin_user_ids()`, memoized). Any new cached getter/write must keep this pairing — invalidating only the owner made shortcode-SPA edits (gate admin ≠ row owner) save correctly then snap back on refetch. |
 | `PCM_Hierarchy` | `core/class-pcm-hierarchy.php` | Source of truth for Brand→Delivery→Project→Site chain (all derived LIVE, never stored). `for_project()` returns `{projectId,deliveryId,brandId,siteId}`. |
 | `PCM_GSC` | `core/class-pcm-gsc.php` | Zero-dep Google Search Console client (SA-JWT OR OAuth refresh-token); page/query stats, list/match/add/verify property. |
 | `PCM_Providers` | `core/class-pcm-providers.php` | Static provider metadata registry (apiKeyUrl, knownModels, capability flags). |
