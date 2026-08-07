@@ -50,6 +50,10 @@ import { toast } from 'sonner';
 import { escapeAstralDeep } from '@/lib/escapeAstral';
 
 import { CustomCardEditor } from './CustomCardEditor';
+import {
+  isApprovalEditorOverlayOpen,
+  preventApprovalEditorOverlayDismiss,
+} from './approvalEditorOverlayBoundary';
 import { laneOptions } from '../kanban/setColumns';
 import { APPROVAL_STATUSES, type ApprovalStatus } from '../types';
 
@@ -211,11 +215,9 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
         className="sm:max-w-[min(64rem,calc(100vw-4rem))] max-h-[92vh] flex flex-col overflow-hidden"
         // Keep the dialog open while interacting with the WordPress media library frame or the
         // image annotator (both portal to <body>).
-        onInteractOutside={(e) => {
-          const t = e.target as HTMLElement | null;
-          if (t?.closest?.('.media-modal, .media-frame, .media-modal-backdrop, .wp-core-ui, [data-pcm-annotator]')) {
-            e.preventDefault();
-          }
+        onInteractOutside={preventApprovalEditorOverlayDismiss}
+        onEscapeKeyDown={(event) => {
+          if (isApprovalEditorOverlayOpen()) event.preventDefault();
         }}
       >
         <DialogHeader className="shrink-0">
@@ -261,12 +263,7 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
                   className="w-[min(30rem,calc(100vw-3rem))] p-4"
                   // The WP media frame and the annotator portal to <body>; without
                   // this, interacting with them would dismiss the share step.
-                  onInteractOutside={(e) => {
-                    const t = e.target as HTMLElement | null;
-                    if (t?.closest?.('.media-modal, .media-frame, .media-modal-backdrop, .wp-core-ui, [data-pcm-annotator]')) {
-                      e.preventDefault();
-                    }
-                  }}
+                  onInteractOutside={preventApprovalEditorOverlayDismiss}
                 >
                   <ApprovalSharePanel
                     setId={created.id}

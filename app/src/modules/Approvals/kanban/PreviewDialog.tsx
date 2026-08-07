@@ -21,6 +21,10 @@ import {
 
 import type { ApprovalSet } from '../types';
 import { ClientReviewPage } from '../components/ClientReviewPage';
+import {
+  isApprovalEditorOverlayOpen,
+  preventApprovalEditorOverlayDismiss,
+} from '../components/approvalEditorOverlayBoundary';
 
 export interface PreviewDialogProps {
   set: ApprovalSet | null;
@@ -60,6 +64,10 @@ export function PreviewDialog({ set, url, onClose }: PreviewDialogProps) {
         unstyled
         className="fixed inset-0 z-50 flex items-center justify-center p-[5vh_2.5vw] outline-none"
         showCloseButton={false}
+        onInteractOutside={preventApprovalEditorOverlayDismiss}
+        onEscapeKeyDown={(event) => {
+          if (isApprovalEditorOverlayOpen()) event.preventDefault();
+        }}
         onPointerDown={(event) => {
           if (event.target === event.currentTarget) onClose();
         }}

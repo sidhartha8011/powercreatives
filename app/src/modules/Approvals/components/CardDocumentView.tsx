@@ -23,6 +23,7 @@ import { toast } from 'sonner';
 
 import { useDebouncedSave } from '@/hooks/useDebouncedSave';
 import { CustomCardEditor } from './CustomCardEditor';
+import { isApprovalEditorOverlayOpen } from './approvalEditorOverlayBoundary';
 
 /** Everything on this sheet that is stored. One shape, one save. */
 export interface CardDocumentDraft {
@@ -252,7 +253,11 @@ export function CardDocumentView({
         .map((element) => ({ element, inert: element.inert }))
       : [];
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented) {
+      if (
+        event.key === 'Escape'
+        && !event.defaultPrevented
+        && !isApprovalEditorOverlayOpen()
+      ) {
         event.preventDefault();
         closeInBackgroundRef.current();
       }
@@ -365,13 +370,6 @@ export function CardDocumentView({
               </div>
             )}
 
-            {/* EDITING is the authoring surface that already exists — the same
-                `CustomCardEditor` the create dialog uses, which is itself the
-                Writer's editor: the shared Tiptap extensions, the Writer's
-                bubble menu, the checklist / image / annotate / draw tools. No
-                second editor, no second set of extensions, no second toolbar.
-                `bare` drops its own card chrome because the Notion sheet around
-                it already IS the surface. */}
             {/* ONE editor, two modes.
                 This is `CustomCardEditor` — the same surface the "New approval
                 set" dialog authors on, which is itself the Writer's editor: the
