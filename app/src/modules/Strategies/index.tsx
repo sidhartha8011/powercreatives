@@ -1110,15 +1110,16 @@ export function StrategiesModule() {
               className="rounded-lg overflow-hidden"
               style={{ border: `1px solid ${colors.border}`, background: colors.bgSurface, boxShadow: shadows.card }}
             >
-              {/* Strategy header — ONE clean identity row: name, badges, meta,
-                  progress and the icon utilities. Every dropdown and action moved
-                  into the expanded settings panel below. */}
+              {/* Strategy header. Collapsed: ONE clean identity row (name, badges, meta,
+                  progress, icon utilities). Expanded: the day-to-day controls surface UP
+                  HERE beside the title (design note 2026-08-08 — no padded strip below),
+                  with the set-once GENERATION line tucked underneath. */}
               <div
-                className="px-4 py-2 cursor-pointer"
+                className="px-4 py-1.5 cursor-pointer"
                 style={{ borderBottom: expandedId === strategy.id ? `1px solid ${colors.borderLight}` : 'none' }}
                 onClick={() => toggleExpand(strategy.id)}
               >
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                 {/* Bulk-select checkbox — leftmost; stops row-toggle propagation */}
                 <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
                   <Checkbox
@@ -1202,87 +1203,20 @@ export function StrategiesModule() {
                     </div>
                   )}
                 </div>
-
-                {/* Progress — belongs beside the item count, not in the
-                    control line. */}
-                <div className="w-24 shrink-0 hidden sm:block">
-                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: colors.bgHover }}>
-                    <div
-                      className="h-full rounded-full transition-all duration-300"
-                      style={{
-                        width: `${strategy.totalItems > 0 ? (strategy.completedItems / strategy.totalItems) * 100 : 0}%`,
-                        background: strategy.status === 'completed' ? statusColors.ready.text : colors.primary,
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Icon utilities — rare, destructive-or-config actions stay
-                    small and out of the main control line. */}
-                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  {/* Parent / anchor settings editor (G1) */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    title="Strategy settings — every option from the create dialog"
-                    onClick={() => setSettingsStrategy(strategy)}
-                  >
-                    <Settings2 className="w-3.5 h-3.5" />
-                  </Button>
-                  {/* Duplicate strategy (E1) */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    title="Duplicate this strategy"
-                    disabled={duplicateMutation.isPending}
-                    onClick={() => handleDuplicate(strategy.id)}
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </Button>
-                  {/* Sync published status from WordPress (D3) — only worth
-                      offering once at least one item has actually published. */}
-                  {(strategy.items ?? []).some((it) => !!it.articlePublishedUrl) && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="Check published items' status on WordPress"
-                      disabled={syncStatusMutation.isPending}
-                      onClick={() => handleSyncStatus(strategy.id)}
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${syncStatusMutation.isPending ? 'animate-spin' : ''}`} />
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDelete(strategy.id, strategy.name)}
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-              </div>
-
-              {/* Expanded items list */}
-              {expandedId === strategy.id && strategy.items && (
-                <div style={{ background: colors.bgPage }}>
-                  <div
-                    className="px-4 py-3"
-                    style={{ background: colors.bgSurface, borderBottom: `1px solid ${colors.borderLight}` }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                  {/* SETTINGS PANEL (owner pick (a), 2026-08-07): every per-strategy control
-                      lives behind the expand now, so a collapsed card is ONE identity row.
-                      Four cards of ten dropdowns each was the reported problem. Same controls,
-                      same handlers, same grouping — only the mount point moved. */}
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5" onClick={(e) => e.stopPropagation()}>
+                {/* Controls — UP in the header row (design note 2026-08-08): they fill
+                    the empty space beside the title instead of a padded strip below, so
+                    the expanded card stays short. ml-auto pushes them right; on narrower
+                    screens the whole cluster wraps to its own line. Same h-7/text-xs
+                    tokens as the per-item Inherit selects. Still expand-gated — a
+                    collapsed card remains one clean identity row (owner pick (a)). */}
+                {expandedId === strategy.id && (
+                  <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5 ml-auto min-w-0" onClick={(e) => e.stopPropagation()}>
 
                     {/* Publishing Mode — inline-editable (AutoPress row parity).
                         Switching an existing draft strategy to Auto-publish makes
                         FUTURE generations publish; already-completed items get the
                         per-item Publish button below. */}
-                    <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <div className="w-28 shrink-0" onClick={(e) => e.stopPropagation()}>
                       <Select
                         value={strategy.publishingMode || 'draft'}
                         onValueChange={(value) => handlePublishingModeChange(strategy.id, value)}
@@ -1482,126 +1416,192 @@ export function StrategiesModule() {
                       )}
                     </div>
                   </div>
+                )}
 
-                  {/* Line 3 — GENERATION settings, on their OWN indented line.
-                      Nine identically-shaped boxes on one line read as an
-                      undifferentiated clump, and no amount of gap/divider tuning fixed
-                      that (tried, reported still cluttered). These four are
-                      set-once-and-forget, unlike the day-to-day controls above, so they
-                      drop to a secondary line marked by a left rule and a quiet caption.
-                      Line 2 keeps what you touch often: destination, approval, schedule,
-                      actions. */}
-                  <div
-                    className="flex flex-wrap items-center gap-x-4 gap-y-2.5 mt-2.5 ml-1 pl-3"
-                    style={{ borderLeft: `2px solid ${colors.borderLight}` }}
-                    onClick={(e) => e.stopPropagation()}
+                {/* Progress — belongs beside the item count, not in the
+                    control line. */}
+                <div className="w-24 shrink-0 hidden sm:block">
+                  <div className="h-1.5 rounded-full overflow-hidden" style={{ background: colors.bgHover }}>
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${strategy.totalItems > 0 ? (strategy.completedItems / strategy.totalItems) * 100 : 0}%`,
+                        background: strategy.status === 'completed' ? statusColors.ready.text : colors.primary,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Icon utilities — rare, destructive-or-config actions stay
+                    small and out of the main control line. */}
+                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  {/* Parent / anchor settings editor (G1) */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Strategy settings — every option from the create dialog"
+                    onClick={() => setSettingsStrategy(strategy)}
                   >
-                    <span
-                      className="shrink-0 mr-1 select-none"
-                      style={{ fontSize: typography.xs, color: colors.textMuted }}
+                    <Settings2 className="w-3.5 h-3.5" />
+                  </Button>
+                  {/* Duplicate strategy (E1) */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Duplicate this strategy"
+                    disabled={duplicateMutation.isPending}
+                    onClick={() => handleDuplicate(strategy.id)}
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </Button>
+                  {/* Sync published status from WordPress (D3) — only worth
+                      offering once at least one item has actually published. */}
+                  {(strategy.items ?? []).some((it) => !!it.articlePublishedUrl) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      title="Check published items' status on WordPress"
+                      disabled={syncStatusMutation.isPending}
+                      onClick={() => handleSyncStatus(strategy.id)}
                     >
-                      Generation
-                    </span>
+                      <RefreshCw className={`w-3.5 h-3.5 ${syncStatusMutation.isPending ? 'animate-spin' : ''}`} />
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(strategy.id, strategy.name)}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+              {expandedId === strategy.id && (<>
+                {/* Line 3 — GENERATION settings, on their OWN indented line.
+                    Nine identically-shaped boxes on one line read as an
+                    undifferentiated clump, and no amount of gap/divider tuning fixed
+                    that (tried, reported still cluttered). These four are
+                    set-once-and-forget, unlike the day-to-day controls above, so they
+                    drop to a secondary line marked by a left rule and a quiet caption.
+                    Line 2 keeps what you touch often: destination, approval, schedule,
+                    actions. */}
+                <div
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1.5 mt-1.5 ml-1 pl-3"
+                  style={{ borderLeft: `2px solid ${colors.borderLight}` }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <span
+                    className="shrink-0 mr-1 select-none"
+                    style={{ fontSize: typography.xs, color: colors.textMuted }}
+                  >
+                    Generation
+                  </span>
 
-                    {/* NB every SelectTrigger in these two rows must carry `w-full`.
-                        The shadcn trigger base is `w-fit whitespace-nowrap`, so without
-                        it the trigger sizes to its TEXT and renders WIDER than its w-36
-                        wrapper — "Default image prompt" overflowed by ~26px and
-                        "Default image model" by ~20px, so the pair visually collided no
-                        matter how much gap-x the row had (the spill simply ate it).
-                        With w-full the trigger obeys the wrapper and the base's
-                        `select-value:line-clamp-1` clips the label instead. */}
+                  {/* NB every SelectTrigger in these two rows must carry `w-full`.
+                      The shadcn trigger base is `w-fit whitespace-nowrap`, so without
+                      it the trigger sizes to its TEXT and renders WIDER than its w-36
+                      wrapper — "Default image prompt" overflowed by ~26px and
+                      "Default image model" by ~20px, so the pair visually collided no
+                      matter how much gap-x the row had (the spill simply ate it).
+                      With w-full the trigger obeys the wrapper and the base's
+                      `select-value:line-clamp-1` clips the label instead. */}
 
-                    {/* Template (prompt) — inline-editable; drives generation for
-                        items generated AFTER the change. */}
-                    <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <Select
-                        value={strategy.templateId ? String(strategy.templateId) : ''}
-                        onValueChange={(value) => handleTemplateChange(strategy.id, value)}
-                      >
-                        <SelectTrigger className="h-7 w-full text-xs bg-card">
-                          <SelectValue placeholder="Template" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {templates.length > 0 ? (
-                            templates.map((t: any) => (
-                              <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                            ))
-                          ) : (
-                            <div className="p-2 text-xs text-muted-foreground text-center">
-                              No Writer templates
-                            </div>
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {/* Text AI model — which model WRITES each article. Pairs with the
-                        content Template on its left. "Default" = the server's own default.
-                        w-36: the "Default text model" option truncated at w-28. */}
-                    <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <Select
-                        value={config.model ? String(config.model) : 'default'}
-                        onValueChange={(value) => handleTextModelChange(strategy.id, value === 'default' ? '' : value)}
-                      >
-                        <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model writes each article">
-                          <SelectValue placeholder="Text model" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="default">Default text model</SelectItem>
-                          {textModels.map((m: any) => (
-                            <SelectItem key={m.modelId} value={m.modelId}>
-                              {(m.customName || m.originalName || m.modelId)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {/* Image prompt template (module 'image') — the wording used to
-                        generate each article's featured image. "Default prompt" keeps the
-                        built-in sentence, so this is purely opt-in.
-                        w-36: the "Default image prompt" option truncated at w-32. */}
-                    <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <Select
-                        value={config.imageTemplateId ? String(config.imageTemplateId) : 'default'}
-                        onValueChange={(value) => handleImageTemplateChange(strategy.id, value === 'default' ? '' : value)}
-                      >
-                        <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which template writes the featured-image prompt">
-                          <SelectValue placeholder="Image prompt" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="default">Default image prompt</SelectItem>
-                          {imageTemplates.map((t: any) => (
+                  {/* Template (prompt) — inline-editable; drives generation for
+                      items generated AFTER the change. */}
+                  <div className="w-40 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <Select
+                      value={strategy.templateId ? String(strategy.templateId) : ''}
+                      onValueChange={(value) => handleTemplateChange(strategy.id, value)}
+                    >
+                      <SelectTrigger className="h-7 w-full text-xs bg-card">
+                        <SelectValue placeholder="Template" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {templates.length > 0 ? (
+                          templates.map((t: any) => (
                             <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                          ))
+                        ) : (
+                          <div className="p-2 text-xs text-muted-foreground text-center">
+                            No Writer templates
+                          </div>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-                    {/* Image AI model — which model DRAWS the featured image. Sits beside
-                        the Image prompt so the pair (wording + model) reads together.
-                        w-36: the "Default image model" option truncated at w-28. */}
-                    <div className="w-44 shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <Select
-                        value={config.imageModel ? String(config.imageModel) : 'default'}
-                        onValueChange={(value) => handleImageModelChange(strategy.id, value === 'default' ? '' : value)}
-                      >
-                        <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model generates the featured image">
-                          <SelectValue placeholder="Image model" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="default">Default image model</SelectItem>
-                          {imageModels.map((m: any) => (
-                            <SelectItem key={m.modelId} value={m.modelId}>
-                              {(m.customName || m.originalName || m.modelId)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  {/* Text AI model — which model WRITES each article. Pairs with the
+                      content Template on its left. "Default" = the server's own default.
+                      w-36: the "Default text model" option truncated at w-28. */}
+                  <div className="w-40 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <Select
+                      value={config.model ? String(config.model) : 'default'}
+                      onValueChange={(value) => handleTextModelChange(strategy.id, value === 'default' ? '' : value)}
+                    >
+                      <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model writes each article">
+                        <SelectValue placeholder="Text model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default text model</SelectItem>
+                        {textModels.map((m: any) => (
+                          <SelectItem key={m.modelId} value={m.modelId}>
+                            {(m.customName || m.originalName || m.modelId)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
+
+                  {/* Image prompt template (module 'image') — the wording used to
+                      generate each article's featured image. "Default prompt" keeps the
+                      built-in sentence, so this is purely opt-in.
+                      w-36: the "Default image prompt" option truncated at w-32. */}
+                  <div className="w-40 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <Select
+                      value={config.imageTemplateId ? String(config.imageTemplateId) : 'default'}
+                      onValueChange={(value) => handleImageTemplateChange(strategy.id, value === 'default' ? '' : value)}
+                    >
+                      <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which template writes the featured-image prompt">
+                        <SelectValue placeholder="Image prompt" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default image prompt</SelectItem>
+                        {imageTemplates.map((t: any) => (
+                          <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
+
+                  {/* Image AI model — which model DRAWS the featured image. Sits beside
+                      the Image prompt so the pair (wording + model) reads together.
+                      w-36: the "Default image model" option truncated at w-28. */}
+                  <div className="w-40 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <Select
+                      value={config.imageModel ? String(config.imageModel) : 'default'}
+                      onValueChange={(value) => handleImageModelChange(strategy.id, value === 'default' ? '' : value)}
+                    >
+                      <SelectTrigger className="h-7 w-full text-xs bg-card" title="Which AI model generates the featured image">
+                        <SelectValue placeholder="Image model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default image model</SelectItem>
+                        {imageModels.map((m: any) => (
+                          <SelectItem key={m.modelId} value={m.modelId}>
+                            {(m.customName || m.originalName || m.modelId)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </>)}
+              </div>
+
+              {/* Expanded items list */}
+              {expandedId === strategy.id && strategy.items && (
+                <div style={{ background: colors.bgPage }}>
                   {/* Item bulk bar — appears once at least one item in THIS strategy
                       is ticked. Linking opens the same interlink modal the row button
                       uses; Delete and Duplicate run per item and report a combined

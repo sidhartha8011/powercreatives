@@ -692,6 +692,8 @@ class PCM_SEO_Local
         if ((!empty($vars['business.phone']) || !empty($vars['business.address'])) && strpos($tpl, '{{business.') === false) {
             $tpl .= "\n\nBusiness context: {{business.name}} — phone {{business.phone}}, address {{business.address}}, category {{business.category}}, hours {{business.hours}}. About: {{business.description}}. Use the real details where relevant; never invent contact data.";
         }
+        // Answer in the PAGE's language, not the instruction's — see language_law().
+        $tpl    .= PCM_SEO_AI::language_law($vars);
         $prompt  = PCM_SEO_AI::substitute_vars($tpl, $vars);
         if (!class_exists('PCM_LLM')) {
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));

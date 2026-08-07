@@ -12775,3 +12775,87 @@ VERIFIED
   ("REFETCH SHOWS THE NEW VALUE" fails); restored → 10/10.
 - php -l clean. FULL SUITE 21/21 files. Zip rebuilt; admin_user_ids + merged-ids invalidate +
   prior model_scope fix all verified INSIDE the archive.
+
+## 2026-08-08 — Strategy rows: controls moved UP into the header row, tokens matched, rows shortened
+Asked (annotated screenshot, arrow pointing at the empty space right of the title): "Move up the
+dropdowns and make them smaller as they are in the other modules so we keep design tokens the same
+and that we can make the strategy rows smaller."
+
+WHAT WAS WRONG WITH LAST ROUND'S FIX. Owner pick (a) expand-gated the controls correctly, but parked
+them in a NEW padded strip (`px-4 py-3` + its own bottom border) BELOW the title — so an expanded
+card grew a whole extra band while the space beside the title stayed empty. That band is what the
+arrow was pointing at.
+
+CHANGE (app/src/modules/Strategies/index.tsx only; no PHP, no new deps):
+  - Strip deleted. The day-to-day cluster (status/site/approval/schedule/actions) now renders INSIDE
+    the identity row, `ml-auto` so it fills the empty space right of the title; the identity row
+    became `flex-wrap` so the cluster drops to its own line on narrow viewports instead of crushing
+    the name. The set-once GENERATION cluster follows as a second header line.
+  - Both stay expand-gated — a COLLAPSED card is still one clean identity row (pick (a) preserved).
+  - Tokens: every trigger already h-7/text-xs, matching the per-item "Inherit" selects the request
+    pointed at. Widths trimmed only where there was proven headroom: generation cluster w-44→w-40
+    (x4), publishing w-32→w-28. DELIBERATELY NOT shrunk — site w-40 and image-model w-36 floors are
+    recorded in the file's own comments as truncation fixes from earlier rounds; approval keeps w-32
+    for "Internal + Client", schedule keeps w-32 for recurrence summaries.
+  - Vertical: header py-2→py-1.5, cluster gaps gap-x-4/gap-y-2.5→gap-x-2/gap-y-1.5, mt-2.5→mt-1.5.
+
+VERIFIED
+- tests/standalone/strategy_card_layout_test.mjs REWRITTEN for the new rule (39→41 checks): order,
+  containment, expand-gating, h-7/text-xs token parity against the per-item reference row, the
+  width floors, and the tightened spacing.
+- NEGATIVE CONTROL 5/5 caught: strip restored, loose gap, w-44, non-wrapping identity row, and a
+  select losing h-7 each turn it red; restored → 41/41.
+- tsc 59 = baseline (first attempt — the tag-depth scanner gained multi-line self-closing-tag
+  handling, which the previous `<div ... />` regex miscounted and which had silently shifted every
+  close after the progress bar).
+- FULL SUITE 21/21 files. npm run build clean. Zip 3.53 MB / 691 files.
+- ARCHIVE-CHECK LESSON: asserting "px-4 py-3 / w-44 absent" against the BUNDLE failed — both belong
+  to other modules (Ads/Integrations/Keywords; SEO's w-44 sidebar). Removal must be asserted against
+  the SOURCE file; only additions are bundle-checkable.
+- STILL UNVERIFIED VISUALLY — no dev server for this WP-embedded SPA. Structure/tokens only.
+
+## 2026-08-08 — SEO module rewrote foreign-language pages into English
+Reported: "the changes in content should be in the original language of the website what ever it is"
+(Swedish client sites — massagegoteborg.nu, seobyra.eu — came back rewritten in English). This is the
+carried-over "it's overriding in English" item from the SEO review-step round.
+
+TWO INDEPENDENT CAUSES, both needed fixing:
+ 1. NO default prompt named a language anywhere in the module. Every prompt AROUND the content —
+    contracts, envelopes, directives, field templates — is written in English, so the model followed
+    the INSTRUCTION's language instead of the PAGE's. (ai-readiness.php already had a "SAME language,
+    do NOT translate" line and was the one path that behaved; that wording is now the shared one.)
+ 2. `remote_field_vars()` derived `site.lang` from `get_locale()` — the HUB's WordPress locale, i.e.
+    the agency dashboard, NOT the client site being edited. A Swedish site managed from an English
+    hub reported 'en'. (`build_field_vars()` for LOCAL hub posts keeps get_locale() — correct there,
+    the hub IS the site. Left alone.)
+
+FIX — one lever, seven call sites: new PCM_SEO_AI::language_law($vars) returns the contract; appended
+to every path whose output lands on a page: run_prompt_section (sections/revise/headings — the
+review-step rewrites), generate_field, generate_site_field, optimize_body, remote_generate_field,
+remote_ai_site_desc, build_llm_info. The EXISTING CONTENT is the stated authority (it is what the
+page actually speaks, whatever a setting claims); the configured language is only the hint/fallback.
+The law explicitly says "these instructions are written in English — that is NOT the target
+language", which is the clause that addresses the actual mechanism. Appended UNCONDITIONALLY (not
+placeholder-gated like the topic/page.type/business append laws) — no {{...}} exists for a template
+to opt into, and every seeded/user-edited template predates it.
+`site.lang` for remote sites now resolves from the linked brand, whose language is scraped from that
+site's own <html lang> (brands/service.php:85), passed VERBATIM — it may be 'sv' or 'Swedish', and
+substr() would mangle the latter to 'Sw'. Hub locale kept as last-resort fallback.
+The optimizer's directive compiler was checked and deliberately NOT changed: it emits directives FOR
+the rewriter, which now carries the law — and the law's English-instructions clause is exactly what
+keeps English directives from flipping the output language.
+
+VERIFIED
+- NEW tests/standalone/seo_language_law_test.php (32 checks): the law executed for real (eval'd out
+  of the source — it is pure string work), safe degradation with no hint configured, all seven paths
+  appending it before their LLM call, single definition/no drifting copies, and the site.lang
+  resolution incl. the substr-mangling guard.
+- NEGATIVE CONTROL 6/6 caught after fixing the harness — the first run MISSED "revise path loses the
+  law" because each call site is introduced by a comment reading "see language_law()", which
+  satisfied the naive scan even with the call deleted. Comments are now stripped before code
+  assertions. SAME TRAP as the detect_provider check two rounds ago — worth remembering: never let a
+  comment satisfy a code assertion.
+- php -l clean x4. FULL SUITE 22/22 files. Zip 3.53 MB / 692 files; law + 7 call sites (comments
+  excluded) + site.lang resolution all verified INSIDE the archive.
+- NOT verifiable here: actual model output in Swedish. This is a prompt-contract fix — worth spot-
+  checking one rewrite on a Swedish page after install.

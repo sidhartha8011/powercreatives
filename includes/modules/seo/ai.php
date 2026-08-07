@@ -238,6 +238,40 @@ class PCM_SEO_AI
     }
 
     /**
+     * THE LANGUAGE LAW — appended to every prompt that produces text destined
+     * for a page, so the answer comes back in the PAGE's language.
+     *
+     * Owner report 2026-08-08: "the changes in content should be in the
+     * original language of the website whatever it is" — Swedish pages came
+     * back rewritten in English. No default prompt named a language, and every
+     * prompt AROUND the content is written in English, so the model followed
+     * the instruction's language rather than the page's.
+     *
+     * The EXISTING CONTENT is the authority: it is what the page actually
+     * speaks, whatever any setting claims. The configured site language is only
+     * the fallback for generate-from-nothing, and is passed through verbatim
+     * because it may be a code ('sv') or a name ('Swedish').
+     *
+     * Appended UNCONDITIONALLY, unlike the placeholder-gated append laws in
+     * run_prompt_section(): there is no {{...}} for a template to opt into,
+     * every seeded and user-edited template predates this, and a wrong-language
+     * rewrite is never what anyone wanted.
+     *
+     * @param array<string, string> $vars Prompt vars; 'site.lang' is the hint.
+     * @return string Text to append to the template (never empty).
+     */
+    public static function language_law(array $vars = array()): string
+    {
+        $hint = trim((string) ($vars['site.lang'] ?? ''));
+        return "\n\nLANGUAGE (absolute, overrides everything above): write your ENTIRE answer in the"
+            . ' SAME language as the existing content you were given'
+            . ($hint !== '' ? " (the site's language is {$hint})" : '')
+            . '. These instructions are written in English — that is NOT the target language and'
+            . ' must never change the language you answer in. Do NOT translate, localise, or switch'
+            . ' language for any reason. Keep proper nouns, brand names and URLs exactly as they are.';
+    }
+
+    /**
      * Substitute {{key}} placeholders. Keys are matched literally (the map
      * carries the exact key strings, incl. dotted/piped ones), mirroring the
      * source's replacePromptVariables.
@@ -413,6 +447,7 @@ class PCM_SEO_AI
         $default = $prompts[$use][$mode];
         // Honor the user's Settings → Prompts → SEO override (falls back to default).
         $tpl     = self::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
+        $tpl    .= self::language_law($vars);
         $prompt  = self::substitute_vars($tpl, $vars);
         $max     = (int) ($prompts[$use]['max'] ?? 200);
 
@@ -482,6 +517,7 @@ class PCM_SEO_AI
         $vars    = array_merge(self::build_field_vars(0, $brand_id), $var_overrides);
         $default = $prompts[$use]['generate'];
         $tpl     = self::resolve_prompt($use . '_generate', $default, $user_id);
+        $tpl    .= self::language_law($vars);
         $prompt  = self::substitute_vars($tpl, $vars);
         $max     = (int) ($prompts[$use]['max'] ?? 600);
 
@@ -536,6 +572,7 @@ class PCM_SEO_AI
         $vars['current_value'] = $post->post_content;
         // Honor the user's Settings → Prompts → SEO override (falls back to default).
         $tpl    = self::resolve_prompt('content_optimize', $prompts['content']['optimize'], $user_id);
+        $tpl   .= self::language_law($vars);
         $prompt = self::substitute_vars($tpl, $vars);
 
         if (!class_exists('PCM_LLM')) {

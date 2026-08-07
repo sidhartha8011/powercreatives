@@ -1087,6 +1087,11 @@ class PCM_SEO_Service
         $name    = ($site->name ?? '') !== '' ? $site->name : (string) $site->url;
         $default = (string) (PCM_SEO_AI::field_prompts()['site_ai_description']['generate'] ?? '');
         $tpl     = PCM_SEO_AI::resolve_prompt('site_ai_description_generate', $default, $user_id);
+        // The site's own page titles below are the language authority; the brand's
+        // scraped language is the hint. See PCM_SEO_AI::language_law().
+        $tpl    .= PCM_SEO_AI::language_law(array(
+            'site.lang' => (string) (PCM_SEO_Business::business_record_for_site((int) ($site->id ?? 0))['fields']['language'] ?? ''),
+        ));
         $prompt  = PCM_SEO_AI::substitute_vars($tpl, array(
             'site_name' => $name,
             'key_pages' => implode("\n", $titles),
@@ -1164,7 +1169,10 @@ class PCM_SEO_Service
         if (trim((string) ($ctx['keywords'] ?? '')) === '' && !empty($ctx['pages']) && is_array($ctx['pages'])) {
             $ctx['keywords'] = self::keywords_to_string(self::top_keywords($ctx['pages']));
         }
-        $prompt = self::llm_info_prompt($ctx, $user_id);
+        // The business facts assembled below carry the site's own wording, which
+        // is the language authority. See PCM_SEO_AI::language_law().
+        $prompt = self::llm_info_prompt($ctx, $user_id)
+            . PCM_SEO_AI::language_law(array('site.lang' => (string) ($ctx['language'] ?? '')));
         try {
             $opts = array('max_tokens' => 1400);
             if (!empty($model)) {
@@ -1512,6 +1520,18 @@ class PCM_SEO_Service
         // name/url exactly as before.
         $gbp  = (array) (PCM_SEO_Business::business_record_for_site((int) ($site->id ?? 0))['fields'] ?? array());
         $name = !empty($gbp['name']) ? (string) $gbp['name'] : (!empty($site->name) ? (string) $site->name : $host);
+        // The CLIENT site's language, not the hub's. get_locale() describes the
+        // WordPress this plugin runs on — for a remote connected site that is the
+        // agency's dashboard, not the site being edited, so a Swedish client site
+        // managed from an English hub reported 'en'. The linked brand's language
+        // is scraped from that site's own <html lang> (brands/service.php), so it
+        // describes the right site. Passed through VERBATIM — it may be a code
+        // ('sv') or a name ('Swedish'), and substr() would have mangled the
+        // latter into 'Sw'. Hub locale remains the last-resort fallback.
+        $brand_lang = trim((string) ($gbp['language'] ?? ''));
+        $site_lang  = $brand_lang !== ''
+            ? $brand_lang
+            : ($locale ? substr($locale, 0, 2) : 'en');
         return array(
             'title'                     => (string) ($row['title'] ?? ''),
             'primary_keyword'           => (string) ($row['primaryKeyword'] ?? ''),
@@ -1520,7 +1540,7 @@ class PCM_SEO_Service
             'meta_description'          => (string) ($row['metaDescription'] ?? ''),
             'post_type'                 => (string) ($row['type'] ?? ''),
             'page.type'                 => ($user_id && $post_id) ? self::get_page_type($user_id, (int) $site->id, $post_id) : '',
-            'site.lang'                 => $locale ? substr($locale, 0, 2) : 'en',
+            'site.lang'                 => $site_lang,
             'website.url'               => $url,
             'today'                     => gmdate('Y-m-d'),
             'business.name'             => $name,
@@ -1584,6 +1604,7 @@ class PCM_SEO_Service
         $mode    = (!empty($current) && !empty($prompts[$use]['optimize'])) ? 'optimize' : 'generate';
         $default = $prompts[$use][$mode];
         $tpl     = PCM_SEO_AI::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
+        $tpl    .= PCM_SEO_AI::language_law($vars);
         $prompt  = PCM_SEO_AI::substitute_vars($tpl, $vars);
         $max     = (int) ($prompts[$use]['max'] ?? 200);
 
