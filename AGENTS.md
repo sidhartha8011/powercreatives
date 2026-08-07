@@ -19,11 +19,12 @@ Genererar bilder, video och annonstext via OpenAI, Google och Kie.ai.
 
 | # | Dokument | Vad det täcker |
 |---|----------|---------------|
-| 1 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Fullständig mappstruktur, mönster (Module Loader, REST Base, Provider System), dataflöde |
-| 2 | [CONTRIBUTING.md](docs/CONTRIBUTING.md) | Hur du lägger till en ny modul, provider eller modell — steg för steg |
-| 3 | [UPGRADE-SAFETY.md](docs/UPGRADE-SAFETY.md) | Hur update-mekanismen fungerar (dbDelta, data i DB inte i plugin-mappen) |
-| 4 | [architecture-vision.md](docs/architecture-vision.md) | Ursprunglig vision och långsiktiga mål |
-| 5 | [backlog.md](docs/backlog.md) | Projektets backlog — featurewishlist och teknisk skuld |
+| 1 | [ARCHITECTURE-PHILOSOPHY.md](docs/ARCHITECTURE-PHILOSOPHY.md) | Domänens gemensamma språk: Brand → Delivery → Project → Asset samt Approval Sets som review-paket |
+| 2 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Fullständig mappstruktur, mönster (Module Loader, REST Base, Provider System), dataflöde |
+| 3 | [CONTRIBUTING.md](docs/CONTRIBUTING.md) | Hur du lägger till en ny modul, provider eller modell — steg för steg |
+| 4 | [UPGRADE-SAFETY.md](docs/UPGRADE-SAFETY.md) | Hur update-mekanismen fungerar (dbDelta, data i DB inte i plugin-mappen) |
+| 5 | [architecture-vision.md](docs/architecture-vision.md) | Ursprunglig vision och långsiktiga mål |
+| 6 | [backlog.md](docs/backlog.md) | Projektets backlog — featurewishlist och teknisk skuld |
 
 ---
 
