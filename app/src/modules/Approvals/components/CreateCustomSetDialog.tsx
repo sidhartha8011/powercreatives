@@ -1,8 +1,10 @@
 /**
  * CreateCustomSetDialog — "+ Add Approval Set" for a Custom (Notion-style) document.
  *
- * ONE step. You author the document and fill in the three things the set needs — name,
- * project, client email — in the same dialog, then create.
+ * You author the document and fill in what the set IS — name, lane, and its project
+ * mapping — then create. Creating never emails anyone: the client link and every send
+ * live in the ApprovalSharePanel popover, anchored to Generate Share Link, so there is
+ * exactly ONE route an invite can leave by.
  *
  * It used to hand off to the shared SendToApprovalSetDialog as a second popup. That dialog
  * still exists and is still used from Ads/Copy/Image, where you're sending EXISTING assets and
@@ -11,12 +13,16 @@
  * the second popup a step that asked one real question (the name) and re-asked things the
  * caller already knew.
  *
+ * What that removal DID drop, until 2026-08-04, was the client link: this dialog closed on a
+ * toast, so the one thing the flow exists to produce was never shown (gap ebe6501). The share
+ * panel is now the same component all three create flows end on.
+ *
  * Create payload is deliberately identical to the one that dialog sends (see
  * handleGenerateLink there), including escapeAstralDeep on the snapshot so a WAF that strips
  * 4-byte UTF-8 can't eat emoji in transit, and the untitled-doc-inherits-the-set-name rule.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { trpc } from '@/lib/trpc';
 import {
@@ -26,13 +32,30 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
-} from '@/components/ui/select';
-import { Send, Loader2 } from 'lucide-react';
+  ProjectPicker,
+  resolveProjectId,
+  EMPTY_PROJECT_PICK,
+  useProjectPickerData,
+  type ProjectPickerValue,
+} from '@/components/shared/ProjectPicker';
+import {
+  ApprovalSharePanel,
+  buildDefaultInviteMessage,
+} from '@/components/shared/ApprovalSharePanel';
+import { buildPublicBoardUrl, useApprovalSetsCache } from '@/components/shared/approvalSets';
+import { SearchableSelect } from '@/components/shared/SearchableSelect';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
+import { Send, Loader2, Check, Link as LinkIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { escapeAstralDeep } from '@/lib/escapeAstral';
 
 import { CustomCardEditor } from './CustomCardEditor';
+import {
+  isApprovalEditorOverlayOpen,
+  preventApprovalEditorOverlayDismiss,
+} from './approvalEditorOverlayBoundary';
+import { laneOptions } from '../kanban/setColumns';
+import { APPROVAL_STATUSES, type ApprovalStatus } from '../types';
 
 function uid(): string {
   try { return crypto.randomUUID(); } catch { /* older browsers */ }
@@ -42,20 +65,45 @@ function uid(): string {
 interface CreateCustomSetDialogProps {
   open: boolean;
   onClose: () => void;
-  /** Create-from-delivery preset: pre-selects brand/project/delivery (still overridable). */
-  preset?: { brandId: number | null; projectId: number; deliveryId: number };
+  /**
+   * Pre-selection carried in from wherever the create was started — a delivery
+   * card's "+", or a board lane's "+" with the active filters. Every field is a
+   * hint the user can still change.
+   *
+   * `status` = the lane the set is born in (the board's lane "+"); omitted means
+   * 'draft', the server's default. `deliveryId` never lands on the set — it only
+   * seeds the project→delivery link (the set maps to a project and nothing else).
+   */
+  preset?: {
+    brandId?: number | null;
+    projectId?: number | null;
+    deliveryId?: number | null;
+    status?: string | null;
+  };
 }
 
 export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSetDialogProps) {
   const [content, setContent] = useState('<p></p>');
   const [overlay, setOverlay] = useState<string | null>(null);
   const [name, setName] = useState('');
-  const [projectSel, setProjectSel] = useState<string>('');
-  const [clientEmail, setClientEmail] = useState('');
+  // The set's ONE mapping: a project (existing, or created on submit).
+  const [project, setProject] = useState<ProjectPickerValue>(EMPTY_PROJECT_PICK);
+  // Which lane the set is CREATED in (distinct from the share step's
+  // "move to lane after sending"). Registry-driven, defaults to the clicked "+".
+  const [lane, setLane] = useState<ApprovalStatus>('draft');
+  // Set once created — reveals the share panel; the editor stays open beside it.
+  const [created, setCreated] = useState<{ id: number; shareUrl: string } | null>(null);
+  // Whether the share step is showing. "Save" in that step closes it and leaves
+  // you in the editor; the header button re-opens it.
+  const [shareOpen, setShareOpen] = useState(false);
+  // Set by "Save and Close" so the create's success handler closes the dialog.
+  const closeAfterCreate = useRef(false);
 
-  const { data: projectsRaw } = trpc.assets.getProjects.useQuery();
-  const projects: { id: number; name: string }[] = Array.isArray(projectsRaw)
-    ? (projectsRaw as any[]).map((p) => ({ id: Number(p.id), name: String(p.name) })) : [];
+  const { projects, deliveries, brands } = useProjectPickerData();
+
+  const createProjectMutation = trpc.assets.createProject.useMutation();
+  const setProjectDeliveryMutation = trpc.assets.setProjectDelivery.useMutation();
+  const approvalSetsCache = useApprovalSetsCache();
 
   // Fresh canvas + fields every time it opens, so a cancelled draft never leaks into the next one.
   useEffect(() => {
@@ -63,23 +111,66 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
     setContent('<p></p>');
     setOverlay(null);
     setName('');
-    setProjectSel(preset?.projectId ? String(preset.projectId) : '');
-    setClientEmail('');
-  }, [open, preset?.projectId]);
+    // Seed the mapping row from wherever the create was started (lane "+" with
+    // filters on, or a delivery card's "+"). Every value stays changeable.
+    setProject({
+      projectId: preset?.projectId ?? null,
+      newProjectName: null,
+      deliveryId: preset?.deliveryId ?? null,
+      brandId: preset?.brandId ?? null,
+    });
+    setShareOpen(false);
+    closeAfterCreate.current = false;
+    setLane(
+      preset?.status && (APPROVAL_STATUSES as ReadonlyArray<string>).includes(preset.status)
+        ? (preset.status as ApprovalStatus)
+        : 'draft'
+    );
+    setCreated(null);
+  }, [open, preset?.projectId, preset?.status]);
 
   const createMutation = trpc.approvals.createSet.useMutation({
-    onSuccess: () => {
-      toast.success(clientEmail.trim()
-        ? 'Approval set created — invite emailed to the client.'
-        : 'Approval set created.');
-      onClose();
+    onSuccess: (data: any) => {
+      // Put the new card on the board NOW (the response is the full row), then
+      // reconcile — without this the board showed nothing until a page reload.
+      approvalSetsCache.registerCreated(data);
+
+      // Stay open on the share panel: this set has a token, and the client link
+      // is the point of the whole flow. Closing on a toast (what this dialog used
+      // to do) dropped it silently — the only create path that did.
+      setCreated({ id: Number(data.id), shareUrl: buildPublicBoardUrl(data.token) });
+
+      toast.success('Approval set created.');
+
+      // "Save and Close" finishes here; "Generate Share Link" opens the step.
+      if (closeAfterCreate.current) {
+        closeAfterCreate.current = false;
+        onClose();
+      } else {
+        setShareOpen(true);
+      }
     },
     onError: (err: any) => toast.error(err?.message || 'Failed to create the approval set.'),
   }) as any;
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const setName = name.trim();
     if (!setName) { toast.error('Please enter an approval set name.'); return; }
+
+    // Create the project first when the user typed a new name, so the set is
+    // saved with a real project id — or not saved at all if that fails.
+    let effProjectId: number | null;
+    try {
+      effProjectId = await resolveProjectId(
+        project,
+        createProjectMutation.mutateAsync,
+        setProjectDeliveryMutation.mutateAsync,
+        projects
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create the project.');
+      return;
+    }
 
     const now = new Date().toISOString();
     const card = {
@@ -93,17 +184,19 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
       // still no separate "name the document" field.
       title: setName,
     };
-    const inviteEmail = clientEmail.trim();
-
     createMutation.mutate({
       name: setName,
-      brandId: preset?.brandId ?? null,
-      projectId: projectSel ? Number(projectSel) : (preset?.projectId ?? null),
-      deliveryId: preset?.deliveryId ?? null,
-      // When present the SERVER shares on create (moves the set to the client lane AND emails
-      // the invite) — one request, nothing for the browser to miss.
-      clientEmail: inviteEmail || null,
-      clientMessage: null,
+      // Narrowing value from the mapping row; the live chain overwrites it the
+      // moment the set has a project, so it can never contradict the mapping.
+      brandId: project.brandId ?? preset?.brandId ?? null,
+      // The lane picked in Row 1 (seeded from the board "+").
+      status: lane,
+      // The set's ONE mapping. Delivery + brand are derived live from this
+      // project server-side (PCM_Hierarchy) — never stored on the set.
+      projectId: effProjectId,
+      // Creating no longer sends anything. All sharing happens in the share
+      // popover, so this dialog never asks the server to email on create — there
+      // is exactly one route an invite can leave by.
       snapshot: escapeAstralDeep({
         media: [],
         copy: [],
@@ -112,7 +205,9 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
     });
   };
 
-  const busy = createMutation.isPending ?? createMutation.isLoading ?? false;
+  const busy =
+    (createMutation.isPending ?? createMutation.isLoading ?? false) ||
+    (createProjectMutation.isPending ?? createProjectMutation.isLoading ?? false);
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
@@ -120,27 +215,80 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
         className="sm:max-w-[min(64rem,calc(100vw-4rem))] max-h-[92vh] flex flex-col overflow-hidden"
         // Keep the dialog open while interacting with the WordPress media library frame or the
         // image annotator (both portal to <body>).
-        onInteractOutside={(e) => {
-          const t = e.target as HTMLElement | null;
-          if (t?.closest?.('.media-modal, .media-frame, .media-modal-backdrop, .wp-core-ui, [data-pcm-annotator]')) {
-            e.preventDefault();
-          }
+        onInteractOutside={preventApprovalEditorOverlayDismiss}
+        onEscapeKeyDown={(event) => {
+          if (isApprovalEditorOverlayOpen()) event.preventDefault();
         }}
       >
         <DialogHeader className="shrink-0">
-          <DialogTitle>New approval set</DialogTitle>
-          <DialogDescription>
-            Write the document, name the set, and send it — all here.
-          </DialogDescription>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <DialogTitle>{created ? 'Approval set' : 'New approval set'}</DialogTitle>
+              <DialogDescription>
+                {created
+                  ? 'Saved. Copy the link or email it — the editor stays open.'
+                  : 'Write the document, name the set, and send it — all here.'}
+              </DialogDescription>
+            </div>
+            {/* Generate Share Link: saves the set and reveals the link WITHOUT
+                closing anything. Once saved it reports that, and the panel below
+                owns copying and sending. */}
+            {/* The share step is a real floating Popover anchored to this button —
+                it must never expand the dialog body. Before Generate Share Link
+                has run there is nothing to share, so the button just creates. */}
+            <Popover open={shareOpen} onOpenChange={setShareOpen}>
+              <PopoverAnchor asChild>
+                <Button
+                  type="button"
+                  variant={created ? 'secondary' : 'default'}
+                  onClick={() => (created ? setShareOpen((v) => !v) : void handleCreate())}
+                  disabled={busy || !name.trim()}
+                  className="shrink-0 gap-1.5"
+                >
+                  {busy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : created ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <LinkIcon className="h-4 w-4" />
+                  )}
+                  {created ? 'Share link' : 'Generate Share Link'}
+                </Button>
+              </PopoverAnchor>
+
+              {created && (
+                <PopoverContent
+                  align="end"
+                  sideOffset={8}
+                  className="w-[min(30rem,calc(100vw-3rem))] p-4"
+                  // The WP media frame and the annotator portal to <body>; without
+                  // this, interacting with them would dismiss the share step.
+                  onInteractOutside={preventApprovalEditorOverlayDismiss}
+                >
+                  <ApprovalSharePanel
+                    setId={created.id}
+                    shareUrl={created.shareUrl}
+                    defaultMessage={buildDefaultInviteMessage(null)}
+                    lanes={laneOptions}
+                    defaultLaneAfterSend="client"
+                    // Send = sent + moved, close THIS step only; the editor stays.
+                    onSaved={() => setShareOpen(false)}
+                    // Send and Close = sent + moved, everything closes.
+                    onSaveAndClose={onClose}
+                    onCancel={() => setShareOpen(false)}
+                  />
+                </PopoverContent>
+              )}
+            </Popover>
+          </div>
         </DialogHeader>
 
-        {/* Only the BODY scrolls; header and footer stay put, so Create is always reachable
-            on a long document. */}
+        {/* Only the BODY scrolls; header and footer stay put, so the actions are
+            always reachable on a long document. */}
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden py-2">
-          {/* The three set fields, up top: they're short, and reading them before writing tells
-              you what this document is going to be called. bg-card on every input — no
-              transparent fields sitting on the dialog surface. */}
-          <div className="grid gap-3 sm:grid-cols-3">
+          {/* Row 1 — what the set IS. bg-card on every input; no transparent
+              fields sitting on the dialog surface. */}
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="set-name">Name <span className="text-destructive">*</span></Label>
               <Input
@@ -153,40 +301,63 @@ export function CreateCustomSetDialog({ open, onClose, preset }: CreateCustomSet
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="set-project">Project</Label>
-              <Select value={projectSel || 'none'} onValueChange={(v) => setProjectSel(v === 'none' ? '' : v)}>
-                <SelectTrigger id="set-project" className="w-full">
-                  <SelectValue placeholder="No project" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No project</SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="set-email">Client email</Label>
-              <Input
-                id="set-email"
-                type="email"
-                value={clientEmail}
-                onChange={(e) => setClientEmail(e.target.value)}
-                placeholder="Optional — emails the link"
-                className="bg-card"
+              <Label htmlFor="set-lane">Lane</Label>
+              {/* Options come from the lane registry — adding a lane stays a
+                  one-line change in setColumns.ts, never here. */}
+              <SearchableSelect
+                options={laneOptions}
+                value={lane}
+                onChange={(next) => setLane((next as ApprovalStatus) ?? 'draft')}
+                placeholder="Draft"
+                allLabel="Draft"
+                searchPlaceholder="Search lanes…"
+                emptyLabel="No lanes match"
+                className="w-full"
+                ariaLabel="Lane"
+                disabled={busy || created !== null}
               />
             </div>
           </div>
 
+          {/* Row 2 — the mapping. Any one narrows the other two.
+              THREE columns, because ProjectPicker returns exactly three children:
+              Project · Delivery · Brand. Commit 57ad9cb changed Row 1 AND this row
+              from 3 to 2 in one commit; Row 1's change was right (the email field
+              had gone), this one was collateral and pushed Brand onto a third line.
+              Rows 1 and 2 are deliberately different widths — keep them that way. */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <ProjectPicker
+              projects={projects}
+              deliveries={deliveries}
+              brands={brands}
+              value={project}
+              onChange={setProject}
+              disabled={busy}
+            />
+          </div>
+
+          {/* The link + send step, revealed by Generate Share Link. The editor
+              stays mounted below it — nothing is lost by sharing. */}
           <CustomCardEditor content={content} onChange={setContent} overlay={overlay} onOverlayChange={setOverlay} />
         </div>
 
         <DialogFooter className="shrink-0">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button type="button" onClick={handleCreate} disabled={busy || !name.trim()} className="gap-1.5">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              // Already saved? There is nothing left to create — just close.
+              if (created) { onClose(); return; }
+              closeAfterCreate.current = true;
+              void handleCreate();
+            }}
+            disabled={busy || !name.trim()}
+            className="gap-1.5"
+          >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Create approval set
+            Save and Close
           </Button>
         </DialogFooter>
       </DialogContent>

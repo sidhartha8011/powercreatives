@@ -15,10 +15,9 @@
  *   - DnD column moves → status mutation via useApprovalSets.
  */
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { KanbanSquare, Search, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CheckSquare, KanbanSquare, Trash2, X } from 'lucide-react';
 
-import { trpc } from '@/lib/trpc';
 import { useApp } from '@/contexts/AppContext';
 
 import {
@@ -32,7 +31,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -40,6 +38,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/shared';
+import { useProjectPickerData } from '@/components/shared/ProjectPicker';
+import { toast } from 'sonner';
+
+import { trpc } from '@/lib/trpc';
 import {
   DefaultEmptyState,
   KanbanBoard,
@@ -48,8 +51,8 @@ import {
   type KanbanMoveEvent,
 } from '@/components/shared/Kanban';
 
-import { FeedbackDialog } from './FeedbackDialog';
 import { PreviewDialog } from './PreviewDialog';
+import { FeedbackDialog } from './FeedbackDialog';
 import { SetCard } from './SetCard';
 import { setColumns } from './setColumns';
 import { setFilters } from './setFilters';
@@ -61,9 +64,6 @@ import {
   type ApprovalStatus,
 } from '../types';
 
-/** Sentinel value used by single-select dropdowns to represent "no filter". */
-const ALL_VALUE = '__all__';
-
 /** Sentinel value used by the sort dropdown to represent "no sort". */
 const NO_SORT_VALUE = '__none__';
 
@@ -71,30 +71,56 @@ function isApprovalStatus(value: string): value is ApprovalStatus {
   return (APPROVAL_STATUSES as ReadonlyArray<string>).includes(value);
 }
 
-/** Stable, sorted, de-duplicated list of values for a single-select dropdown. */
-function uniqueValues(
-  items: ReadonlyArray<ApprovalSet>,
-  accessor: (s: ApprovalSet) => string | null | undefined
-): string[] {
-  const set = new Set<string>();
-  for (const item of items) {
-    const v = accessor(item);
-    if (v) set.add(v);
+/**
+ * A registry row reduced to what a dropdown needs.
+ *
+ * This file used to carry its own `toNamedRows()` normaliser for brands,
+ * deliveries and projects — a second definition of "what a registry row is",
+ * beside `useProjectPickerData()`. Two normalisers for the same three registries
+ * is exactly how `deliveryId` went missing from the picker options once already,
+ * so the board now consumes the shared hook and keeps no copy.
+ */
+type NamedRow = { id: number; name: string };
+
+/**
+ * Dropdown options for one link: the FULL registry, plus any id a set carries that
+ * the registry no longer explains (a deleted brand, a project outside the caller's
+ * scope) so that card stays reachable.
+ *
+ * This used to narrow to ids present on the board, on the reasoning that every
+ * choice should return at least one card. That was wrong: on a sparse board it
+ * empties the dropdowns entirely — with one set whose project has no delivery, the
+ * Delivery and Brand lists came back empty while the registries held 3 deliveries
+ * and 2 brands, so there was nothing to search and nothing to filter by. A filter
+ * exists to answer "what is available"; a choice that matches nothing already has
+ * an honest answer in the board's "No sets match your filters" notice.
+ */
+function linkOptions(
+  registry: ReadonlyArray<NamedRow>,
+  sets: ReadonlyArray<ApprovalSet>,
+  accessor: (s: ApprovalSet) => number | null | undefined,
+  unknownLabel: string
+): SearchableSelectOption[] {
+  const known = new Set(registry.map((r) => r.id));
+  const options = registry.map((r) => ({ value: String(r.id), label: r.name }));
+
+  for (const s of sets) {
+    const id = accessor(s);
+    if (id != null && !known.has(Number(id))) {
+      known.add(Number(id));
+      options.push({ value: String(id), label: `${unknownLabel} #${id}` });
+    }
   }
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
+  return options.sort((a, b) => a.label.localeCompare(b.label));
 }
 
-function readSearch(state: FilterState): string {
-  const v = state['search'];
-  return v?.kind === 'text' ? v.query : '';
-}
-
-function readSelect(state: FilterState, filterId: string): string {
+/** Currently-selected value of a searchable filter, or null when unset. */
+function readSelect(state: FilterState, filterId: string): string | null {
   const v = state[filterId];
   if (v?.kind === 'searchableSelect' && v.selected.length > 0) {
     return v.selected[0];
   }
-  return ALL_VALUE;
+  return null;
 }
 
 /**
@@ -106,7 +132,28 @@ type PendingDelete =
   | { kind: 'bulk'; ids: ReadonlyArray<number> }
   | null;
 
-export function SetsBoard() {
+/**
+ * What a lane's "+" carries into the create dialog: the lane it was clicked in,
+ * plus whatever the filters are currently narrowed to.
+ *
+ * `deliveryId` is deliberately NOT a set field — it only seeds the
+ * project→delivery link inside the dialog. The set maps to a project and
+ * nothing else, and `brandId` is overwritten by the live chain the moment a
+ * project is chosen.
+ */
+export interface CreateInLaneContext {
+  status: ApprovalStatus;
+  brandId: number | null;
+  deliveryId: number | null;
+  projectId: number | null;
+}
+
+export interface SetsBoardProps {
+  /** Called by a lane's "+" with the lane + active filters. */
+  onCreateInLane?: (ctx: CreateInLaneContext) => void;
+}
+
+export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
   const {
     sets,
     isLoading,
@@ -123,42 +170,132 @@ export function SetsBoard() {
     openPreview,
     closePreview,
     selectedIds,
-    hasSelection,
     isSelected,
     toggleSelection,
     clearSelection,
+    refetch: refetchSets,
   } = useApprovalSets();
 
-  // Resolve delivery names onto the set rows (sets only carry deliveryId) so
-  // the Delivery filter + search work on human-readable names.
-  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
-  const deliveryNameById = useMemo(() => {
-    const m = new Map<number, string>();
-    (Array.isArray(deliveriesRaw) ? deliveriesRaw : []).forEach((d: any) =>
-      m.set(Number(d.id), String(d.name))
-    );
-    return m;
-  }, [deliveriesRaw]);
-  const setsWithDelivery = useMemo<ApprovalSet[]>(
-    () =>
-      sets.map((s) => ({
-        ...s,
-        deliveryName:
-          s.deliveryId != null ? deliveryNameById.get(s.deliveryId) ?? null : null,
-      })),
-    [sets, deliveryNameById]
+  // The three dropdowns filter by ID and read their labels from the registries
+  // that own those names — the set row carries only the ids. ONE normaliser,
+  // shared with the pickers: the board keeps no copy of that boundary code.
+  const {
+    projects: projectRows,
+    deliveries: deliveryRows,
+    brands: brandRows,
+  } = useProjectPickerData();
+
+  const brandNameById = useMemo(
+    () => new Map(brandRows.map((b) => [b.id, b.name])),
+    [brandRows]
   );
 
-  const listState = useListState<ApprovalSet>(setsWithDelivery, setFilters, setSorts, {
-    persistKey: 'pcm.approvals.sets',
+  const projectNameById = useMemo(
+    () => new Map(projectRows.map((p) => [p.id, p.name])),
+    [projectRows]
+  );
+
+  /**
+   * The full set for the one being opened.
+   *
+   * THE BOARD ROW DOES NOT CARRY `snapshot`. `list_sets_by_user` selects an
+   * explicit column list and leaves `snapshot`/`reviewFeedback` out on purpose
+   * (`approvals/service.php:74`) because both are longtext and can hold embedded
+   * images. So a board row can never tell us whether a set is a document — the
+   * first version of this branch read `previewSet.snapshot.custom` and was
+   * therefore dead on arrival, silently falling through to the iframe every time.
+   *
+   * Fetching the one set being opened, by the token the row already carries, is
+   * strictly CHEAPER than what it replaces: the iframe preview loaded this exact
+   * payload plus the entire client page around it.
+   */
+  const {
+    data: fullPreviewSet,
+    isLoading: previewLoading,
+    refetch: refetchPreviewSet,
+  } = trpc.approvals.getPublicSet.useQuery(
+    { token: previewSet?.token ?? '' },
+    { enabled: !!previewSet?.token }
+  ) as { data?: ApprovalSet; isLoading: boolean; refetch: () => void };
+
+  /** Which sub-asset to scroll to when the card opens (set by an item row). */
+  const [focusAssetId, setFocusAssetId] = useState<string | null>(null);
+
+  /**
+   * Anything that changes a card refreshes BOTH queries.
+   *
+   * The opened set and the board's lanes are separate queries. Approving the
+   * last asset advances the set to `launch` server-side — observed live — and
+   * refetching only the opened set left the card sitting in its old lane until a
+   * reload. Two sources of truth for one change is exactly how a board goes
+   * stale without anyone noticing.
+   */
+  const handleCardChanged = useCallback(() => {
+    refetchPreviewSet();
+    refetchSets();
+  }, [refetchPreviewSet, refetchSets]);
+
+  /** Open a card focused on one of its items, from the expanded row. */
+  const handleOpenItem = useCallback((set: ApprovalSet, assetId: string) => {
+    setFocusAssetId(assetId);
+    openPreview(set);
+  }, [openPreview]);
+
+  const removeAssetMutation = trpc.approvals.removeAsset.useMutation({
+    onSuccess: () => handleCardChanged(),
+    onError: (err: any) => toast.error(err?.message || 'Could not remove that item.'),
+  });
+
+  /**
+   * Remove one item, immediately, with an undo.
+   *
+   * The server is the authority on whether this is allowed — it refuses once the
+   * card is past client review — so the toast never claims success the server
+   * has not given. Undo re-appends the exact item through `appendToSet`, which
+   * dedupes by id, so a double-undo cannot duplicate it.
+   */
+  const appendAssetMutation = trpc.approvals.appendToSet.useMutation({
+    onSuccess: () => handleCardChanged(),
+    onError: (err: any) => toast.error(err?.message || 'Could not restore that item.'),
+  });
+
+  const handleDeleteItem = useCallback((set: ApprovalSet, assetId: string) => {
+    removeAssetMutation.mutate(
+      { id: set.id, assetId },
+      {
+        onSuccess: (data: any) => {
+          // The server hands back exactly what it removed, and from which
+          // bucket, so undo restores the real item rather than a summary of it.
+          const item = data?.removedAsset;
+          const bucket = data?.removedBucket;
+          toast.success('Item removed', {
+            action: item && bucket
+              ? {
+                  label: 'Undo',
+                  onClick: () => appendAssetMutation.mutate({ id: set.id, snapshot: { [bucket]: [item] } }),
+                }
+              : undefined,
+          });
+        },
+      }
+    );
+  }, [removeAssetMutation, appendAssetMutation]);
+
+  const listState = useListState<ApprovalSet>(sets, setFilters, setSorts, {
+    // `.v2`: the 2026-08-04 bar dropped the `search` + `set` filters. applyFilters
+    // ignores state with no matching definition, but activeFilterCount counts raw
+    // state — a leftover key would strand "Clear filters" visible forever. A new
+    // key abandons the old state instead of migrating it.
+    persistKey: 'pcm.approvals.sets.v2',
     defaultSortId: DEFAULT_SET_SORT,
   });
 
-  // Notification → Approvals: consume the one-shot focus request and apply the
-  // existing Set filter so only that card shows (Clear filters resets).
-  // Depends on the PENDING VALUE itself (not just sets.length) so the jump
-  // also works when the board is already mounted — clicking the panel button
-  // while ON the Approvals tab changes no module and loads no new sets.
+  // Notification → Approvals: consume the one-shot focus request and open that
+  // set's preview card directly (owner decision 2026-08-04 — it used to pin the
+  // `set` filter, which no longer exists). Depends on the PENDING VALUE itself
+  // (not just sets.length) so the jump also works when the board is already
+  // mounted — clicking the panel button while ON the Approvals tab changes no
+  // module and loads no new sets.
   const { consumePendingApprovalSetId, state: appState } = useApp();
   const pendingFocusId = appState.pendingApprovalSetId;
   useEffect(() => {
@@ -167,57 +304,33 @@ export function SetsBoard() {
     if (focusId === null) return;
     // Number(): notification setIds arrive as strings (wpdb BIGINT JSON).
     const target = sets.find((s) => Number(s.id) === Number(focusId));
-    if (target) {
-      listState.setFilterValue('set', {
-        kind: 'searchableSelect',
-        selected: [target.name],
-      });
-    }
+    if (target) openPreview(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingFocusId, sets.length]);
 
   const brandOptions = useMemo(
-    () => uniqueValues(sets, (s) => s.snapshot.brandName),
-    [sets]
-  );
-  const projectOptions = useMemo(
-    () => uniqueValues(sets, (s) => s.snapshot.projectName),
-    [sets]
-  );
-  const setNameOptions = useMemo(
-    () => uniqueValues(sets, (s) => s.name),
-    [sets]
+    () => linkOptions(brandRows, sets, (s) => s.brandId, 'Brand'),
+    [brandRows, sets]
   );
   const deliveryOptions = useMemo(
-    () => uniqueValues(setsWithDelivery, (s) => s.deliveryName ?? undefined),
-    [setsWithDelivery]
+    () => linkOptions(deliveryRows, sets, (s) => s.deliveryId, 'Delivery'),
+    [deliveryRows, sets]
+  );
+  const projectOptions = useMemo(
+    () => linkOptions(projectRows, sets, (s) => s.projectId, 'Project'),
+    [projectRows, sets]
   );
 
-  const searchQuery = readSearch(listState.filterState);
   const brandValue = readSelect(listState.filterState, 'brand');
-  const projectValue = readSelect(listState.filterState, 'project');
   const deliveryValue = readSelect(listState.filterState, 'delivery');
-  const setValue = readSelect(listState.filterState, 'set');
+  const projectValue = readSelect(listState.filterState, 'project');
   const sortValue = listState.sortId ?? NO_SORT_VALUE;
 
-  const handleSearchChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const next = event.target.value;
-      listState.setFilterValue(
-        'search',
-        next.trim() ? { kind: 'text', query: next } : undefined
-      );
-    },
-    [listState]
-  );
-
   const handleSelectChange = useCallback(
-    (filterId: string, value: string) => {
+    (filterId: string, value: string | null) => {
       listState.setFilterValue(
         filterId,
-        value === ALL_VALUE
-          ? undefined
-          : { kind: 'searchableSelect', selected: [value] }
+        value === null ? undefined : { kind: 'searchableSelect', selected: [value] }
       );
     },
     [listState]
@@ -231,6 +344,18 @@ export function SetsBoard() {
   );
 
   const getColumnId = useCallback((s: ApprovalSet) => s.status, []);
+
+  // ─── Select mode ─────────────────────────────────────────────
+  // An explicit mode, toggled from the toolbar. It used to be inferred from
+  // "is anything selected", which meant the only way in was a checkbox that
+  // appeared on hover — selection was offered before it was asked for.
+  const [selectMode, setSelectMode] = useState(false);
+  const toggleSelectMode = useCallback(() => {
+    setSelectMode((on) => {
+      if (on) clearSelection(); // leaving the mode drops the selection with it
+      return !on;
+    });
+  }, [clearSelection]);
 
   // ─── Delete confirmation flow ────────────────────────────────
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
@@ -267,13 +392,18 @@ export function SetsBoard() {
     (s: ApprovalSet) => (
       <SetCard
         set={s}
+        // Resolved from the brands registry: the list endpoint doesn't ship the
+        // snapshot, so the card's own snapshot.brandName is always empty.
+        brandName={s.brandId != null ? brandNameById.get(s.brandId) ?? null : null}
         onCopyLink={copyShareLink}
         onOpenFeedback={openFeedback}
         onOpenPreview={openPreview}
         onRequestDelete={requestSingleDelete}
         onToggleSelect={handleToggleSelect}
+        onOpenItem={handleOpenItem}
+        onDeleteItem={handleDeleteItem}
         isSelected={isSelected(s.id)}
-        selectMode={hasSelection}
+        selectMode={selectMode}
       />
     ),
     [
@@ -283,8 +413,24 @@ export function SetsBoard() {
       requestSingleDelete,
       handleToggleSelect,
       isSelected,
-      hasSelection,
+      selectMode,
+      brandNameById,
     ]
+  );
+
+  // Lane "+" → hand the lane and the live filter values up to the dialog owner.
+  const handleColumnCreate = useCallback(
+    (columnId: string) => {
+      if (!onCreateInLane || !isApprovalStatus(columnId)) return;
+      const asId = (v: string | null) => (v != null ? Number(v) : null);
+      onCreateInLane({
+        status: columnId,
+        brandId: asId(brandValue),
+        deliveryId: asId(deliveryValue),
+        projectId: asId(projectValue),
+      });
+    },
+    [onCreateInLane, brandValue, deliveryValue, projectValue]
   );
 
   const handleMove = useCallback(
@@ -307,13 +453,13 @@ export function SetsBoard() {
       {/* Top bar: bulk-action bar when any card is selected, otherwise
           the standard filter/sort bar. They occupy the same slot so the
           layout below never shifts. */}
-      {hasSelection ? (
+      {selectMode ? (
         <div
-          className="flex flex-wrap items-center gap-3 mb-6 bg-blue-50 p-2 rounded-lg border border-blue-200"
+          className="flex flex-wrap items-center gap-3 mb-6 bg-accent p-2 rounded-lg border border-border"
           role="region"
           aria-label="Bulk actions"
         >
-          <div className="text-sm font-medium text-blue-900 pl-2">
+          <div className="text-sm font-medium text-accent-foreground pl-2">
             {selectedIds.size} selected
           </div>
           <Button
@@ -330,124 +476,82 @@ export function SetsBoard() {
             type="button"
             variant="ghost"
             size="sm"
-            onClick={clearSelection}
-            className="h-9 ml-auto text-slate-600"
+            onClick={toggleSelectMode}
+            className="h-9 ml-auto text-muted-foreground"
           >
             <X className="w-4 h-4 mr-1" aria-hidden="true" />
-            Cancel
+            Done
           </Button>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-3 mb-6 bg-slate-50/50 p-2 rounded-lg border border-slate-100">
-          <div className="relative flex-1 min-w-[200px] max-w-[300px]">
-            <Search
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <Input
-              placeholder="Search approval sets..."
-              value={searchQuery}
-              onChange={handleSearchChange}
-              className="pl-9 h-9 bg-white"
-              aria-label="Search approval sets"
-            />
-          </div>
-
-          <Select
+        <div className="flex flex-wrap items-center gap-3 mb-6 bg-muted/40 p-2 rounded-lg border border-border">
+          <SearchableSelect
+            options={brandOptions}
             value={brandValue}
-            onValueChange={(v) => handleSelectChange('brand', v)}
-          >
-            <SelectTrigger className="w-[160px]" aria-label="Brand">
-              <SelectValue placeholder="Brand" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>All brands</SelectItem>
-              {brandOptions.map((b) => (
-                <SelectItem key={b} value={b}>
-                  {b}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={(v) => handleSelectChange('brand', v)}
+            placeholder="Brand"
+            allLabel="All brands"
+            searchPlaceholder="Search brands…"
+            emptyLabel="No brands match"
+            className="w-[180px]"
+          />
 
-          <Select
-            value={projectValue}
-            onValueChange={(v) => handleSelectChange('project', v)}
-          >
-            <SelectTrigger
-              className="w-[160px]"
-              aria-label="Project"
-            >
-              <SelectValue placeholder="Project" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>All projects</SelectItem>
-              {projectOptions.map((p) => (
-                <SelectItem key={p} value={p}>
-                  {p}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select
+          <SearchableSelect
+            options={deliveryOptions}
             value={deliveryValue}
-            onValueChange={(v) => handleSelectChange('delivery', v)}
-          >
-            <SelectTrigger
-              className="w-[160px]"
-              aria-label="Delivery"
-            >
-              <SelectValue placeholder="Delivery" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>All deliveries</SelectItem>
-              {deliveryOptions.map((d) => (
-                <SelectItem key={d} value={d}>
-                  {d}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={(v) => handleSelectChange('delivery', v)}
+            placeholder="Delivery"
+            allLabel="All deliveries"
+            searchPlaceholder="Search deliveries…"
+            emptyLabel="No deliveries match"
+            className="w-[180px]"
+          />
 
-          <Select
-            value={setValue}
-            onValueChange={(v) => handleSelectChange('set', v)}
-          >
-            <SelectTrigger
-              className="w-[160px]"
-              aria-label="Approval set"
-            >
-              <SelectValue placeholder="Approval set" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>All sets</SelectItem>
-              {setNameOptions.map((n) => (
-                <SelectItem key={n} value={n}>
-                  {n}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            options={projectOptions}
+            value={projectValue}
+            onChange={(v) => handleSelectChange('project', v)}
+            placeholder="Project"
+            allLabel="All projects"
+            searchPlaceholder="Search projects…"
+            emptyLabel="No projects match"
+            className="w-[180px]"
+          />
 
-          {hasActiveFilter && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={listState.clearAll}
-              className="h-9 px-2 text-slate-500"
-            >
-              <X className="w-4 h-4 mr-1" aria-hidden="true" />
-              Clear filters
-            </Button>
-          )}
-
+          {/* Clear-filters lives in the RIGHT-HAND group, not mid-row. Rendering
+              it between the dropdowns inserted an element into a flex-wrap row,
+              which could wrap the bar to a second line and push the board down
+              the moment a filter was chosen. Here the bar's height is constant
+              whether or not a filter is active. */}
           <div className="ml-auto flex items-center gap-3">
-            <div className="text-xs text-slate-500 font-medium">
-              Showing {listState.filteredItems.length} set
-              {listState.filteredItems.length === 1 ? '' : 's'}
+            {hasActiveFilter && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={listState.clearAll}
+                className="h-9 px-2 text-muted-foreground"
+              >
+                <X className="w-4 h-4 mr-1" aria-hidden="true" />
+                Clear filters
+              </Button>
+            )}
+            {/* Always-present slot: it reports the count, or says nothing matched.
+                Either way it is the SAME element in the SAME row, so the board
+                below never moves because of filter state. */}
+            <div className="text-xs text-muted-foreground font-medium">
+              {isFilterEmpty ? (
+                'No sets match your filters'
+              ) : (
+                <>
+                  Showing {listState.filteredItems.length} set
+                  {listState.filteredItems.length === 1 ? '' : 's'}
+                </>
+              )}
             </div>
             <Select value={sortValue} onValueChange={handleSortChange}>
+              {/* Width only. `h-9 bg-card` was dropped in the merge: the base
+                  Select now owns height + surface (select.tsx), and a call-site
+                  copy re-opens the drift its consistency test guards against. */}
               <SelectTrigger className="w-[170px]" aria-label="Sort">
                 <SelectValue placeholder="Sort" />
               </SelectTrigger>
@@ -460,6 +564,20 @@ export function SetsBoard() {
                 ))}
               </SelectContent>
             </Select>
+
+            {/* Selection is a mode you turn ON here — cards no longer offer a
+                checkbox just because the cursor passed over them. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={toggleSelectMode}
+              className="h-9 gap-1.5"
+              aria-pressed={selectMode}
+            >
+              <CheckSquare className="w-4 h-4" aria-hidden="true" />
+              Select
+            </Button>
           </div>
         </div>
       )}
@@ -473,24 +591,17 @@ export function SetsBoard() {
         />
       ) : (
         <div className="flex-1 min-h-0 overflow-auto flex flex-col">
-          {isFilterEmpty && (
-            <div className="flex items-center gap-2 text-sm text-slate-500 mb-3 shrink-0">
-              <span>No sets match your filters.</span>
-              <button
-                type="button"
-                onClick={listState.clearAll}
-                className="text-slate-700 underline underline-offset-2 hover:text-slate-900"
-              >
-                Clear filters
-              </button>
-            </div>
-          )}
+          {/* No "nothing matched" row here. It used to render above the board and
+              pushed every lane down the moment a filter matched nothing — the
+              layout must not move because of filter state. The same message now
+              occupies the bar's existing counter slot, which is always present. */}
           <KanbanBoard<ApprovalSet>
             columns={setColumns}
             items={listState.filteredItems}
             getColumnId={getColumnId}
             renderCard={renderCard}
             onItemMove={handleMove}
+            onColumnCreate={onCreateInLane ? handleColumnCreate : undefined}
             isLoading={isLoading}
             error={error}
             ariaLabel="Approval sets pipeline"
@@ -499,6 +610,30 @@ export function SetsBoard() {
       )}
 
       <FeedbackDialog set={feedbackSet} onClose={closeFeedback} />
+
+      {/* A set authored as a document opens AS that document — the Notion page,
+          in the admin, at full size. Everything else keeps the iframe preview of
+          the client board, unchanged. The branch is read off the set's own data
+          (does it hold a custom document?), never a maintained list of set kinds.
+          Read-only: approving belongs to the client, and the admin holds no
+          public token, so no Approve action is passed. */}
+      {/* A card opens as THE CARD — the client view of everything inside it,
+          from the first frame. ONE component covers both the waiting state and
+          the loaded state, because they were previously two: the wait rendered
+          `CardDocumentView`, the Notion page, so on this host — where the fetch
+          takes tens of seconds — clicking a card showed a document view for the
+          whole time and looked like nothing had changed. A document is a
+          sub-item of a card; it is never the card. */}
+      {/* Clicking a card opens the CLIENT VIEW — the iframe of the real public
+          board. This is what worked before 9a637a0, when I replaced it with a
+          document view and spent a day fixing the consequences. Restored
+          verbatim from c5eae13.
+
+          The collection modal (ApprovalSetModal) is not wired here: its
+          sub-cards are rendered by a component that hardcodes every asset type,
+          so documents render as a snippet, their copy button reads a field they
+          do not have, and they cannot be edited. It goes back only when the
+          type registry makes those work. */}
       <PreviewDialog
         set={previewSet}
         url={previewSet ? getPublicBoardUrl(previewSet.token) : null}

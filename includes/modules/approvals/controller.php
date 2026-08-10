@@ -78,6 +78,10 @@ class PCM_REST_Approvals extends PCM_REST_Base
             // Append assets to an in-review set (id is numeric, so it can't
             // collide with the token-based public asset route below).
             array('POST',  '/approvals/sets/(?P<id>\d+)/assets', 'append_assets', array(), 'edit_posts'),
+            // Remove ONE item from a card. Numeric id, so it cannot collide with
+            // the token-based public asset route below — the same distinction the
+            // append route above relies on.
+            array('DELETE', '/approvals/sets/(?P<id>\d+)/assets/(?P<asset_id>[A-Za-z0-9_-]+)', 'remove_asset', array(), 'edit_posts'),
             array('POST',  '/approvals/sets/(?P<token>[a-zA-Z0-9_-]+)/assets/(?P<asset_id>[a-zA-Z0-9_-]+)', 'update_snapshot_asset', array(), 'public'),
         );
     }
@@ -122,9 +126,18 @@ class PCM_REST_Approvals extends PCM_REST_Base
             return $this->not_found('Delivery');
         }
 
+        // Optional target lane (the board's lane "+" creates straight into it).
+        // Absent = 'draft', exactly as before. An unrecognised value is a named
+        // error, never a silent demotion to draft.
+        $status = isset($params['status']) ? sanitize_text_field((string) $params['status']) : '';
+        if ($status !== '' && !in_array($status, PCM_Approvals_Service::STATUSES, true)) {
+            return $this->error('Invalid status: ' . $status);
+        }
+
         try {
             $set_id = PCM_Approvals_Service::create_set((int)$pcm_user->id, array(
                 'name'       => sanitize_text_field($params['name']),
+                'status'     => $status !== '' ? $status : null,
                 'brandId'    => !empty($params['brandId']) ? (int)$params['brandId'] : null,
                 'projectId'  => !empty($params['projectId']) ? (int)$params['projectId'] : null,
                 'deliveryId' => $delivery_id,
@@ -193,6 +206,49 @@ class PCM_REST_Approvals extends PCM_REST_Base
             return $this->success($result);
         } catch (\Throwable $e) {
             return $this->error('Failed to append to approval set: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Remove one item from an approval card.
+     *
+     * DELETE /approvals/sets/{id}/assets/{assetId}
+     *
+     * Ownership-scoped and refused once the card is past client review or fully
+     * approved — the same law `append_assets` obeys, because adding and removing
+     * an item are the same operation in opposite directions. A card the client
+     * has signed off must not lose an item underneath them.
+     */
+    public function remove_asset(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $id       = absint($request->get_param('id'));
+        $asset_id = sanitize_text_field((string) $request->get_param('asset_id'));
+
+        if ($id <= 0 || $asset_id === '') {
+            return $this->error('A set id and an asset id are required.');
+        }
+
+        require_once __DIR__ . '/service.php';
+
+        try {
+            $result = PCM_Approvals_Service::remove_asset($id, (int) $pcm_user->id, $asset_id);
+            if ($result === 'not_found') {
+                return $this->not_found('Approval set');
+            }
+            if ($result === 'locked') {
+                return $this->error(
+                    __('This set is past client review — items can no longer be removed.', 'power-creatives'),
+                    409,
+                    'pcm_set_locked'
+                );
+            }
+            if ($result === 'missing') {
+                return $this->not_found('Asset');
+            }
+            return $this->success($result);
+        } catch (\Throwable $e) {
+            return $this->error('Failed to remove the asset: ' . $e->getMessage(), 500);
         }
     }
 
@@ -628,19 +684,36 @@ class PCM_REST_Approvals extends PCM_REST_Base
         $pcm_user = $this->get_current_pcm_user();
         $id       = (int) $request->get_param('id');
         $params   = $request->get_json_params() ?: array();
-        $email    = sanitize_email($params['email'] ?? '');
         // Optional custom invite message (editable in the share dialog). Multi-line
         // plain text — sanitized, then escaped + nl2br'd in the email template.
         $message  = isset($params['message']) ? sanitize_textarea_field((string) $params['message']) : '';
 
-        if ($id <= 0 || $email === '' || !is_email($email)) {
+        // One or many recipients: `emails` is the list the share step sends;
+        // `email` is the original single-recipient shape, still accepted.
+        $raw = array();
+        if (isset($params['emails']) && is_array($params['emails'])) {
+            $raw = $params['emails'];
+        } elseif (isset($params['email'])) {
+            $raw = array($params['email']);
+        }
+
+        $emails = array();
+        foreach ($raw as $candidate) {
+            $clean = sanitize_email((string) $candidate);
+            if ($clean !== '' && is_email($clean) && !in_array($clean, $emails, true)) {
+                $emails[] = $clean;
+            }
+        }
+
+        // Never a silent no-send: nothing valid in the list is a named error.
+        if ($id <= 0 || empty($emails)) {
             return $this->error('A valid email is required.');
         }
 
         require_once __DIR__ . '/service.php';
 
         try {
-            $set = PCM_Approvals_Service::share_set($id, (int) $pcm_user->id, $email, $message);
+            $set = PCM_Approvals_Service::share_set($id, (int) $pcm_user->id, $emails, $message);
             if ($set === false) {
                 return $this->not_found('Approval Set');
             }

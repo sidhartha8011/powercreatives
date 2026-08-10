@@ -14,14 +14,16 @@
  *     a transparent PNG overlay and rendered on top of the content here and on review.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
-import { Image as ImageIcon, PenLine, Brush } from 'lucide-react';
+import { toast } from 'sonner';
 
+import { useImageUpload } from '@/hooks/useImageUpload';
 import { getEditorExtensions } from '@/components/shared/editorExtensions';
-import { WriterBubbleMenu } from '@/modules/Writer/components/WriterBubbleMenu';
 import { ImageAnnotator } from './ImageAnnotator';
 import { CardDrawLayer } from './CardDrawLayer';
+import { ApprovalSelectionMenu } from './ApprovalSelectionMenu';
+import { ApprovalSlashMenu } from './ApprovalSlashMenu';
 
 // WordPress media library global (wp_enqueue_media() runs in class-pcm-admin.php).
 declare const wp: any;
@@ -36,27 +38,33 @@ interface CustomCardEditorProps {
   overlay?: string | null;
   /** Emitted when the draw layer is committed/cleared. */
   onOverlayChange?: (url: string | null) => void;
+  /**
+   * Drop this editor's own card chrome — its border, background and inner
+   * scroll box — because the surface it is placed on already provides them.
+   *
+   * Used by the opened approval card, which renders this editor on the Notion
+   * sheet: with the chrome on it reads as a card inside a card, and the inner
+   * `max-h` box makes a second scrollbar next to the sheet's own.
+   */
+  bare?: boolean;
+  /**
+   * Whether the document can be changed. `false` renders the same document with
+   * the contextual menus and annotation tools withheld.
+   *
+   * ONE instance serving both modes, rather than a second read-only Tiptap
+   * component beside this one — that is how the surfaces drift apart, and it is
+   * the pattern every Notion-style editor uses. The saved draw layer still
+   * renders in read-only mode; only the tools to change it are gone.
+   */
+  editable?: boolean;
+  /**
+   * Registers the editor's close barrier. The host awaits it before flushing
+   * the document so asynchronous media work cannot outlive the editor.
+   */
+  registerClosePreparation?: (prepare: (() => Promise<void>) | null) => void;
 }
 
-function ToolbarButton({ onClick, active, title, children }: {
-  onClick: () => void; active?: boolean; title: string; children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={onClick}
-      title={title}
-      className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-        active ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange }: CustomCardEditorProps) {
+export function CustomCardEditor({ content, onChange, placeholder, overlay, onOverlayChange, bare = false, editable = true, registerClosePreparation }: CustomCardEditorProps) {
   // Image to annotate. `pos` is the document position of an EXISTING image (paint bakes back
   // into it in place); `pos: null` means a freshly picked image that gets inserted at the cursor.
   const [annotate, setAnnotate] = useState<{ url: string; pos: number | null } | null>(null);
@@ -66,39 +74,115 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
   const contentBoxRef = useRef<HTMLDivElement | null>(null);
   const overlayBeforeDraw = useRef<string | null>(null);
   const editorRef = useRef<Editor | null>(null);
+  /** Becomes true only after initial editor construction/hydration has painted. */
+  const acceptsUserUpdates = useRef(false);
+  /**
+   * The live canvas while drawing, held in memory only.
+   *
+   * `CardDrawLayer` emits after every stroke. Those emissions stay here and are
+   * uploaded ONCE when the session ends — a drawing is one file, not one per
+   * stroke. The strokes are visible the whole time because the canvas itself is
+   * on screen; nothing needs to round-trip to show them.
+   */
+  const pendingOverlay = useRef<string | null>(null);
+  /** Upload work that must settle before the containing document can close. */
+  const pendingWork = useRef<Set<Promise<void>>>(new Set());
 
-  // Insert pasted / dropped image files inline (as base64). Lets you paste an image
-  // straight from the clipboard onto the card. Uses a ref because the editor isn't
-  // created yet when these extensions are built.
+  const trackPendingWork = (work: Promise<void>) => {
+    let tracked: Promise<void>;
+    tracked = work.finally(() => { pendingWork.current.delete(tracked); });
+    pendingWork.current.add(tracked);
+    // The initiating toolbar/paste path remains non-blocking; close preparation
+    // still retains and awaits the original tracked promise.
+    void tracked.catch(() => undefined);
+    return tracked;
+  };
+
+  const waitForPendingWork = async () => {
+    let firstFailure: unknown;
+    let hasFailure = false;
+    while (pendingWork.current.size > 0) {
+      const outcomes = await Promise.allSettled([...pendingWork.current]);
+      const rejected = outcomes.find((outcome) => outcome.status === 'rejected');
+      if (!hasFailure && rejected?.status === 'rejected') {
+        hasFailure = true;
+        firstFailure = rejected.reason;
+      }
+    }
+    if (hasFailure) throw firstFailure;
+  };
+
+  /**
+   * The ONE route an image takes out of this editor and into storage.
+   *
+   * Shared with the Writer's canvas. Every image this card can produce — pasted,
+   * dropped, annotated, or drawn — goes through here, so a data URL can never
+   * reach the document again. `compress: false` on the data-URL path: canvas
+   * output is already a finished PNG and a second lossy pass would soften the
+   * strokes someone just drew.
+   */
+  const { uploadImage, uploadDataUrl } = useImageUpload();
+
+  /**
+   * Insert pasted / dropped images — UPLOADED, never embedded.
+   *
+   * These used to be read straight to base64 and dropped into the document. A
+   * card then weighed half a megabyte, and worse: WordPress strips `data:` from
+   * any `src` on save, so the image lost its source, Tiptap dropped the node,
+   * and the next save wrote the emptied document over the real one.
+   *
+   * They now go to the media library through the shared `useImageUpload` hook —
+   * the same route the Writer's canvas uses — and the document stores a URL.
+   * Uses a ref because the editor isn't created yet when the extensions build.
+   */
   const insertImageFiles = (files: File[]) => {
     const imageFiles = files.filter((f) => f.type.startsWith('image/'));
     if (imageFiles.length === 0) return;
-    // Read every file, then insert ALL images in ONE transaction. Block images are atom
-    // NodeSelections, so inserting them one-by-one makes each replace the previous; a single
-    // insertContent with an array adds them as a fragment so they all land in order.
-    Promise.all(imageFiles.map((file) => new Promise<{ src: string; alt: string } | null>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result ? { src: String(reader.result), alt: file.name || 'Pasted image' } : null);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(file);
-    }))).then((results) => {
+
+    const toastId = toast.loading(imageFiles.length > 1 ? 'Uploading images…' : 'Uploading image…');
+    // Upload all, then insert in ONE transaction. Block images are atom
+    // NodeSelections, so inserting them one-by-one makes each replace the
+    // previous; a single insertContent with an array keeps them in order.
+    const work = Promise.all(imageFiles.map(async (file) => {
+      try {
+        return { src: await uploadImage(file), alt: file.name || 'Pasted image' };
+      } catch {
+        return null;
+      }
+    })).then((results) => {
       const nodes = results
         .filter((r): r is { src: string; alt: string } => r !== null)
         .map((r) => ({ type: 'image', attrs: { src: r.src, alt: r.alt } }));
-      if (nodes.length) editorRef.current?.chain().focus().insertContent(nodes).run();
+      if (nodes.length) {
+        editorRef.current?.chain().focus().insertContent(nodes).run();
+        toast.success(nodes.length > 1 ? `${nodes.length} images added` : 'Image added', { id: toastId });
+      } else {
+        toast.error('Could not upload the image.', { id: toastId });
+      }
     });
+    trackPendingWork(work);
   };
 
   const editor = useEditor({
     // imageActions: false → plain images, no Edit/Regenerate hover overlay in this editor.
     extensions: getEditorExtensions({ placeholder: placeholder ?? 'Write your document…', imageActions: false, onImageFiles: insertImageFiles }),
     content: content || '<p></p>',
-    editable: true,
+    editable,
     editorProps: {
-      // `pcm-card-editor` carries the compact document typography (index.css). NOTE: the
-      // Tailwind `prose` classes used before were inert — the typography plugin isn't loaded,
-      // so content rendered at unstyled browser defaults (oversized, bloaty).
-      attributes: { class: 'pcm-card-editor outline-none max-w-none min-h-[460px] focus:outline-none' },
+      // `pcm-card-editor` carries the document typography (index.css); the
+      // NOTE: the Tailwind `prose` classes used before were inert — the typography
+      // plugin isn't loaded, so content rendered at unstyled browser defaults
+      // (oversized, bloaty).
+      // `max-w-none` REMOVED. Tailwind is imported with the `important` flag
+      // (index.css:8), so `.max-w-none { max-width: none !important }` beat
+      // `.pcm-card-editor { max-width: var(--pcm-doc-measure) }` and the centred
+      // measure never applied — MEASURED in the browser as max-width "none" on a
+      // 739px-wide editor. The measure now actually takes effect.
+      //
+      // NO `min-h-[460px]`. It was a writing floor for the full-window dialog,
+      // and on the opened card it reserved 460px of blank body under a two-line
+      // checklist. The surface grows to its content on both.
+      attributes: { class: 'pcm-card-editor outline-none focus:outline-none' },
       // Double-click an image to paint directly ON it. Strokes are flattened INTO the image
       // (ImageAnnotator), so the annotation stays attached and scales with the image — it never
       // stretches or drifts when the layout reflows, unlike the whole-card draw overlay.
@@ -110,17 +194,35 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
         return false;
       },
     },
-    onUpdate: ({ editor }: { editor: Editor }) => onChange(editor.getHTML()),
+    onUpdate: ({ editor }: { editor: Editor }) => {
+      if (acceptsUserUpdates.current) onChange(editor.getHTML());
+    },
   });
 
   // Hydrate once the editor is ready (edit mode passes existing content).
   useEffect(() => {
+    acceptsUserUpdates.current = false;
     editorRef.current = editor; // keep the ref current for paste/drop image inserts
     if (editor && content && editor.getHTML() !== content) {
-      editor.commands.setContent(content);
+      // Hydration is not an edit. Emitting Tiptap's update event here caused an
+      // unchanged document to autosave merely because someone opened it.
+      editor.commands.setContent(content, { emitUpdate: false });
     }
+    // Extension normalization can dispatch its own transactions during editor
+    // construction. Only updates after the first interactive frame are edits.
+    const frame = window.requestAnimationFrame(() => {
+      acceptsUserUpdates.current = true;
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      acceptsUserUpdates.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
+
+  // Flip the mode in place. Remounting would rebuild the whole document and
+  // throw away the caret, so the same instance changes what it allows.
+  useEffect(() => { editor?.setEditable(editable); }, [editor, editable]);
 
   // Open the WordPress media library and hand the chosen image URL to a callback.
   // Open the WordPress media library. With `multiple`, the user can pick several images
@@ -171,31 +273,76 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
     const box = contentBoxRef.current;
     if (box) setDrawDims({ w: box.offsetWidth, h: Math.max(box.scrollHeight, box.offsetHeight) });
     overlayBeforeDraw.current = overlay ?? null;
+    pendingOverlay.current = overlay ?? null;
     setDrawing(true);
   };
-  // Toggle paint mode. Clicking the active Brush button de-activates paint, keeping whatever was
-  // drawn (strokes are saved live via onOverlayChange, so this is the same as pressing "Done").
-  const toggleDraw = () => { if (drawing) setDrawing(false); else startDraw(); };
+  /**
+   * The draw layer finished — upload the strokes and hand back a URL.
+   *
+   * `CardDrawLayer` emits canvas output (a data URL) live on every stroke. Only
+   * the FINAL layer is uploaded, on done/cancel, so a drawing session is one
+   * upload rather than one per stroke. `null` means the layer was cleared and
+   * passes straight through.
+   */
+  const commitOverlay = (dataUrl: string | null): Promise<void> => {
+    if (!onOverlayChange) return Promise.resolve();
+    if (!dataUrl) { onOverlayChange(null); return Promise.resolve(); }
+    if (!dataUrl.startsWith('data:')) { onOverlayChange(dataUrl); return Promise.resolve(); } // already hosted
+    const toastId = toast.loading('Saving drawing…');
+    const work = uploadDataUrl(dataUrl, `card-drawing-${Date.now()}.png`)
+      .then((url) => { onOverlayChange(url); toast.success('Drawing saved', { id: toastId }); })
+      .catch((error) => {
+        toast.error('Could not save the drawing.', { id: toastId });
+        throw error;
+      });
+    return trackPendingWork(work);
+  };
+
+  /** Leave paint mode, keeping the strokes. One upload, at the end. */
+  const finishDraw = () => {
+    void commitOverlay(pendingOverlay.current);
+    setDrawing(false);
+  };
+
+  // Give the document host one barrier for all asynchronous editor work. If a
+  // draw session is still open, its final canvas is committed before the same
+  // pending-work set is drained.
+  useEffect(() => {
+    if (!registerClosePreparation) return;
+    registerClosePreparation(async () => {
+      if (drawing) {
+        await commitOverlay(pendingOverlay.current);
+        setDrawing(false);
+      }
+      await waitForPendingWork();
+    });
+    return () => registerClosePreparation(null);
+  }, [drawing, registerClosePreparation]);
 
   if (!editor) return null;
 
   return (
-    <div className="rounded-lg border border-border bg-card">
-      {/* Top settings bar — IMAGE + PAINT tools only. All text formatting lives in the
-          contextual bubble menu, which appears when the user selects text. */}
-      <div className="flex flex-wrap items-center gap-1 border-b border-border p-1.5">
-        <ToolbarButton title="Insert image" onClick={insertImage}><ImageIcon className="h-4 w-4" /></ToolbarButton>
-        <ToolbarButton title="Annotate an image — select an image (or double-click it) to paint directly on it" onClick={annotateImage}><PenLine className="h-4 w-4" /></ToolbarButton>
-        <ToolbarButton title={drawing ? 'Stop drawing' : 'Draw on the whole card'} active={drawing} onClick={toggleDraw}><Brush className="h-4 w-4" /></ToolbarButton>
-      </div>
-      <div className="max-h-[72vh] overflow-y-auto p-4">
+    <div className={bare ? '' : 'rounded-lg border border-border bg-card'}>
+      <div className={bare ? '' : 'max-h-[72vh] overflow-y-auto p-4'}>
         {/* Positioned wrapper so the draw layer + overlay align with the content. */}
         <div ref={contentBoxRef} className="relative">
           <EditorContent editor={editor} />
-          {/* Floating formatting toolbar — the same contextual bubble menu as the Writer canvas,
-              but `selectionOnly` so it appears ONLY when the user selects text (never on empty
-              lines). Image button reuses the picker; drawing mode hides it to avoid overlap. */}
-          {!drawing && <WriterBubbleMenu editor={editor} onOpenImagePicker={insertImage} selectionOnly />}
+          {/* Selected text gets the shared formatter; typing `/` gets Approval's
+              block/media menu. Drawing mode hides both to avoid canvas overlap. */}
+          {editable && !drawing && (
+            <>
+              <ApprovalSelectionMenu
+                editor={editor}
+                onOpenImagePicker={insertImage}
+              />
+              <ApprovalSlashMenu
+                editor={editor}
+                onInsertImage={insertImage}
+                onAnnotateImage={annotateImage}
+                onStartDrawing={startDraw}
+              />
+            </>
+          )}
           {/* Saved draw layer, shown on top of the content while not actively drawing. */}
           {overlay && !drawing && (
             <img src={overlay} alt="" aria-hidden className="pointer-events-none absolute inset-x-0 top-0 w-full" />
@@ -206,34 +353,50 @@ export function CustomCardEditor({ content, onChange, placeholder, overlay, onOv
               width={drawDims.w}
               height={drawDims.h}
               initial={overlayBeforeDraw.current}
-              onChange={(url) => onOverlayChange?.(url)}
-              onDone={() => setDrawing(false)}
+              /* Buffered, not saved. The canvas is on screen, so the strokes are
+                 already visible; uploading here would mean one file per stroke. */
+              onChange={(url) => { pendingOverlay.current = url; }}
+              onDone={finishDraw}
               onCancel={() => { onOverlayChange?.(overlayBeforeDraw.current); setDrawing(false); }}
             />
           )}
         </div>
       </div>
 
-      {/* Annotation: draw on the picked image, then insert the flattened PNG. */}
+      {/* Annotation: draw on the picked image, upload the flattened PNG, insert its URL.
+          The annotator hands back canvas output — a data URL. That must not reach
+          the document: WordPress strips `data:` from `src` on save, which left the
+          image source-less and then emptied the card. It is uploaded first, and
+          only the hosted URL is written into the document. */}
       <ImageAnnotator
         open={!!annotate}
         imageUrl={annotate?.url ?? null}
         onCancel={() => setAnnotate(null)}
         onInsert={(dataUrl) => {
           const pos = annotate?.pos ?? null;
-          if (pos != null) {
-            // Replace the annotated image IN PLACE (same document position) so the baked-in
-            // strokes stay attached to that image — no duplicate inserted at the cursor.
-            editor.chain().focus().command(({ tr }) => {
-              const node = tr.doc.nodeAt(pos);
-              if (!node || node.type.name !== 'image') return false;
-              tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: dataUrl, alt: 'Annotated image' });
-              return true;
-            }).run();
-          } else {
-            editor.chain().focus().setImage({ src: dataUrl, alt: 'Annotated image' }).run();
-          }
           setAnnotate(null);
+          const toastId = toast.loading('Saving annotation…');
+          const work = uploadDataUrl(dataUrl, `annotated-${Date.now()}.png`)
+            .then((src) => {
+              if (pos != null) {
+                // Replace the annotated image IN PLACE (same document position) so the baked-in
+                // strokes stay attached to that image — no duplicate inserted at the cursor.
+                editor.chain().focus().command(({ tr }) => {
+                  const node = tr.doc.nodeAt(pos);
+                  if (!node || node.type.name !== 'image') return false;
+                  tr.setNodeMarkup(pos, undefined, { ...node.attrs, src, alt: 'Annotated image' });
+                  return true;
+                }).run();
+              } else {
+                editor.chain().focus().setImage({ src, alt: 'Annotated image' }).run();
+              }
+              toast.success('Annotation saved', { id: toastId });
+            })
+            .catch((error) => {
+              toast.error('Could not save the annotation.', { id: toastId });
+              throw error;
+            });
+          trackPendingWork(work);
         }}
       />
     </div>

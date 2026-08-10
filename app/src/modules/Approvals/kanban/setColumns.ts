@@ -9,6 +9,7 @@
  * colors + status dots are pixel-matched to the reference design.
  */
 
+import type { SearchableSelectOption } from '@/components/shared/SearchableSelect';
 import type { KanbanColumn } from '@/components/shared/Kanban';
 
 import type { ApprovalStatus } from '../types';
@@ -58,3 +59,18 @@ export const setColumns: ReadonlyArray<ApprovalSetColumn> = [
     accentText:  '#6e7a8a',
   },
 ];
+
+/**
+ * The lanes as dropdown options — ONE shape, in the shared SearchableSelect
+ * vocabulary, derived from the ONE registry above.
+ *
+ * Every lane dropdown reads this: the create dialog's Lane field and the share
+ * step's "move to lane after sending". They previously each built their own
+ * shape and converted between them at the call site — `{value,label}` mapped to
+ * `{id,label}` and immediately mapped back to `{value,label}` inside the panel,
+ * two conversions that could only ever drift.
+ */
+export const laneOptions: ReadonlyArray<SearchableSelectOption> = setColumns.map((c) => ({
+  value: c.id as string,
+  label: c.label,
+}));

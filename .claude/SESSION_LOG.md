@@ -13031,3 +13031,4 @@ Also: php -l clean, tsc 59 = baseline with 0 in trpc.ts, vite build clean, full 
 present in the BUILT bundle, not just source.
 NOT LIVE-VERIFIED: reproducing needs a genuinely expired nonce (12–24h old tab); proof is the unit +
 mutation tests. Not committed.
+

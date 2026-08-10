@@ -428,6 +428,43 @@ check('sanitize: dedupe + front-page refusal + unsafe target dropped', count($cl
     && $clean[0] === array('from' => '/keep', 'to' => 'https://site.example/kept', 'code' => 302)
     && $clean[1] === array('from' => '/bad-code', 'to' => 'https://site.example/x', 'code' => 301), $clean);
 
+// ═════ APPROVALS — a save may never erase a document ═════════════════════════
+//
+// On 2026-08-06 approval set 26 lost 489,939 bytes of content: an empty document
+// was stored over a real one. The guard that makes that impossible is extracted
+// from the REAL service file and exercised here — same technique as the
+// connector template above, so this tests shipping code and not a copy of it.
+//
+// SCOPE, stated honestly: only `would_erase_document` is provable standalone —
+// it is pure string logic over `wp_strip_all_tags`, which this harness shims
+// faithfully. Its sibling `sanitize_document_html` depends on WordPress's own
+// kses protocol list and CANNOT be proven without WordPress; a shim would only
+// test the shim. That one is proven in web context instead.
+echo "\n── approvals: a save may never erase a document ──\n";
+
+$approvals_src = file_get_contents($root . '/includes/modules/approvals/service.php');
+if ($approvals_src === false
+    || !preg_match('/private static function would_erase_document\((.*?)\n    \}/s', $approvals_src, $wm)) {
+    check('would_erase_document extracted from the real service', false, 'method not found');
+} else {
+    eval('function pcm_would_erase_document(' . $wm[1] . "\n}");
+
+    check('empty over content is REFUSED — the set 26 regression',
+        pcm_would_erase_document('<p data-id="x"></p>', '<p>Real work</p>') === true);
+    check('empty over an image-only card is REFUSED',
+        pcm_would_erase_document('<p></p>', '<img src="data:image/png;base64,AAAA">') === true);
+    check('empty over empty is allowed (nothing to lose)',
+        pcm_would_erase_document('<p></p>', '') === false);
+    check('empty over a blank paragraph is allowed',
+        pcm_would_erase_document('<p></p>', '<p></p>') === false);
+    check('real text is always allowed through',
+        pcm_would_erase_document('<p>New words</p>', '<p>Old words</p>') === false);
+    check('an image-only document is NOT treated as empty',
+        pcm_would_erase_document('<img src="https://x.test/a.png">', '<p>Old words</p>') === false);
+    check('whitespace-only does not sneak past as content',
+        pcm_would_erase_document('<p>   </p>', '<p>Real work</p>') === true);
+}
+
 // ═════ summary ═════
 echo "\n" . ($FAIL === 0 ? "ALL GREEN" : "FAILURES: $FAIL") . " — $PASS passed, $FAIL failed\n";
 exit($FAIL === 0 ? 0 : 1);

@@ -381,6 +381,23 @@ class PCM_REST_Assets extends PCM_REST_Base
             return $this->success(array());
         }
 
+        // `basic=1` — the caller only needs id/name/deliveryId (dropdowns, pickers).
+        // Skips everything below: a GROUP_CONCAT of every asset URL for every
+        // project, a per-type COUNT, a second COUNT over copy_results, and a
+        // `SET SESSION group_concat_max_len`. The Approvals board asked for project
+        // NAMES and was paying for all of it on first paint.
+        if (filter_var($request->get_param('basic'), FILTER_VALIDATE_BOOLEAN)) {
+            return $this->success(array_map(static function ($row) {
+                return array(
+                    'id'         => (int) $row->id,
+                    'name'       => $row->name,
+                    'deliveryId' => $row->deliveryId !== null ? (int) $row->deliveryId : null,
+                    'siteId'     => $row->siteId !== null ? (int) $row->siteId : null,
+                    'status'     => $row->status,
+                );
+            }, $results));
+        }
+
         // --- BATCH LOADING ---
         $project_ids = array_map(function($row) { return (int)$row->id; }, $results);
         $placeholders = implode(',', array_fill(0, count($project_ids), '%d'));
@@ -458,7 +475,14 @@ class PCM_REST_Assets extends PCM_REST_Base
     /**
      * Create a new project.
      *
-     * Body: { name: string, description?: string, type?: string }
+     * Body: { name: string, description?: string, type?: string, deliveryId?: int|null }
+     *
+     * `deliveryId` is optional and nullable — a project with no delivery is a
+     * legitimate state (it simply has no brand either, see PCM_Hierarchy). It is
+     * accepted here so a caller that creates a project and knows its delivery does
+     * it in ONE insert; the alternative (create, then PATCH /projects/{id}/delivery)
+     * can half-fail and leave an unattached project behind. Ownership is verified
+     * the same way set_project_delivery() does it.
      *
      * @param WP_REST_Request $request
      * @return WP_REST_Response|WP_Error
@@ -475,6 +499,14 @@ class PCM_REST_Assets extends PCM_REST_Base
             return $this->error('Project name is required.');
         }
 
+        // Optional delivery link — must be a delivery the caller owns or is
+        // assigned (get_delivery_by_id is owned-OR-granted). An unknown id is a
+        // named error, never a silently unlinked project.
+        $delivery_id = !empty($params['deliveryId']) ? absint($params['deliveryId']) : null;
+        if ($delivery_id !== null && !PCM_DB::get_delivery_by_id($delivery_id, (int) $user->id)) {
+            return $this->not_found('Delivery');
+        }
+
         $now = current_time('mysql');
 
         $wpdb->insert($table, array(
@@ -482,6 +514,7 @@ class PCM_REST_Assets extends PCM_REST_Base
             'name' => sanitize_text_field($params['name']),
             'description' => sanitize_textarea_field($params['description'] ?? ''),
             'status' => 'active',
+            'deliveryId' => $delivery_id,
             'settings' => wp_json_encode(array('type' => $params['type'] ?? 'general')),
             'externalId' => sanitize_text_field($params['externalId'] ?? ''),
             'createdAt' => $now,
@@ -498,6 +531,7 @@ class PCM_REST_Assets extends PCM_REST_Base
             'id' => $id,
             'name' => $params['name'],
             'type' => $params['type'] ?? 'general',
+            'deliveryId' => $delivery_id,
             'externalId' => sanitize_text_field($params['externalId'] ?? ''),
         ), 201);
     }

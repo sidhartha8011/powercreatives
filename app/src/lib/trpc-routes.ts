@@ -1094,6 +1094,14 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `approvals/sets/${input.id}/assets`, body: { snapshot: input.snapshot } }),
     },
+    // Remove ONE item from a card. Ownership-scoped and lock-guarded server-side
+    // (409 pcm_set_locked once the card is past client review) — the UI must not
+    // be the only thing preventing it.
+    "approvals.removeAsset": {
+        endpoint: "approvals/sets",
+        method: "DELETE",
+        transform: (input: any) => ({ url: `approvals/sets/${input.id}/assets/${input.assetId}` }),
+    },
     "approvals.getPublicSet": {
         endpoint: "approvals/sets",
         method: "GET",
@@ -1148,7 +1156,19 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "approvals.shareSet": {
         endpoint: "approvals/sets",
         method: "POST",
-        transform: (input: any) => ({ url: `approvals/sets/${input.id}/share`, body: { email: input.email, message: input.message } }),
+        // PASS THE WHOLE INPUT. This was hand-picked as { email, message }, which
+        // silently dropped `emails` when the panel and the server both moved to a
+        // recipient list — the server saw no recipient and answered "A valid email
+        // is required" for a perfectly valid address, with nothing erroring
+        // anywhere. Naming the missing key would only have fixed that one field;
+        // a hand-built body is an allow-list, so the NEXT field added at both ends
+        // vanishes identically. The handler reads only what it needs and
+        // sanitises it — the client has no business deciding which of its own
+        // fields survive the trip.
+        transform: (input: any) => ({
+            url: `approvals/sets/${input.id}/share`,
+            body: input,
+        }),
     },
 
     // ── Notifications (approval-flow activity feed) ──

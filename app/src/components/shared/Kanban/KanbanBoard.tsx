@@ -18,7 +18,15 @@
  *   - Optional drag-and-drop (via @hello-pangea/dnd) when onItemMove is set.
  */
 
-import { useCallback, useMemo, useState, type DragEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type ReactNode,
+} from 'react';
+import { Plus } from 'lucide-react';
 import {
   DragDropContext,
   Draggable,
@@ -46,6 +54,7 @@ export function KanbanBoard<T extends { id: string | number }>({
   error = null,
   onItemMove,
   onColumnReorder,
+  onColumnCreate,
   className,
   style,
   ariaLabel = 'Kanban board',
@@ -115,6 +124,7 @@ export function KanbanBoard<T extends { id: string | number }>({
           renderCard={renderCard}
           dndEnabled={dndEnabled}
           onColumnReorder={onColumnReorder}
+          onColumnCreate={onColumnCreate}
         />
       ))}
     </div>
@@ -139,6 +149,7 @@ interface KanbanColumnProps<T extends { id: string | number }> {
   renderCard: (item: T, ctx: RenderCardContext) => ReactNode;
   dndEnabled: boolean;
   onColumnReorder?: (fromColumnId: string, toColumnId: string) => void;
+  onColumnCreate?: (columnId: string) => void;
 }
 
 /** Custom MIME type so lane drops never react to foreign drags. */
@@ -150,11 +161,22 @@ function KanbanColumn<T extends { id: string | number }>({
   renderCard,
   dndEnabled,
   onColumnReorder,
+  onColumnCreate,
 }: KanbanColumnProps<T>) {
   const pillStyle = {
     background: column.accentColor ?? undefined,
     color: column.accentText ?? undefined,
   };
+
+  /**
+   * Publish this lane's accent as CSS custom properties on the header, so any
+   * control inside it (today the "+") can wear the lane's own colours from the
+   * stylesheet instead of being hardcoded a single neutral in TSX.
+   */
+  const headerAccentVars = {
+    '--pck-column-accent-bg': column.accentColor ?? undefined,
+    '--pck-column-accent-text': column.accentText ?? undefined,
+  } as CSSProperties;
 
   // Lane reorder (native HTML5 drag on the header — separate element and
   // mechanism from the hello-pangea card DnD, so the two never interfere).
@@ -191,7 +213,7 @@ function KanbanColumn<T extends { id: string | number }>({
       onDragOver={reorderable ? handleHeaderDragOver : undefined}
       onDragLeave={reorderable ? () => setColumnDropTarget(false) : undefined}
       onDrop={reorderable ? handleHeaderDrop : undefined}
-      style={reorderable ? { cursor: 'grab' } : undefined}
+      style={reorderable ? { ...headerAccentVars, cursor: 'grab' } : headerAccentVars}
       title={reorderable ? 'Drag to reorder lanes' : undefined}
     >
       <span
@@ -205,6 +227,21 @@ function KanbanColumn<T extends { id: string | number }>({
       >
         <span className={styles.columnHeaderLabel}>{column.label}</span>
       </span>
+
+      {onColumnCreate && (
+        <button
+          type="button"
+          className={styles.columnCreate}
+          // Native drag on the header would otherwise start from the button too.
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+          onClick={() => onColumnCreate(column.id)}
+          aria-label={`Create in ${column.label}`}
+          title={`Create in ${column.label}`}
+        >
+          <Plus size={14} strokeWidth={2} aria-hidden="true" />
+        </button>
+      )}
     </header>
   );
 

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon, Download, Copy, FileText } from 'lucide-react';
+import { CheckCircle2, MessageSquare, Check, X, Video, Image as ImageIcon, Download, Copy, FileText, Tag, FolderOpen, CalendarDays, Type, AlignLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
@@ -9,8 +9,7 @@ import { TiptapBodyEditor } from '@/components/shared/TiptapBodyEditor';
 import { escapeAstral } from '@/lib/escapeAstral';
 import { useAutoResizeTextarea } from '@/hooks/useAutoResizeTextarea';
 import { trpc } from '@/lib/trpc';
-import { useEditor, EditorContent } from '@tiptap/react';
-import { getEditorExtensions } from '@/components/shared/editorExtensions';
+import { CardDocumentView, type CardDocumentProperty, type CardDocumentDraft } from './CardDocumentView';
 
 export interface CreativeAsset {
   id: string;
@@ -44,124 +43,6 @@ export interface CreativeAsset {
   [key: string]: unknown;
 }
 
-/** Read-only article viewer using the full shared Tiptap extension set */
-function ArticleViewerDialog({ content, title, metaTitle, metaDescription, overlay, isApproved, isSubmitted, onApprove, onClose }: {
-  content: string;
-  title: string;
-  metaTitle?: string;
-  metaDescription?: string;
-  /** Persistent freehand draw layer rendered on top of the content (custom cards). */
-  overlay?: string;
-  /** Current approval state — drives the in-dialog Approve button label/colour. */
-  isApproved: boolean;
-  /** When submitted (locked lane), approval is disabled — mirrors the grid card. */
-  isSubmitted?: boolean;
-  /** Toggle approval for this asset (same action as the grid card's Approve). */
-  onApprove: () => void;
-  onClose: () => void;
-}) {
-  const editor = useEditor({
-    extensions: getEditorExtensions({ placeholder: '' }),
-    content: content || '<p></p>',
-    editable: false,
-    editorProps: {
-      attributes: { class: 'outline-none' },
-    },
-  });
-
-  // Close on Escape + prevent body scroll
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handleKey);
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', handleKey);
-      document.body.style.overflow = '';
-    };
-  }, [onClose]);
-
-  // Notion-style document modal: borderless top bar (breadcrumb + close), a single
-  // centred 708px column, large title, optional "properties", then the rendered body.
-  return createPortal(
-    <div
-      className="pcm-notion-overlay"
-      onClick={onClose}
-      role="dialog"
-      aria-label="Document preview"
-    >
-      <div className="pcm-notion-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Top bar — icons only, no border (Notion peek) */}
-        <div className="pcm-notion-topbar">
-          <span className="pcm-notion-crumb">
-            <FileText className="w-[15px] h-[15px]" style={{ opacity: 0.55, flexShrink: 0 }} />
-            {title}
-          </span>
-          <button
-            type="button"
-            className="pcm-notion-iconbtn"
-            onClick={onClose}
-            aria-label="Close preview"
-          >
-            <X className="w-[18px] h-[18px]" />
-          </button>
-        </div>
-
-        {/* Page */}
-        <div className="pcm-notion-page">
-          <div className="pcm-notion-col">
-            <h1 className="pcm-notion-title">{title}</h1>
-
-            {/* Properties (article meta) — Notion property rows */}
-            {(metaTitle || metaDescription) && (
-              <div className="pcm-notion-props">
-                {metaTitle && (
-                  <div className="pcm-notion-prop">
-                    <span className="pcm-notion-prop-label">Meta title</span>
-                    <span className="pcm-notion-prop-value">{metaTitle}</span>
-                  </div>
-                )}
-                {metaDescription && (
-                  <div className="pcm-notion-prop">
-                    <span className="pcm-notion-prop-label">Meta description</span>
-                    <span className="pcm-notion-prop-value">{metaDescription}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Tiptap read-only rendered content (+ persistent draw layer on top) */}
-            <div className="pcm-notion-prose" style={{ position: 'relative' }}>
-              {editor && <EditorContent editor={editor} />}
-              {overlay && (
-                <img
-                  src={overlay}
-                  alt=""
-                  aria-hidden
-                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-                />
-              )}
-            </div>
-
-            {/* Approve action below the content — lets the client sign off from the opened
-                document, not only from the grid card. Same toggle + lock behaviour. */}
-            <div className="pcm-notion-actions">
-              <button
-                type="button"
-                disabled={isSubmitted}
-                className={`pcm-notion-approve ${isApproved ? 'is-approved' : ''}`}
-                onClick={onApprove}
-              >
-                <CheckCircle2 style={{ width: 15, height: 15 }} />
-                {isApproved ? 'Approved' : 'Approve'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>,
-    document.body
-  );
-}
 
 interface CreativeAssetCardProps {
   asset: CreativeAsset;
@@ -173,13 +54,37 @@ interface CreativeAssetCardProps {
   onApprove: (id: string) => void;
   brandLogoUrl?: string | null;
   brandName?: string;
+  /**
+   * RAW set mapping for the opened document's property rows.
+   *
+   * Deliberately separate from `brandName`: that one carries a display fallback
+   * ('Client Board' at the page level, 'Brand' here) which is fine as chrome but
+   * would print as a fact in a property row. These two are unresolved — absent
+   * means the row is not rendered at all.
+   */
+  setBrandName?: string | null;
+  setProjectName?: string | null;
   pairedMediaUrl?: string | null;
   isSubmitted?: boolean;
   isTeamMember?: boolean;
+  /**
+   * The set's share token, supplied by the host.
+   *
+   * The asset-update route is token-scoped. Reading the token from the URL only
+   * worked on the public client page; in wp-admin the parameter does not exist,
+   * so admin edits sent an empty token and failed.
+   */
+  publicToken?: string;
   onAssetUpdate?: () => void;
   onOpenComments: (id: string) => void;
   /** Zero-based index for copy card numbering ("Copy 1", "Copy 2", etc.) */
   copyIndex?: number;
+  /**
+   * Where the opened document sheet is portalled. Passed straight through to
+   * `CardDocumentView`; see its `container` prop for why a modal host must
+   * supply its own content element.
+   */
+  documentContainer?: HTMLElement | null;
 }
 
 export function CreativeAssetCard({
@@ -191,16 +96,38 @@ export function CreativeAssetCard({
   onApprove,
   brandLogoUrl,
   brandName = 'Brand',
+  setBrandName,
+  setProjectName,
   pairedMediaUrl,
   isSubmitted = false,
   isTeamMember = false,
+  publicToken,
   onAssetUpdate,
   onOpenComments,
-  copyIndex
+  copyIndex,
+  documentContainer
 }: CreativeAssetCardProps) {
   // isExpanded state removed — copy cards are always fully expanded now
   const [showLightbox, setShowLightbox] = useState(false);
   const [showArticleViewer, setShowArticleViewer] = useState(false);
+  // The viewer remains mounted after visual dismissal until asynchronous image
+  // work and the final document write settle. This lets the user continue on
+  // the board without destroying the editor that owns the pending media patch.
+  const [articleViewerMounted, setArticleViewerMounted] = useState(false);
+
+  const openArticleViewer = useCallback(() => {
+    setArticleViewerMounted(true);
+    setShowArticleViewer(true);
+  }, []);
+
+  const finishArticleViewer = useCallback(() => {
+    // Refetch only after the retained editor has drained every revision and is
+    // ready to unmount. Invalidating after each intermediate autosave can feed
+    // an older server echo back into the still-open editor while a newer local
+    // revision is pending.
+    setArticleViewerMounted(false);
+    onAssetUpdate?.();
+  }, [onAssetUpdate]);
 
   // Extract first image URL from article/custom HTML content for thumbnail preview
   const articleThumbnail = useMemo(() => {
@@ -217,6 +144,73 @@ export function CreativeAssetCard({
     const text = asset.content.replace(/<[^>]*>/g, '').trim();
     return text.length > 120 ? text.slice(0, 120) + '…' : text;
   }, [type, asset.content]);
+
+  /**
+   * Notion property rows for the opened document.
+   *
+   * A `custom` document has no meta fields — `CustomAsset` is
+   * `{ id, type, title, content, images, annotation, createdAt, updatedAt }` —
+   * so the old `metaTitle || metaDescription` gate was ALWAYS false and the
+   * property area never rendered anything on a custom card. These rows are our
+   * own information instead: who it is for, what it belongs to, when it was made.
+   * Only rows with a real value are emitted; nothing is invented to fill space.
+   */
+  const documentProperties = useMemo<CardDocumentProperty[]>(() => {
+    const rows: CardDocumentProperty[] = [];
+    const push = (
+      label: string,
+      value: string | null | undefined,
+      icon: CardDocumentProperty['icon'],
+      pill = false
+    ) => {
+      const clean = typeof value === 'string' ? value.trim() : '';
+      if (clean) rows.push({ label, value: clean, icon, pill });
+    };
+
+    if (type === 'article') {
+      // Unchanged for articles — these are the fields that surface actually has.
+      push('Meta title', asset.metaTitle, Type);
+      push('Meta description', asset.metaDescription, AlignLeft);
+      return rows;
+    }
+
+    // Brand reads as a tag in the reference layout, so it renders as a chip.
+    push('Brand', setBrandName, Tag, true);
+    push('Project', setProjectName, FolderOpen);
+    const created = typeof asset.createdAt === 'string' ? asset.createdAt : '';
+    if (created) {
+      const d = new Date(created.replace(' ', 'T'));
+      if (!Number.isNaN(d.getTime())) {
+        push('Created', new Intl.DateTimeFormat('en-GB', {
+          year: 'numeric', month: 'short', day: 'numeric',
+        }).format(d), CalendarDays);
+      }
+    }
+    return rows;
+  }, [type, asset.metaTitle, asset.metaDescription, asset.createdAt, setBrandName, setProjectName]);
+
+  /**
+   * "Edited 4 minutes ago" — the grey line above the title.
+   *
+   * Built from `updatedAt` only. When the snapshot carries no timestamp the line
+   * is absent rather than guessed: a card that claims it was edited just now
+   * because we had nothing to print is worse than a card with no line.
+   */
+  const documentMeta = useMemo<string | undefined>(() => {
+    const raw = typeof asset.updatedAt === 'string' ? asset.updatedAt : '';
+    if (!raw) return undefined;
+    const then = new Date(raw.replace(' ', 'T'));
+    if (Number.isNaN(then.getTime())) return undefined;
+
+    const mins = Math.round((Date.now() - then.getTime()) / 60000);
+    const rtf = new Intl.RelativeTimeFormat('en-GB', { numeric: 'auto' });
+    const ago =
+      mins < 1 ? 'just now'
+      : mins < 60 ? rtf.format(-mins, 'minute')
+      : mins < 1440 ? rtf.format(-Math.round(mins / 60), 'hour')
+      : rtf.format(-Math.round(mins / 1440), 'day');
+    return `Edited ${ago}`;
+  }, [asset.updatedAt]);
 
   // Text Inline Edits state
   const [isEditingText, setIsEditingText] = useState(false);
@@ -332,6 +326,32 @@ export function CreativeAssetCard({
     }
   }, [isTeamMember, isEditingText]);
 
+  /**
+   * Persist the opened document — title, body and draw layer, in one request.
+   *
+   * Same token-scoped route as the inline copy edits: `update_snapshot_asset`
+   * already accepted all three for the `articles` and `custom` buckets, so no
+   * new endpoint. Ticking a checkbox is an edit of `content` like any other —
+   * Tiptap writes the state onto `data-checked` on the `<li>`.
+   *
+   * Returns the promise. The card's autosave awaits it, so "Saved" means the
+   * server answered and closing mid-save waits for the write rather than
+   * abandoning it.
+   */
+  const handleSaveDocument = useCallback(async (doc: CardDocumentDraft) => {
+    if (!publicToken) {
+      toast.error('Cannot save — this card has no share token.');
+      throw new Error('Missing share token');
+    }
+    await updateMutation.mutateAsync({
+      token: publicToken,
+      assetId: asset.id,
+      title: doc.title,
+      content: doc.content,
+      overlay: doc.overlay,
+    });
+  }, [publicToken, asset.id, updateMutation]);
+
   // Save inline text edits to snapshot and DB
   const handleSaveTextEdits = useCallback(async () => {
     // If text hasn't changed, just close editing mode
@@ -345,8 +365,18 @@ export function CreativeAssetCard({
     }
 
     setIsSavingEdits(true);
-    // Retrieve token from query string
-    const token = new URLSearchParams(window.location.search).get('pcm_public_token') || '';
+
+    // The HOST supplies the token. This used to read it from
+    // window.location.search, which exists on the public client page and NOT in
+    // wp-admin — so an edit made from the admin card sent an empty token and the
+    // save failed silently. A component that reaches for the URL only works on
+    // the one surface it was written for.
+    if (!publicToken) {
+      setIsSavingEdits(false);
+      toast.error('Cannot save — this card has no share token.');
+      return;
+    }
+    const token = publicToken;
 
     updateMutation.mutate(
       {
@@ -371,7 +401,7 @@ export function CreativeAssetCard({
         }
       }
     );
-  }, [editedHeadline, editedBody, editedDescription, asset.headline, asset.body, asset.description, asset.id, onAssetUpdate, updateMutation]);
+  }, [editedHeadline, editedBody, editedDescription, asset.headline, asset.body, asset.description, asset.id, onAssetUpdate, updateMutation, publicToken]);
 
   // Handle click outside container card to trigger autosave
   useEffect(() => {
@@ -397,6 +427,10 @@ export function CreativeAssetCard({
   return (
     <div 
       ref={containerRef} 
+      // Anchor for "open this sub-asset" — the board can scroll straight to one
+      // item in a card that may hold many. An attribute rather than a wrapper
+      // div, so the grid's children stay the cards themselves.
+      data-asset-id={asset.id}
       className={`pcm-card ${isApproved ? 'approved' : ''} ${type === 'copy' ? 'copy' : ''} relative`}
       onClick={type === 'copy' ? handleCardClick : undefined}
     >
@@ -454,7 +488,7 @@ export function CreativeAssetCard({
                 content={editedBody}
                 editable={true}
                 onChange={setEditedBody}
-                placeholder="Skriv brödtext..."
+                placeholder="Write body text..."
                 className="pcm-inline-editor"
               />
             </div>
@@ -475,7 +509,7 @@ export function CreativeAssetCard({
                     value={editedHeadline}
                     onChange={(e) => setEditedHeadline(e.target.value)}
                     className="pcm-copy-headline pcm-edit-input"
-                    placeholder="Skriv rubrik..."
+                    placeholder="Write headline..."
                     rows={1}
                   />
                   {/* Description — textarea for multi-line support matching <p> view mode */}
@@ -484,7 +518,7 @@ export function CreativeAssetCard({
                     value={editedDescription}
                     onChange={(e) => setEditedDescription(e.target.value)}
                     className="pcm-copy-text pcm-edit-input mt-1"
-                    placeholder="Skriv beskrivning..."
+                    placeholder="Write description..."
                     rows={1}
                   />
                 </div>
@@ -514,7 +548,7 @@ export function CreativeAssetCard({
           style={{ cursor: 'pointer' }}
           role="button"
           tabIndex={0}
-          onClick={() => setShowArticleViewer(true)}
+          onClick={openArticleViewer}
         >
           {/* Thumbnail or icon */}
           {articleThumbnail ? (
@@ -547,7 +581,7 @@ export function CreativeAssetCard({
 
           {/* Click hint */}
           <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', marginTop: 'auto', paddingTop: '0.5rem' }}>
-            Klicka för att läsa hela artikeln →
+            Read the full article →
           </span>
         </div>
       )}
@@ -559,7 +593,7 @@ export function CreativeAssetCard({
           style={{ cursor: 'pointer', position: 'relative' }}
           role="button"
           tabIndex={0}
-          onClick={() => setShowArticleViewer(true)}
+          onClick={openArticleViewer}
         >
           {articleThumbnail ? (
             <div className="pcm-card-media select-none" style={{ height: '150px', overflow: 'hidden' }}>
@@ -710,18 +744,27 @@ export function CreativeAssetCard({
         document.body
       )}
 
-      {/* ─── ARTICLE / CUSTOM VIEWER DIALOG (full read-only Tiptap) ─── */}
-      {showArticleViewer && (type === 'article' || type === 'custom') && (
-        <ArticleViewerDialog
+      {/* ─── ARTICLE / CUSTOM DOCUMENT VIEW (full read-only Tiptap) ─── */}
+      {articleViewerMounted && (type === 'article' || type === 'custom') && (
+        <CardDocumentView
+          visible={showArticleViewer}
           content={asset.content || ''}
           title={asset.title || (type === 'custom' ? 'Untitled Document' : 'Untitled Article')}
-          metaTitle={asset.metaTitle}
-          metaDescription={asset.metaDescription}
+          properties={documentProperties}
+          meta={documentMeta}
           overlay={type === 'custom' ? asset.overlay : undefined}
           isApproved={isApproved}
           isSubmitted={isSubmitted}
+          /* Same gate as the inline copy editor above: the team writes, the
+             client reads. Without this the document was hardcoded read-only,
+             so its task-list checkboxes rendered and then ignored every click. */
+          canEdit={isTeamMember}
+          onSave={handleSaveDocument}
           onApprove={handleToggleApprove}
-          onClose={() => setShowArticleViewer(false)}
+          onDismiss={() => setShowArticleViewer(false)}
+          onRestore={() => setShowArticleViewer(true)}
+          onClose={finishArticleViewer}
+          container={documentContainer}
         />
       )}
     </div>

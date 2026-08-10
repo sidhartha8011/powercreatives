@@ -86,6 +86,39 @@
   white-space: nowrap;
 }
 
+/* "Create in this lane" — a pill sibling of the lane label, at the far right of
+ * the header. Always visible on EVERY lane: it was hover-gated, which made it
+ * look like only the hovered lane had one.
+ *
+ * It wears the lane's own colours: the header sets --pck-column-accent-bg /
+ * --pck-column-accent-text per column, so the button belongs to its lane instead
+ * of being one neutral grey across all six. Hover/focus changes emphasis only. */
+.columnCreate {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  /* NO background — the glyph alone. It read as a filled chip before, which is
+   * not what a lane affordance should be. */
+  background: none;
+  /* The lane's own text accent, so the plus belongs to its lane rather than
+   * being one neutral grey across all six. */
+  color: var(--pck-column-accent-text, var(--pck-pill-text));
+  cursor: pointer;
+  /* Quiet by default — present, but not competing with the lane label. */
+  opacity: 0.3;
+  transition: opacity 120ms ease;
+}
+
+.columnCreate:hover,
+.columnCreate:focus-visible {
+  opacity: 1;
+}
+
 .columnList {
   list-style: none;
   padding: 0;

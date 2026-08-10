@@ -76,6 +76,12 @@ export interface CustomAsset {
   /** URLs of images embedded in the document (for previews / counts). */
   images?: string[];
   /**
+   * Whole-card freehand draw layer (transparent PNG data-URL), rendered over the
+   * document. Written by CreateCustomSetDialog at creation; it was carried at
+   * runtime without being declared here.
+   */
+  overlay?: string;
+  /**
    * Image-annotation metadata (Phase 2). Keyed by the embedded image's id: the
    * editable drawing doc + a flattened export rendered on the (runtime-free)
    * review page. Reserved now; populated when the annotation lib lands.
@@ -117,7 +123,27 @@ export interface ApprovalSet {
   name: string;
   token: string;
   status: ApprovalStatus;
-  snapshot: {
+  /**
+   * Last client address this card was shared with. The server has always sent
+   * it (it is in the list query's column set); it was simply never declared.
+   * Seeds the share popover so a re-share does not start from an empty field.
+   */
+  clientEmail?: string | null;
+  /**
+   * How many items the card holds, and a light summary of them.
+   *
+   * Present on BOARD rows (the list query computes them in SQL) and absent on a
+   * single fetched set, which carries the full `snapshot` instead. This is what
+   * lets a card show its contents and expand WITHOUT a per-card request.
+   */
+  itemCount?: number;
+  items?: Array<{ id: string; type: string; title: string }>;
+  /**
+   * OPTIONAL on purpose. The board's list query omits `snapshot` — it is
+   * longtext and can carry embedded base64 images — so a board row genuinely
+   * does not have it. Only a single fetched set does.
+   */
+  snapshot?: {
     brandName?: string;
     brandLogoUrl?: string;
     projectName?: string;

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Share2, Copy, Check, Loader2, Mail } from 'lucide-react';
+import { Share2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -12,14 +12,21 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { colors, typography, shadows } from '@/components/shared/design-tokens';
 import { trpc } from '@/lib/trpc';
-import { buildDefaultInviteMessage } from '@/components/shared/SendToApprovalSetDialog';
+import { ApprovalSharePanel, buildDefaultInviteMessage } from '@/components/shared/ApprovalSharePanel';
+import { buildPublicBoardUrl, useApprovalSetsCache } from '@/components/shared/approvalSets';
 import { ApprovalSetPicker, type AppendableSet } from '@/components/shared/ApprovalSetPicker';
+import {
+  ProjectPicker,
+  resolveProjectId,
+  EMPTY_PROJECT_PICK,
+  useProjectPickerData,
+  type ProjectPickerValue,
+} from '@/components/shared/ProjectPicker';
 import type { MediaSlot, TextSlot } from '../types';
 
 interface CreateApprovalSetDialogProps {
@@ -52,27 +59,22 @@ export function CreateApprovalSetDialog({
 }: CreateApprovalSetDialogProps) {
   const [setName, setSetName] = useState('');
   const [shareableLink, setShareableLink] = useState('');
-  const [copied, setCopied] = useState(false);
   const [setId, setSetId] = useState<number | null>(null);
+  // Seed values for the share panel; it owns copy/send state itself.
   const [clientEmail, setClientEmail] = useState('');
   const [clientMessage, setClientMessage] = useState('');
-  const [inviteSent, setInviteSent] = useState(false);
-  // '' = none — Select values are strings; converted to number|null on submit.
-  const [deliveryId, setDeliveryId] = useState('');
+  // The set's ONE mapping: a project (existing, or created on submit).
+  const [project, setProject] = useState<ProjectPickerValue>(EMPTY_PROJECT_PICK);
   // 'create' = new set (existing flow); 'append' = add to an open set.
   const [mode, setMode] = useState<'create' | 'append'>('create');
   const [targetSet, setTargetSet] = useState<AppendableSet | null>(null);
 
-  // Deliveries for the linkage picker (stored on the set → Approvals Delivery
-  // filter + webhook enrichment).
-  const { data: deliveriesRaw } = trpc.deliveries.list.useQuery();
-  const deliveries: { id: number; name: string; brandId: number | null }[] = Array.isArray(deliveriesRaw)
-    ? deliveriesRaw.map((d: any) => ({
-        id: Number(d.id),
-        name: String(d.name),
-        brandId: d.brandId != null ? Number(d.brandId) : null,
-      }))
-    : [];
+  // Projects the set can belong to; deliveries feed the project→delivery link.
+  const { projects: projectOptions, deliveries, brands } = useProjectPickerData();
+
+  const createProjectMutation = trpc.assets.createProject.useMutation();
+  const setProjectDeliveryMutation = trpc.assets.setProjectDelivery.useMutation();
+  const approvalSetsCache = useApprovalSetsCache();
 
   // Reset to defaults ONLY when the dialog opens — depending on the brand props
   // here would re-run the effect if async brand context resolves while open,
@@ -85,18 +87,16 @@ export function CreateApprovalSetDialog({
       });
       setSetName(`Ad Campaign Set — ${brandName || 'Draft'} (${dateStr})`);
       setShareableLink('');
-      setCopied(false);
       setSetId(null);
       setClientEmail(brandClientEmail || '');
       setClientMessage(buildDefaultInviteMessage(brandName));
-      setInviteSent(false);
       setMode('create');
       setTargetSet(null);
-      // Pre-pick the delivery linked to the current brand, when there is one.
-      const brandDelivery = brandId
-        ? deliveries.find((d) => d.brandId === Number(brandId))
-        : undefined;
-      setDeliveryId(brandDelivery ? String(brandDelivery.id) : '');
+      setProject({
+        ...EMPTY_PROJECT_PICK,
+        projectId: projectId != null ? Number(projectId) : null,
+        brandId: brandId != null ? Number(brandId) : null,
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -111,16 +111,13 @@ export function CreateApprovalSetDialog({
   // tRPC Mutation to create set
   const createMutation = trpc.approvals.createSet.useMutation({
     onSuccess: (data: any) => {
-      // Build the absolute client review URL using the dynamic WordPress page that hosts the shortcode
-      const config = window.pcmConfig ?? { shortcodePageUrl: window.location.origin + '/' };
-      const baseUrl = config.shortcodePageUrl || (window.location.origin + '/');
-
-      // Determine separator for query parameters (e.g. ? or &)
-      const separator = baseUrl.includes('?') ? '&' : '?';
-      const publicLink = `${baseUrl}${separator}pcm_public_token=${data.token}`;
-
-      setShareableLink(publicLink);
+      setShareableLink(buildPublicBoardUrl(data.token));
       setSetId(Number(data.id));
+
+      // Put the new card on the board NOW (the response is the full row), then
+      // reconcile — without this the board shows nothing until a page reload.
+      approvalSetsCache.registerCreated(data);
+
       // Sharing the link == the set is now out for client review. Move it to the
       // "Awaiting Client Approval" lane immediately.
       moveStatusMutation.mutate({ id: Number(data.id), status: 'client' });
@@ -130,26 +127,6 @@ export function CreateApprovalSetDialog({
       toast.error(err.message || 'Failed to generate approval set.');
     },
   });
-
-  // tRPC Mutation to email the client an invite (Brevo via Automations)
-  const shareMutation = trpc.approvals.shareSet.useMutation({
-    onSuccess: () => {
-      setInviteSent(true);
-      toast.success('Invite email sent to the client.');
-    },
-    onError: (err: any) => {
-      toast.error(err.message || 'Failed to send invite email.');
-    },
-  });
-
-  const handleSendInvite = useCallback(() => {
-    const email = clientEmail.trim();
-    if (!setId || !email) {
-      toast.error('Enter the client email to send an invite.');
-      return;
-    }
-    shareMutation.mutate({ id: setId, email, message: clientMessage.trim() });
-  }, [setId, clientEmail, clientMessage, shareMutation]);
 
   // Freeze the selected slots into snapshot buckets (shared by both the
   // create and append paths).
@@ -205,7 +182,7 @@ export function CreateApprovalSetDialog({
     appendMutation.mutate({ id: targetSet.id, snapshot: { media, copy } });
   }, [targetSet, buildBuckets, appendMutation]);
 
-  const handleGenerateLink = useCallback(() => {
+  const handleGenerateLink = useCallback(async () => {
     if (!setName.trim()) {
       toast.error('Please enter an approval set name.');
       return;
@@ -213,11 +190,27 @@ export function CreateApprovalSetDialog({
 
     const { media: selectedMedia, copy: selectedCopy } = buildBuckets();
 
+    // Create the project first when the user typed a new name, so the set is
+    // saved with a real project id — or not saved at all if that fails.
+    let effProjectId: number | null;
+    try {
+      effProjectId = await resolveProjectId(
+        project,
+        createProjectMutation.mutateAsync,
+        setProjectDeliveryMutation.mutateAsync,
+        projectOptions
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create the project.');
+      return;
+    }
+
     createMutation.mutate({
       name: setName.trim(),
       brandId: brandId || null,
-      projectId: projectId || null,
-      deliveryId: deliveryId ? Number(deliveryId) : null,
+      // The set's ONE mapping. Delivery + brand are derived live from this
+      // project server-side (PCM_Hierarchy) — never stored on the set.
+      projectId: effProjectId,
       snapshot: {
         media: selectedMedia,
         copy: selectedCopy,
@@ -225,64 +218,8 @@ export function CreateApprovalSetDialog({
         brandLogoUrl: brandLogoUrl || null,
       },
     });
-  }, [setName, buildBuckets, brandId, projectId, deliveryId, brandName, brandLogoUrl, createMutation]);
+  }, [setName, buildBuckets, brandId, project, brandName, brandLogoUrl, createMutation, createProjectMutation]);
 
-  const handleCopyLink = useCallback(() => {
-    if (!shareableLink) return;
-    
-    // 1. Try modern clipboard API first (async)
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(shareableLink)
-        .then(() => {
-          setCopied(true);
-          toast.success('Link copied to clipboard!');
-          setTimeout(() => setCopied(false), 2000);
-        })
-        .catch(() => {
-          // Fall back to execCommand if navigator.clipboard throws an error
-          fallbackCopy();
-        });
-    } else {
-      // 2. Fallback to execCommand if API not available
-      fallbackCopy();
-    }
-
-    function fallbackCopy() {
-      try {
-        const textArea = document.createElement('textarea');
-        textArea.value = shareableLink;
-        
-        // Prevent scrolling on focus in some browsers
-        textArea.style.position = 'fixed';
-        textArea.style.top = '0';
-        textArea.style.left = '0';
-        textArea.style.width = '2em';
-        textArea.style.height = '2em';
-        textArea.style.padding = '0';
-        textArea.style.border = 'none';
-        textArea.style.outline = 'none';
-        textArea.style.boxShadow = 'none';
-        textArea.style.background = 'transparent';
-        
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        
-        const successful = document.execCommand('copy');
-        document.body.removeChild(textArea);
-        
-        if (successful) {
-          setCopied(true);
-          toast.success('Link copied to clipboard!');
-          setTimeout(() => setCopied(false), 2000);
-        } else {
-          toast.error('Failed to copy. Please copy the link manually.');
-        }
-      } catch (err) {
-        toast.error('Failed to copy. Please copy the link manually.');
-      }
-    }
-  }, [shareableLink]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -352,101 +289,25 @@ export function CreateApprovalSetDialog({
                     disabled={createMutation.isLoading}
                   />
 
-                  <label
-                    style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}
-                  >
-                    Delivery (optional)
-                  </label>
-                  <Select
-                    value={deliveryId || 'none'}
-                    onValueChange={(v) => setDeliveryId(v === 'none' ? '' : v)}
-                    disabled={createMutation.isLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="No delivery linked" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No delivery</SelectItem>
-                      {deliveries.map((d) => (
-                        <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {/* The set's ONE mapping. Search the list or type a new name to
+                      create the project; delivery + brand follow from it. */}
+                  <ProjectPicker
+                    projects={projectOptions}
+                    deliveries={deliveries}
+                    value={project}
+                    onChange={setProject}
+                    disabled={createMutation.isLoading || createProjectMutation.isLoading}
+                  />
                 </>
               )}
             </div>
           ) : (
-            <div className="space-y-3 rounded-lg p-4" style={{ background: colors.bgPage, border: `1px solid ${colors.border}` }}>
-              <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
-                Generated Shareable Client Board Link
-              </span>
-              <div className="flex items-center gap-2">
-                <Input
-                  value={shareableLink}
-                  readOnly
-                  className="font-mono text-xs select-all shrink"
-                  style={{ background: colors.bgSurface }}
-                />
-                <Button size="icon" onClick={handleCopyLink} className="shrink-0" style={{ background: colors.primary }}>
-                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                </Button>
-              </div>
-              <p style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '8px' }}>
-                Your client can open this link in any browser, see dynamic platform mockups, granularly comment, and approve each asset.
-              </p>
-
-              {/* Send the invite by email (auto-filled from brand info) */}
-              <div className="space-y-2 pt-2" style={{ borderTop: `1px solid ${colors.border}` }}>
-                <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
-                  Or email the link to your client
-                </span>
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="email"
-                    value={clientEmail}
-                    onChange={(e) => { setClientEmail(e.target.value); setInviteSent(false); }}
-                    placeholder="client@company.com"
-                    className="text-sm shrink"
-                    style={{ background: colors.bgSurface }}
-                    disabled={shareMutation.isLoading}
-                  />
-                  <Button
-                    onClick={handleSendInvite}
-                    className="shrink-0 gap-2"
-                    style={{ background: colors.primary }}
-                    disabled={shareMutation.isLoading || !clientEmail.trim() || inviteSent}
-                  >
-                    {shareMutation.isLoading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : inviteSent ? (
-                      <Check className="w-4 h-4" />
-                    ) : (
-                      <Mail className="w-4 h-4" />
-                    )}
-                    {inviteSent ? 'Sent' : 'Send'}
-                  </Button>
-                </div>
-
-                {/* Editable invite message — prefilled with a default; the sender
-                    can rewrite it before sending. Blank → standard template. */}
-                <span style={{ fontSize: typography.xs, fontWeight: typography.semibold, color: colors.textSecondary }}>
-                  Message to client
-                </span>
-                <Textarea
-                  value={clientMessage}
-                  onChange={(e) => { setClientMessage(e.target.value); setInviteSent(false); }}
-                  rows={4}
-                  placeholder="Write a short note to your client…"
-                  className="text-sm"
-                  style={{ background: colors.bgSurface }}
-                  disabled={shareMutation.isLoading}
-                />
-
-                <p style={{ fontSize: typography.xs, color: colors.textMuted }}>
-                  Sends a professional invite via your Brevo integration. Requires a Brevo API key and sender email in Settings.
-                </p>
-              </div>
-            </div>
+            <ApprovalSharePanel
+              setId={setId ?? 0}
+              shareUrl={shareableLink}
+              defaultEmail={clientEmail}
+              defaultMessage={clientMessage}
+            />
           )}
         </div>
 

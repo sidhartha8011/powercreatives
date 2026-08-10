@@ -66,7 +66,13 @@ class PCM_Approvals_Service
         // their own plus sets in their granted brand/project scope, so a
         // teammate's work on a shared engagement is visible to everyone with
         // that access (and notification jumps resolve on both sides).
-        $cols = "id, userId, brandId, projectId, name, token, status, clientEmail, createdAt, updatedAt";
+        // deliveryId is selected so the board's Delivery dropdown has something to
+        // filter on for legacy sets that carry it directly; for sets with a project,
+        // format_set_row() overwrites it with the LIVE chain value.
+        // `snapshot`/`reviewFeedback` stay OUT on purpose — both are longtext and can
+        // carry embedded images; the board resolves names from the registries instead.
+        $cols = "id, userId, brandId, projectId, deliveryId, name, token, status, clientEmail, createdAt, updatedAt"
+              . ', ' . self::items_summary_sql();
         if (class_exists('PCM_Access') && PCM_Access::is_admin($user_id)) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $rows = $wpdb->get_results("SELECT {$cols} FROM {$table} ORDER BY createdAt DESC");
@@ -91,8 +97,126 @@ class PCM_Approvals_Service
         }
 
         return array_map(function ($row) {
-            return self::format_set_row($row);
+            return self::format_list_row($row);
         }, $rows ?: array());
+    }
+
+    /**
+     * The board's item buckets, and where each one keeps its display title.
+     *
+     * ONE definition — the summary SQL and the row formatter both read it, so a
+     * fifth bucket is a single line here rather than an edit in two places that
+     * can silently disagree.
+     *
+     * @var array<string, string>
+     */
+    private const ITEM_BUCKETS = array(
+        'media'    => array('title' => 'name',     'approvalKey' => 'approvedVisualIds'),
+        'copy'     => array('title' => 'headline', 'approvalKey' => 'approvedCopyIds'),
+        'articles' => array('title' => 'title',    'approvalKey' => 'approvedArticleIds'),
+        'custom'   => array('title' => 'title',    'approvalKey' => 'approvedCustomIds'),
+    );
+
+    /**
+     * SELECT fragment giving the board a per-card item SUMMARY without shipping
+     * `snapshot` itself.
+     *
+     * WHY THIS EXISTS. `snapshot` is longtext and can carry embedded base64
+     * images, which is exactly why the column list above leaves it out. But the
+     * board card has to show how many items it holds and list them when expanded,
+     * and doing that from a per-card fetch would put a 1.4-2.9 s round trip
+     * behind every disclosure. This extracts only `{id, type, title}` per item —
+     * measured at 86 bytes against a 261-byte snapshot, and the gap widens
+     * sharply once a card carries an image.
+     *
+     * JSON_TABLE, not `'$.custom[*].title'`: the naive path form SKIPS elements
+     * that lack the key, so ids and titles silently drift out of alignment.
+     * JSON_TABLE walks the array and yields NULL for a missing key instead.
+     * Requires MySQL 5.7.8+/8.0 (this install: 8.0.35, verified).
+     *
+     * @return string
+     */
+    /**
+     * bucket => approval-id-list, derived from the ONE bucket definition.
+     *
+     * This mapping was previously written out twice — in `bucket_for_asset()`
+     * and again in `is_fully_approved()` — so "which approval list belongs to
+     * which bucket" was asserted in two places and could drift apart without
+     * anything failing loudly. Approvals landing in the wrong list is not a
+     * cosmetic bug, so it gets one owner.
+     *
+     * @return array<string, string>
+     */
+    private static function approval_key_map(): array
+    {
+        $map = array();
+        foreach (self::ITEM_BUCKETS as $bucket => $meta) {
+            $map[$bucket] = $meta['approvalKey'];
+        }
+        return $map;
+    }
+
+    private static function items_summary_sql(): string
+    {
+        $parts = array();
+        $counts = array();
+
+        foreach (self::ITEM_BUCKETS as $bucket => $meta) {
+            $title_key = $meta['title'];
+            $counts[] = "COALESCE(JSON_LENGTH(JSON_EXTRACT(snapshot,'$.{$bucket}')),0)";
+            $parts[]  = "(SELECT JSON_ARRAYAGG(JSON_OBJECT('id',jt.iid,'type','{$bucket}','title',jt.ttl))"
+                . " FROM JSON_TABLE(snapshot,'$.{$bucket}[*]'"
+                . " COLUMNS (iid VARCHAR(64) PATH '$.id', ttl VARCHAR(255) PATH '$.{$title_key}')) jt)"
+                . " AS items_{$bucket}";
+        }
+
+        return implode(' + ', $counts) . ' AS itemCount, ' . implode(', ', $parts);
+    }
+
+    /**
+     * Format a LIST row: merge the item summary into one ordered `items` array.
+     *
+     * Deliberately NOT `format_set_row()`. That one json_decodes `snapshot`, and
+     * because the list never selects `snapshot` it produced `array()` — so every
+     * board row shipped `"snapshot": []`, an empty ARRAY where the type says
+     * object. Code then read `set.snapshot.brandName` off it and silently got
+     * undefined forever. A list row now carries no `snapshot` key at all, which
+     * is the truth: the board does not have it.
+     *
+     * Item order matches the client view's own merge order (media, copy,
+     * articles, custom) so the board and the opened card agree.
+     */
+    private static function format_list_row(object $row): object
+    {
+        $items = array();
+        foreach (array_keys(self::ITEM_BUCKETS) as $bucket) {
+            $key = 'items_' . $bucket;
+            $decoded = !empty($row->$key) ? json_decode($row->$key, true) : array();
+            if (is_array($decoded)) {
+                foreach ($decoded as $item) {
+                    if (is_array($item) && !empty($item['id'])) {
+                        $items[] = array(
+                            'id'    => (string) $item['id'],
+                            'type'  => (string) ($item['type'] ?? $bucket),
+                            'title' => isset($item['title']) ? (string) $item['title'] : '',
+                        );
+                    }
+                }
+            }
+            unset($row->$key);
+        }
+
+        $row->items     = $items;
+        $row->itemCount = isset($row->itemCount) ? (int) $row->itemCount : count($items);
+
+        // The live Brand → Delivery → Project chain, exactly as format_set_row does.
+        if (class_exists('PCM_Hierarchy') && !empty($row->projectId)) {
+            $chain = PCM_Hierarchy::for_project((int) $row->projectId);
+            $row->brandId    = !empty($chain['brandId']) ? (int) $chain['brandId'] : null;
+            $row->deliveryId = !empty($chain['deliveryId']) ? (int) $chain['deliveryId'] : null;
+        }
+
+        return $row;
     }
 
     /**
@@ -136,6 +260,85 @@ class PCM_Approvals_Service
      * @param array $add  Incoming { media?, copy?, articles? } buckets.
      * @return array Merged snapshot.
      */
+    /**
+     * Remove ONE item from a card.
+     *
+     * Deliberately mirrors `append_to_set()`: the same scoped read, the same
+     * refusal once the card is past client review or fully approved, the same
+     * single write. Adding and removing an item are the same operation in
+     * opposite directions, so they must obey the same law — a card the client
+     * has already signed off cannot quietly lose an item underneath them.
+     *
+     * Buckets come from `ITEM_BUCKETS`, the constant the board summary already
+     * reads, so there is no second hardcoded list of what a card can hold.
+     *
+     * @return object|string The updated set, or 'not_found' | 'locked' | 'missing'.
+     */
+    public static function remove_asset(int $set_id, int $user_id, string $asset_id): object|string
+    {
+        $set = self::get_set_scoped($set_id, $user_id);
+        if (!$set) {
+            return 'not_found';
+        }
+
+        $snapshot = is_array($set->snapshot) ? $set->snapshot : array();
+        if (in_array($set->status, self::POST_SUBMIT_STATUSES, true)
+            || self::is_fully_approved($snapshot, self::feedback_struct($set))
+        ) {
+            return 'locked';
+        }
+
+        // Capture WHAT was removed, and from which bucket, so the caller can put
+        // it back verbatim. Undo cannot be reconstructed from the board's item
+        // summary — that carries only {id, type, title} — and re-fetching the
+        // whole snapshot to enable an undo would cost seconds on this host.
+        $removed_item   = null;
+        $removed_bucket = null;
+
+        foreach (array_keys(self::ITEM_BUCKETS) as $bucket) {
+            if (empty($snapshot[$bucket]) || !is_array($snapshot[$bucket])) {
+                continue;
+            }
+            $kept = array();
+            foreach ($snapshot[$bucket] as $item) {
+                if (is_array($item) && isset($item['id']) && (string) $item['id'] === $asset_id) {
+                    $removed_item   = $item;
+                    $removed_bucket = $bucket;
+                    continue;
+                }
+                $kept[] = $item;
+            }
+            // Re-index so the stored array stays a JSON array, never an object.
+            $snapshot[$bucket] = array_values($kept);
+        }
+
+        if ($removed_item === null) {
+            return 'missing';
+        }
+
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+        // Ownership already established by the scoped read above.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->update(
+            $table,
+            array(
+                'snapshot'  => wp_json_encode($snapshot),
+                'updatedAt' => current_time('mysql'),
+            ),
+            array('id' => $set_id),
+            array('%s', '%s'),
+            array('%d')
+        );
+
+        $set->snapshot = $snapshot;
+        // Handed back so an undo can re-append the exact item. `merge_snapshot`
+        // dedupes by id, so restoring twice cannot duplicate it.
+        $set->removedAsset  = $removed_item;
+        $set->removedBucket = $removed_bucket;
+        return $set;
+    }
+
     public static function merge_snapshot(array $base, array $add): array
     {
         foreach (array('media', 'copy', 'articles', 'custom') as $bucket) {
@@ -229,8 +432,15 @@ class PCM_Approvals_Service
     /**
      * Create a new approval set.
      *
+     * `status` is optional and defaults to 'draft' — the board's lane "+" passes the
+     * lane it was clicked in, so the set is born there in ONE insert. Deliberately
+     * NOT create-then-update_status: that would write a phantom Draft row and fire
+     * `approvals.set_status_changed`, which would run user rules keyed to a lane
+     * (e.g. the seeded "Notify team on Launch") for a set that was merely CREATED
+     * there. A creation is not a lane change. The caller validates the value.
+     *
      * @param int   $user_id User ID.
-     * @param array $data    Set fields (name, brandId, projectId, snapshot).
+     * @param array $data    Set fields (name, brandId, projectId, snapshot, status?).
      * @return int|false New Set ID or false.
      */
     public static function create_set(int $user_id, array $data): int|false
@@ -244,20 +454,30 @@ class PCM_Approvals_Service
         // Format snapshot
         $snapshot = is_string($data['snapshot']) ? $data['snapshot'] : wp_json_encode($data['snapshot']);
 
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $result = $wpdb->insert(
-            $table,
-            array(
-                'userId'     => $user_id,
-                'brandId'    => $data['brandId'] ?? null,
-                'projectId'  => $data['projectId'] ?? null,
-                'deliveryId' => $data['deliveryId'] ?? null,
-                'name'       => $data['name'],
-                'token'      => $token,
-                'status'     => 'draft',
-                'snapshot'   => $snapshot,
-            )
+        $status = isset($data['status']) && in_array($data['status'], self::STATUSES, true)
+            ? (string) $data['status']
+            : 'draft';
+
+        $row = array(
+            'userId'     => $user_id,
+            'brandId'    => $data['brandId'] ?? null,
+            'projectId'  => $data['projectId'] ?? null,
+            'deliveryId' => $data['deliveryId'] ?? null,
+            'name'       => $data['name'],
+            'token'      => $token,
+            'status'     => $status,
+            'snapshot'   => $snapshot,
         );
+
+        // Born directly in the client lane? Stamp the same anchor update_status()
+        // stamps — the pending-client reminder scanner reads clientSentAt, so
+        // without this those sets would never be reminded about.
+        if ($status === 'client') {
+            $row['clientSentAt'] = current_time('mysql');
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $result = $wpdb->insert($table, $row);
 
         return $result ? $wpdb->insert_id : false;
     }
@@ -430,6 +650,16 @@ class PCM_Approvals_Service
         $set = self::get_set_by_token($token);
         if (!$set) {
             return false;
+        }
+
+        // IDEMPOTENCY GUARD. A submitted set is already past client review, so a
+        // second submit — a refresh, a double click, a replayed request — must not
+        // re-fire the outbound webhook. `approve_assets()` has always had this
+        // guard; `submit_review()` did not, and the client UI was the only thing
+        // standing between a reload and a duplicate dispatch. Returning true keeps
+        // the caller's "it worked" contract: the set IS submitted.
+        if (in_array($set->status, self::POST_SUBMIT_STATUSES, true)) {
+            return true;
         }
 
         // Tidy feedback arrays
@@ -634,14 +864,15 @@ class PCM_Approvals_Service
         $row->reviewFeedback = !empty($row->reviewFeedback) ? json_decode($row->reviewFeedback, true) : null;
         // Brand → Delivery → Project: derive brand + delivery LIVE from the set's project so the
         // displayed scope follows the project, never the value stored at creation time.
+        // When the set HAS a project the chain is the whole truth — including its NULLs, so a
+        // project deliberately left with no delivery (or a delivery with no brand) reports
+        // exactly that instead of falling back to a stale value stored at creation time.
+        // Sets with no project keep their stored ids (legacy rows created before the
+        // project-only mapping).
         if (class_exists('PCM_Hierarchy') && !empty($row->projectId)) {
             $chain = PCM_Hierarchy::for_project((int) $row->projectId);
-            if (!empty($chain['brandId'])) {
-                $row->brandId = (int) $chain['brandId'];
-            }
-            if (!empty($chain['deliveryId'])) {
-                $row->deliveryId = (int) $chain['deliveryId'];
-            }
+            $row->brandId    = !empty($chain['brandId']) ? (int) $chain['brandId'] : null;
+            $row->deliveryId = !empty($chain['deliveryId']) ? (int) $chain['deliveryId'] : null;
         }
         return $row;
     }
@@ -1049,13 +1280,10 @@ class PCM_Approvals_Service
      */
     private static function bucket_for_asset(array $snapshot, string $asset_id): ?string
     {
-        $map = array(
-            'media'    => 'approvedVisualIds',
-            'copy'     => 'approvedCopyIds',
-            'articles' => 'approvedArticleIds',
-            'custom'   => 'approvedCustomIds',
-        );
-        foreach ($map as $key => $bucket) {
+        // ONE definition — see ITEM_BUCKETS. This map used to be written out here
+        // AND again in is_fully_approved(), so which approval list belonged to
+        // which bucket was asserted twice and could drift apart silently.
+        foreach (self::approval_key_map() as $key => $bucket) {
             if (!empty($snapshot[$key]) && is_array($snapshot[$key])) {
                 foreach ($snapshot[$key] as $item) {
                     if (isset($item['id']) && (string) $item['id'] === $asset_id) {
@@ -1076,12 +1304,7 @@ class PCM_Approvals_Service
      */
     private static function is_fully_approved(array $snapshot, array $feedback): bool
     {
-        $checks = array(
-            'media'    => 'approvedVisualIds',
-            'copy'     => 'approvedCopyIds',
-            'articles' => 'approvedArticleIds',
-            'custom'   => 'approvedCustomIds',
-        );
+        $checks = self::approval_key_map();
 
         $total = 0;
         foreach ($checks as $key => $bucket) {
@@ -1235,21 +1458,40 @@ class PCM_Approvals_Service
     }
 
     /**
-     * Share a set with a client: store the recipient email and dispatch the
-     * invite event (Brevo email). Ownership-scoped.
+     * Share a set with one or more clients: store the recipient, dispatch the
+     * invite email to EVERY recipient, and fire the "sent to client" trigger
+     * ONCE. Ownership-scoped.
      *
-     * @param int    $set_id  Set id.
-     * @param int    $user_id PCM user id (owner).
-     * @param string $email   Recipient email.
-     * @param string $message Optional custom invite message (already sanitized).
-     * @return object|false Updated set, or false if not found / invalid email.
+     * Multi-recipient is one share EVENT with N emails — not N shares. The
+     * trigger drives the seeded "move to Sent to Client" rule and any user
+     * webhook, so firing it per recipient would run those N times; the invite
+     * email is the only thing that is legitimately per-person.
+     *
+     * `clientEmail` on the set (and the brand's remembered address) stay
+     * single-valued on purpose: they answer "who is this set with", which is the
+     * first recipient. Multi-send is an action, not new state.
+     *
+     * @param int             $set_id  Set id.
+     * @param int             $user_id PCM user id (owner).
+     * @param string|string[] $email   Recipient email, or a list of them.
+     * @param string          $message Optional custom invite message (already sanitized).
+     * @return object|false Updated set, or false if not found / no valid email.
      */
-    public static function share_set(int $set_id, int $user_id, string $email, string $message = ''): object|false
+    public static function share_set(int $set_id, int $user_id, string|array $email, string $message = ''): object|false
     {
-        $email = sanitize_email($email);
-        if ($email === '' || !is_email($email)) {
+        // Normalise to a de-duplicated list of valid addresses, order preserved.
+        $recipients = array();
+        foreach ((is_array($email) ? $email : array($email)) as $candidate) {
+            $clean = sanitize_email((string) $candidate);
+            if ($clean !== '' && is_email($clean) && !in_array($clean, $recipients, true)) {
+                $recipients[] = $clean;
+            }
+        }
+        if (empty($recipients)) {
             return false;
         }
+        // The set's own record of "who is this with" — the first recipient.
+        $email = $recipients[0];
 
         $set = self::get_set_by_id($set_id, $user_id);
         if (!$set) {
@@ -1311,13 +1553,76 @@ class PCM_Approvals_Service
             );
         }
 
-        PCM_Automation_Engine::dispatch(
-            PCM_Automation_Events::APPROVAL_SET_SHARED,
-            self::build_event_context($set, array('customMessage' => $message)),
-            $user_id
-        );
+        // The invite email is the one thing that is per-person: dispatch once per
+        // recipient, overriding the address the email channel reads
+        // (render_email_for_event() takes it from context['clientEmail']).
+        foreach ($recipients as $recipient) {
+            PCM_Automation_Engine::dispatch(
+                PCM_Automation_Events::APPROVAL_SET_SHARED,
+                self::build_event_context($set, array(
+                    'customMessage' => $message,
+                    'clientEmail'   => $recipient,
+                )),
+                $user_id
+            );
+        }
 
         return self::get_set_by_id($set_id, $user_id);
+    }
+
+    /**
+     * Sanitise a document body WITHOUT destroying its embedded images.
+     *
+     * `wp_kses_post()` drops any `src` whose scheme is not in
+     * `wp_allowed_protocols()` — and that list has no `data:`. A card whose
+     * images are inline base64 therefore came back with every image stripped of
+     * its source; the editor then dropped the source-less nodes, and the next
+     * save wrote the resulting EMPTY document over the real one. That is how
+     * approval set 26 lost 489,939 bytes of content on 2026-08-06.
+     *
+     * `data:` is added for the duration of this one call and removed again, so
+     * nothing else in the request gains a protocol it should not have. The
+     * payload still goes through the full kses tag/attribute filter — this
+     * widens exactly one scheme, on exactly one field.
+     *
+     * @param string $html Raw document HTML from the editor.
+     * @return string Sanitised HTML with inline images intact.
+     */
+    private static function sanitize_document_html(string $html): string
+    {
+        $allow_data = static function (array $protocols): array {
+            $protocols[] = 'data';
+            return $protocols;
+        };
+
+        add_filter('kses_allowed_protocols', $allow_data);
+        $clean = wp_kses_post($html);
+        remove_filter('kses_allowed_protocols', $allow_data);
+
+        return $clean;
+    }
+
+    /**
+     * Would this write empty a document that currently has content?
+     *
+     * A save is an edit, never an erasure. An editor that failed to hydrate, a
+     * dropped node, or a half-mounted view all produce the same thing: an empty
+     * paragraph. Storing that destroys work no one asked to delete, so it is
+     * refused and the stored content is kept.
+     *
+     * Deliberately narrow — it only blocks EMPTYING. Deleting every word by hand
+     * still leaves the paragraph the editor emits, so this cannot be worked
+     * around by intent; clearing a card is what removing the card is for.
+     *
+     * @param string $incoming Sanitised HTML about to be stored.
+     * @param string $stored   HTML currently in the snapshot.
+     */
+    private static function would_erase_document(string $incoming, string $stored): bool
+    {
+        if (trim(wp_strip_all_tags($stored)) === '' && stripos($stored, '<img') === false) {
+            return false; // Nothing to lose.
+        }
+        return trim(wp_strip_all_tags($incoming)) === '' && stripos($incoming, '<img') === false;
     }
 
     /**
@@ -1376,7 +1681,10 @@ class PCM_Approvals_Service
                         $item['title'] = sanitize_text_field($updates['title']);
                     }
                     if (isset($updates['content'])) {
-                        $item['content'] = wp_kses_post($updates['content']);
+                        $clean = self::sanitize_document_html((string) $updates['content']);
+                        if (!self::would_erase_document($clean, (string) ($item['content'] ?? ''))) {
+                            $item['content'] = $clean;
+                        }
                     }
                     if (isset($updates['metaTitle'])) {
                         $item['metaTitle'] = sanitize_text_field($updates['metaTitle']);
@@ -1398,10 +1706,29 @@ class PCM_Approvals_Service
                         $item['title'] = sanitize_text_field($updates['title']);
                     }
                     if (isset($updates['content'])) {
-                        $item['content'] = wp_kses_post($updates['content']);
+                        $clean = self::sanitize_document_html((string) $updates['content']);
+                        if (!self::would_erase_document($clean, (string) ($item['content'] ?? ''))) {
+                            $item['content'] = $clean;
+                        }
                     }
                     if (isset($updates['images']) && is_array($updates['images'])) {
                         $item['images'] = array_map('esc_url_raw', $updates['images']);
+                    }
+                    // Freehand draw layer. It could only be set at CREATE time before
+                    // this, so drawing on an already-shared card lost the strokes on
+                    // save. Not run through esc_url_raw: WP's allowed protocols exclude
+                    // `data:`, so that would blank every overlay. Validated against the
+                    // exact shape the draw layer produces instead — a base64 PNG — and
+                    // anything else is rejected rather than stored.
+                    if (array_key_exists('overlay', $updates)) {
+                        $overlay = $updates['overlay'];
+                        if ($overlay === null || $overlay === '') {
+                            unset($item['overlay']);
+                        } elseif (is_string($overlay)
+                            && preg_match('#^data:image/png;base64,[A-Za-z0-9+/]+={0,2}$#', $overlay)
+                        ) {
+                            $item['overlay'] = $overlay;
+                        }
                     }
                     // Annotation metadata is stored opaque (Phase 2) — passed through as-is.
                     if (array_key_exists('annotation', $updates)) {

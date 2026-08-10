@@ -93,7 +93,21 @@
  * All component classes reference these tokens — never hardcode colors.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-.pcm-client-review {
+/* ONE definition of the review palette, listed against every surface that needs
+   it. It was declared here and then RE-DECLARED twice more — on the comment
+   inspector and the state wrapper — each time because that surface sits outside
+   `.pcm-client-review`. The admin card modal would have been a fourth copy.
+   Three copies of a palette is three chances for them to drift.
+
+   `.pcm-notion-modal` is on this list because the modal renders inside
+   `#pcm-root`, NOT inside `.pcm-client-review` — so without it every token
+   resolved to nothing and `.pcm-btn-approve` (background: var(--ink); color:
+   white) rendered white-on-nothing. The Approve button was there the whole
+   time, and invisible. */
+.pcm-client-review,
+.pcm-inspector-backdrop,
+#pcm-root .pcm-state-wrapper,
+.pcm-notion-modal {
   /* ── Ink scale (warm dark tones) ── */
   --ink:   #1d1d1f;
   --ink-2: #4a4239;
@@ -462,6 +476,16 @@
 @media (max-width: 1024px) { .pcm-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 640px)  { .pcm-grid { grid-template-columns: 1fr; } }
 
+/* The internal team preview is deliberately narrower than the public review
+   page. Size its asset grid from that preview container instead of the browser
+   viewport, and cap cards at a compact review-friendly width. Public review
+   cards retain the responsive rules above. */
+.pcm-internal-preview .pcm-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 240px));
+  gap: 16px;
+  justify-content: start;
+}
+
 
 /* ─── Cards ─── */
 .pcm-card {
@@ -825,46 +849,191 @@
  * and define their own font var. Faithful to Notion's page peek: borderless top
  * bar, a single centred 708px text column, 40px title, warm near-black ink. */
 .pcm-notion-overlay {
-  --pcm-notion-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji";
-  --pcm-notion-ink: #37352f;
+  --pcm-notion-font: var(--pcm-doc-font);
+  /* Document ink comes from --pcm-doc-ink (index.css), declared on :root as
+     well as #pcm-root precisely so it reaches this overlay, which portals to
+     document.body. There was a second --pcm-notion-ink here holding the SAME
+     #37352f — one colour, two names, two files. */
   position: fixed; inset: 0; z-index: 9999;
-  background: rgba(15, 15, 15, 0.55);
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 4vh 16px;
+  /* Scrim PLUS blur. It was a flat scrim, so the page behind stayed sharp and
+     the document never separated from it - the single biggest reason the opened
+     card read as an unfinished panel rather than a page. */
+  background: rgba(15, 15, 15, 0.48);
+  backdrop-filter: blur(12px) saturate(120%);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  /* `center`, not `stretch`. Stretch forced the sheet to the full 94vh whatever
+     it contained, so a three-line document rendered as a strip of text on top of
+     an acre of white — the void. The sheet now takes the height of its content
+     and is capped, so a short document is a short sheet. */
+  display: flex; align-items: center; justify-content: center;
+  padding: 3vh 16px;
   cursor: default;
   animation: pcmFadeIn .15s ease;
+}
+/* The app shell deliberately forces Inter onto every form control with
+   `!important`. A document sheet is an isolated reading/writing surface, and
+   its controls must use the same system stack as its title, properties and
+   prose. Keep the necessary override at the sheet boundary so it cannot alter
+   controls elsewhere in the admin SPA. */
+@layer base {
+  #pcm-root .pcm-notion-overlay :where(button, input, textarea, select),
+  .pcm-notion-overlay :where(button, input, textarea, select) {
+    font-family: var(--pcm-doc-font) !important;
+  }
+}
+/* The document editor stays mounted only long enough to finish asynchronous
+   media work and its final save. During that drain it must have no backdrop,
+   pointer interception, focus trap, or visible chrome. */
+.pcm-notion-overlay--background-save {
+  display: none;
+}
+.pcm-notion-modal,
+.pcm-internal-preview {
+  /* One width contract for a Notion-style document card and the internal
+     Approval preview that contains it. */
+  width: min(820px, calc(100vw - 80px));
 }
 .pcm-notion-modal {
   position: relative;
   background: #ffffff;
-  width: min(977px, 94vw);
-  max-height: 92vh;
+  /* A document is a CARD over the review page, not a second page taking over
+     the viewport. Keep a deliberate frame around it at desktop/tablet sizes;
+     the overlay still owns the full viewport for blur and outside-click. */
+  /* Cap, not a fixed height: grow to the content, then scroll. Only this box
+     scrolls, so the topbar stays put over a long document. */
+  max-height: 82vh;
   overflow-y: auto;
-  border-radius: 10px;
-  box-shadow: 0 0 0 1px rgba(15,15,15,0.05), 0 20px 60px rgba(15,15,15,0.22);
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px rgba(15,15,15,0.05), 0 24px 70px rgba(15,15,15,0.26);
   animation: pcmNotionIn .18s cubic-bezier(.2,.7,.3,1);
+}
+/* Selection formatting belongs to the selected text, not to the document
+   toolbar. Tiptap/Floating UI owns the coordinates; this class only supplies a
+   compact, responsive surface that remains visually distinct over the sheet. */
+.pcm-selection-popover--compact {
+  z-index: 120;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 32px));
+  color: var(--pcm-doc-ink);
+  background: rgba(255,255,255,0.98);
+  border-color: rgba(15,15,15,0.10);
+  box-shadow: 0 10px 30px rgba(15,15,15,0.16), 0 1px 3px rgba(15,15,15,0.10);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Slash-command palette. It shares the selection menu's portal boundary but
+   uses a list surface because block insertion needs names and descriptions,
+   not a row of ambiguous icons. */
+.pcm-slash-menu {
+  z-index: 130;
+  width: min(320px, calc(100vw - 32px));
+  padding: 6px;
+  color: var(--pcm-doc-ink);
+  background: rgba(255,255,255,0.99);
+  border: 1px solid rgba(15,15,15,0.10);
+  border-radius: 10px;
+  box-shadow: 0 14px 40px rgba(15,15,15,0.18), 0 2px 6px rgba(15,15,15,0.08);
+  font-family: var(--pcm-doc-font);
+  -webkit-font-smoothing: antialiased;
+}
+.pcm-slash-menu__header,
+.pcm-slash-menu__group {
+  color: var(--pcm-doc-ink-faint);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+.pcm-slash-menu__header { padding: 4px 8px 6px; }
+.pcm-slash-menu__items {
+  max-height: min(360px, calc(100vh - 80px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.pcm-slash-menu__group { padding: 8px 8px 3px; }
+.pcm-slash-menu__item {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.pcm-slash-menu__item:hover,
+.pcm-slash-menu__item.is-selected { background: rgba(55,53,47,0.08); }
+.pcm-slash-menu__icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(55,53,47,0.12);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--pcm-doc-ink-muted);
+}
+.pcm-slash-menu__icon svg { width: 17px; height: 17px; stroke-width: 1.65; }
+.pcm-slash-menu__copy { min-width: 0; display: flex; flex-direction: column; }
+.pcm-slash-menu__label {
+  color: var(--pcm-doc-ink);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 19px;
+}
+.pcm-slash-menu__description {
+  overflow: hidden;
+  color: var(--pcm-doc-ink-faint);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pcm-slash-menu__empty {
+  padding: 12px 8px;
+  color: var(--pcm-doc-ink-faint);
+  font-size: 13px;
+  line-height: 18px;
+}
+@media (max-width: 519px) {
+  .pcm-notion-modal,
+  .pcm-internal-preview {
+    /* Preserve a usable editor on phones while retaining a visible edge. */
+    width: calc(100vw - 32px);
+  }
+  .pcm-notion-modal {
+    max-height: 88vh;
+  }
+  .pcm-internal-preview .pcm-grid {
+    grid-template-columns: 1fr;
+  }
 }
 @keyframes pcmNotionIn {
   from { opacity: 0; transform: translateY(8px) scale(.99); }
   to   { opacity: 1; transform: none; }
 }
 
+/* Actions only, right-aligned. This bar used to hold a FileText icon plus the
+   title on the left — the icon the owner called a crappy document, and a title
+   that already renders at 40px directly below it. Both are gone; `flex-end`
+   replaces the `space-between` that only existed to push them apart. */
 .pcm-notion-topbar {
   position: sticky; top: 0; z-index: 3;
   height: 45px;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 10px 0 14px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: 0 10px;
   background: rgba(255,255,255,0.86);
   backdrop-filter: blur(6px);
-}
-.pcm-notion-crumb {
-  display: inline-flex; align-items: center; gap: 7px;
-  font-family: var(--pcm-notion-font);
-  font-size: 14px; font-weight: 500;
-  color: rgba(55,53,47,0.65);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  max-width: 72%;
 }
 .pcm-notion-iconbtn {
   appearance: none; border: none; background: transparent;
@@ -875,24 +1044,42 @@
 }
 .pcm-notion-iconbtn:hover { background: rgba(55,53,47,0.08); color: rgba(55,53,47,0.9); }
 
-.pcm-notion-page { padding: 6px 0 22vh; }
-.pcm-notion-col { max-width: 708px; margin: 0 auto; padding: 0 24px; }
+/* Save state. Sits left of the actions, same quiet grey as the meta line, and
+   is absent entirely when there is nothing to report. */
+#pcm-root .pcm-notion-savestate,
+.pcm-notion-savestate {
+  margin-right: auto;
+  padding-left: 6px;
+  font-family: var(--pcm-notion-font);
+  font-size: var(--pcm-doc-meta-size);
+  line-height: var(--pcm-doc-meta-leading);
+  font-weight: var(--pcm-doc-weight);
+  color: var(--pcm-doc-ink-faint);
+}
+
+/* 22vh of trailing space was Notion's click-to-append area. On a sheet that no
+   longer stretches it is just the void again, measured in viewport units. */
+.pcm-notion-page { padding: 6px 0 72px; }
+.pcm-notion-col { max-width: var(--pcm-doc-measure); margin: 0 auto; padding: 0 24px; }
+
+/* An opened CARD holds a grid of assets, not a column of prose, so it uses the
+   modal's full width rather than the 708px document measure. Same shell, same
+   size — the owner's instruction was that the modal must not get bigger. */
+.pcm-set-modal-body { padding: 0 28px; }
+.pcm-set-modal-body .pcm-notion-title { margin: 18px 0 14px; }
 @media (min-width: 820px) { .pcm-notion-col { padding: 0; } }
 
-/* Approve action inside the opened document (client peek view). The client asked
-   to approve directly from here, not only from the grid card. Colors are inlined —
-   this modal portals to <body>, outside the .pcm-client-review token scope — and
-   mirror the grid's dark→green approve pill. Sits inside .pcm-notion-col, so width
-   and side padding come from the column. */
-.pcm-notion-actions {
-  display: flex; align-items: center; gap: 10px;
-  margin-top: 28px; padding-top: 18px;
-  border-top: 1px solid rgba(55, 53, 47, 0.09);
-}
+/* Approve action for the opened document. It lived in a `.pcm-notion-actions`
+   block AFTER the prose, inside the scrolling column, so on any document of real
+   length it scrolled out of reach. It now sits in the sticky topbar and follows
+   the reader down. Colors stay inlined here — this modal portals to <body>,
+   outside the .pcm-client-review token scope — and mirror the grid's dark→green
+   approve pill. */
+#pcm-root .pcm-notion-approve,
 .pcm-notion-approve {
   appearance: none; border: none; cursor: pointer;
   font-family: var(--pcm-notion-font);
-  font-size: 13.5px; font-weight: 600; letter-spacing: -0.005em;
+  font-size: var(--pcm-doc-control-size); font-weight: 600; line-height: 1.25; letter-spacing: -0.005em;
   color: #fff; background: #1d1d1f;
   padding: 9px 16px; border-radius: 99px;
   display: inline-flex; align-items: center; gap: 6px;
@@ -902,73 +1089,94 @@
 .pcm-notion-approve.is-approved { background: #18a957; }
 .pcm-notion-approve.is-approved:hover { background: #159c4f; }
 .pcm-notion-approve:disabled { opacity: .5; cursor: default; }
+.pcm-notion-approve-icon { width: 15px; height: 15px; flex-shrink: 0; }
 
+/* The grey line above the title — "Edited 4 minutes ago". Small, quiet, and it
+   sits ABOVE the title exactly as in the reference, so the eye lands on the
+   title and not on chrome. */
+#pcm-root .pcm-notion-meta,
+.pcm-notion-meta {
+  font-family: var(--pcm-notion-font);
+  font-size: var(--pcm-doc-meta-size); line-height: var(--pcm-doc-meta-leading);
+  font-weight: var(--pcm-doc-weight);
+  color: var(--pcm-doc-ink-faint);
+  margin: 30px 0 0;
+}
+
+#pcm-root .pcm-notion-title,
 .pcm-notion-title {
   font-family: var(--pcm-notion-font);
-  font-size: 40px; line-height: 1.2; font-weight: 700;
+  font-size: clamp(32px, 5vw, var(--pcm-doc-title-size)); line-height: var(--pcm-doc-title-leading); font-weight: var(--pcm-doc-title-weight);
   letter-spacing: -0.018em;
-  color: var(--pcm-notion-ink);
-  margin: 34px 0 6px;
+  color: var(--pcm-doc-ink);
+  margin: 6px 0 6px;
   word-break: break-word;
 }
+/* Without a meta line the title keeps its own top margin, so the two layouts
+   have the same rhythm rather than one of them starting flush against the bar. */
+.pcm-notion-meta + .pcm-notion-title { margin-top: 4px; }
+.pcm-notion-topbar + .pcm-notion-page .pcm-notion-title:first-child { margin-top: 34px; }
 
+/* Property rows: icon + label on the left and value on the right. The reference
+   separates this block from the document with deliberate whitespace, not a
+   form-style rule. */
 .pcm-notion-props {
-  display: flex; flex-direction: column; gap: 7px;
-  margin: 4px 0 18px;
+  display: flex; flex-direction: column; gap: 2px;
+  margin: 12px 0 38px;
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 .pcm-notion-prop {
-  display: flex; align-items: flex-start; gap: 10px;
-  font-family: var(--pcm-notion-font); font-size: 14px; line-height: 1.5;
+  display: flex; align-items: center; gap: 0;
+  font-family: var(--pcm-notion-font); font-size: var(--pcm-doc-property-size); line-height: var(--pcm-doc-property-leading);
+  font-weight: var(--pcm-doc-weight);
+  min-height: 36px;
 }
-.pcm-notion-prop-label { flex: 0 0 128px; color: rgba(55,53,47,0.5); }
-.pcm-notion-prop-value { color: var(--pcm-notion-ink); }
-
-/* Notion typography for the rendered (Tiptap) document body. */
-.pcm-notion-prose {
+.pcm-notion-prop-icon {
+  width: 16px; height: 16px; flex-shrink: 0;
+  color: rgba(55,53,47,0.45);
+}
+.pcm-notion-pill {
+  display: inline-flex; align-items: center;
+  height: 20px; padding: 0 8px; border-radius: 4px;
+  background: rgba(55,53,47,0.08);
+  font-size: 13px; line-height: 1;
+  color: var(--pcm-doc-ink);
+}
+/* State line while the document is being fetched. A state statement, not
+   instructional chrome — it says what is happening, then goes away. */
+#pcm-root .pcm-notion-loading,
+.pcm-notion-loading {
   font-family: var(--pcm-notion-font);
-  color: var(--pcm-notion-ink);
-  font-size: 16px; line-height: 1.5;
+  font-size: var(--pcm-doc-property-size);
+  line-height: var(--pcm-doc-property-leading);
+  font-weight: var(--pcm-doc-weight);
+  color: var(--pcm-doc-ink-faint);
+  margin: 4px 0 18px;
 }
-.pcm-notion-prose .ProseMirror { outline: none; }
-.pcm-notion-prose h1,
-.pcm-notion-prose h2,
-.pcm-notion-prose h3,
-.pcm-notion-prose h4 {
-  color: var(--pcm-notion-ink); font-weight: 600; line-height: 1.3; margin: 1.4em 0 2px;
+.pcm-notion-prop-label {
+  flex: 0 1 152px;
+  min-width: 100px;
+  display: inline-flex; align-items: center; gap: 7px;
+  color: var(--pcm-doc-ink-subtle);
+  padding: 3px 6px; border-radius: 4px;
 }
-.pcm-notion-prose h1 { font-size: 1.875em; }
-.pcm-notion-prose h2 { font-size: 1.5em; }
-.pcm-notion-prose h3 { font-size: 1.25em; }
-.pcm-notion-prose h4 { font-size: 1.05em; }
-.pcm-notion-prose p { margin: 1px 0; padding: 3px 0; }
-/* Tailwind's base reset sets `ul,ol { list-style: none }`; we dropped the `prose`
- * class, so restore the markers explicitly (disc/decimal + Notion's nested glyphs). */
-.pcm-notion-prose ul,
-.pcm-notion-prose ol { margin: 2px 0; padding-left: 1.7em; list-style-position: outside; }
-.pcm-notion-prose ul { list-style-type: disc; }
-.pcm-notion-prose ol { list-style-type: decimal; }
-.pcm-notion-prose ul ul { list-style-type: circle; }
-.pcm-notion-prose ul ul ul { list-style-type: square; }
-.pcm-notion-prose li { padding: 2px 0; }
-.pcm-notion-prose li::marker { color: rgba(55,53,47,0.5); }
-.pcm-notion-prose a {
-  color: inherit; text-decoration: underline;
-  text-decoration-color: rgba(55,53,47,0.35); text-underline-offset: 2px;
+.pcm-notion-prop-value {
+  flex: 1 1 auto;
+  color: var(--pcm-doc-ink);
+  min-width: 0;
+  padding: 3px 8px; border-radius: 4px;
+  transition: background .1s ease;
 }
-.pcm-notion-prose strong { font-weight: 600; }
-.pcm-notion-prose blockquote {
-  margin: 8px 0; padding-left: 14px;
-  border-left: 3px solid rgba(55,53,47,0.85); color: var(--pcm-notion-ink);
-}
-.pcm-notion-prose hr { border: none; border-top: 1px solid rgba(55,53,47,0.16); margin: 14px 0; }
-.pcm-notion-prose img { max-width: 100%; height: auto; border-radius: 4px; margin: 6px 0; }
-.pcm-notion-prose code {
-  background: rgba(135,131,120,0.15); color: #eb5757;
-  border-radius: 4px; padding: .2em .4em; font-size: 85%;
-  font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
-}
-.pcm-notion-prose pre { background: #f7f6f3; border-radius: 6px; padding: 16px; overflow: auto; margin: 8px 0; }
-.pcm-notion-prose pre code { background: none; color: inherit; padding: 0; font-size: 85%; }
+.pcm-notion-prop-value:hover { background: rgba(55,53,47,0.06); }
+
+/* The document body's typography is NOT here.
+ *
+ * `.pcm-notion-prose` and its 27 rules were the second, read-only renderer's
+ * type scale. That renderer is gone — the card now uses ONE editor in two modes
+ * (CustomCardEditor), so the body is styled by `.pcm-card-editor` in index.css
+ * for reader and writer alike. Two definitions of one document's typography is
+ * exactly how the two surfaces drifted apart. */
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -985,12 +1193,8 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Inherit the ink palette from .pcm-client-review */
-  --ink: #1d1d1f;
-  --ink-2: #4a4239;
-  --ink-3: #6f6a64;
-  --ink-4: #8a7d6d;
-  --line: rgba(0,0,0,0.06);
+  /* Palette comes from the ONE declaration at the top of this file, which now
+     lists this selector. It used to re-declare the tokens here. */
 }
 
 /* Drawer panel */
@@ -1281,12 +1485,8 @@
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Tokens (needed since state wrappers don't have .pcm-client-review parent) */
-  --ink: #1d1d1f;
-  --ink-2: #4a4239;
-  --ink-3: #6f6a64;
-  --ink-4: #8a7d6d;
-  --line: rgba(0,0,0,0.06);
+  /* Palette comes from the ONE declaration at the top of this file, which now
+     lists this selector. It used to re-declare the tokens here. */
 }
 
 /* Centered content area */

@@ -28,6 +28,11 @@ import Highlight from '@tiptap/extension-highlight';
 import { TextStyle } from '@tiptap/extension-text-style';
 import Typography from '@tiptap/extension-typography';
 import { FileHandler } from '@tiptap/extension-file-handler';
+// Checkboxes. These ship inside @tiptap/extension-list, which arrives as a
+// direct dependency of @tiptap/starter-kit — NOT as the TipTap v2 packages
+// `@tiptap/extension-task-list` / `-task-item`, whose absence was previously
+// mistaken for the feature being blocked on an install. Nothing was installed.
+import { TaskList, TaskItem } from '@tiptap/extension-list';
 import UniqueID from '@tiptap/extension-unique-id';
 import { ReactNodeViewRenderer } from '@tiptap/react';
 import { AiSuggestionMark } from './AiSuggestionMark';
@@ -163,6 +168,12 @@ export function getEditorExtensions(options?: EditorExtensionOptions): Extension
     Placeholder.configure({
       placeholder,
     }),
+
+    // ── Task list — a checklist that actually works ───────────
+    // `nested` so a checklist item can carry sub-items, which is what makes it
+    // usable as a real task list rather than a flat row of boxes.
+    TaskList,
+    TaskItem.configure({ nested: true }),
 
     // ── UniqueID — assign permanent IDs to nodes for AI AST matching ──
     UniqueID.configure({

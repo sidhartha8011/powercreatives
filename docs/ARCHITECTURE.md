@@ -5,6 +5,11 @@
 Power Creatives is a WordPress plugin providing an AI-powered creative generation platform.
 It runs as a React SPA embedded in the WordPress admin panel, backed by a PHP REST API.
 
+The authoritative business-domain language and target hierarchy are defined in
+[ARCHITECTURE-PHILOSOPHY.md](ARCHITECTURE-PHILOSOPHY.md). This document describes
+the technical structure; it must not redefine Brand, Delivery, Project, Asset, or
+Approval Set ownership independently.
+
 ## Directory Structure
 
 ```

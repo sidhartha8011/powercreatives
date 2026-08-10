@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Check, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -14,11 +14,22 @@ import '../client-review.css';
 
 // Import newly created reusable component modules
 import { ClientStatusToolbar } from './ClientStatusToolbar';
-import { CreativeAssetCard } from './CreativeAssetCard';
+import { ApprovalSetContents } from './ApprovalSetContents';
+import { useSetAssets } from '../hooks/useSetAssets';
 import { ClientCommentInspector, type CommentEntry } from './ClientCommentInspector';
 
 interface ClientReviewPageProps {
   token: string;
+  /**
+   * Where an opened document sheet is portalled.
+   *
+   * The public client page renders this at top level and leaves it undefined —
+   * the sheet then portals to `document.body`, unchanged. The admin board hosts
+   * this page inside a MODAL dialog and must pass that dialog's content element,
+   * or the sheet lands outside the dialog's focus trap and pointer-event lock
+   * and becomes completely inert. See `CardDocumentView`'s `container` prop.
+   */
+  documentContainer?: HTMLElement | null;
 }
 
 /**
@@ -72,7 +83,7 @@ function clearDraft(token: string) {
   }
 }
 
-export function ClientReviewPage({ token }: ClientReviewPageProps) {
+export function ClientReviewPage({ token, documentContainer }: ClientReviewPageProps) {
   // Fetch public set data by token
   const { data: set, isLoading, error } = trpc.approvals.getPublicSet.useQuery({ token }) as any;
 
@@ -333,50 +344,42 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
     utils.approvals.getPublicSet.invalidate({ token });
   }, [utils, token]);
 
-  // Combined asset lists & counts
-  const mediaAssets = useMemo(() => set?.snapshot?.media || [], [set]);
-  const copyAssets = useMemo(() => set?.snapshot?.copy || [], [set]);
-  const articleAssets = useMemo(() => set?.snapshot?.articles || [], [set]);
-  const customAssets = useMemo(() => set?.snapshot?.custom || [], [set]);
-
-  const counts = useMemo(() => {
-    const videos = mediaAssets.filter((item: any) => isVideoAsset(item)).length;
-    const images = mediaAssets.length - videos;
-    const copy = copyAssets.length;
-    const articles = articleAssets.length;
-    const custom = customAssets.length;
-    return { all: mediaAssets.length + copy + articles + custom, images, videos, copy, articles, custom };
-  }, [mediaAssets, copyAssets, articleAssets, customAssets]);
-
-  const allMergedAssets = useMemo(() => {
-    const media = mediaAssets.map((item: any) => ({
-      id: item.id,
-      type: 'media' as const,
-      data: item
-    }));
-    const copy = copyAssets.map((item: any) => ({
-      id: item.id,
-      type: 'copy' as const,
-      data: item
-    }));
-    const articles = articleAssets.map((item: any) => ({
-      id: item.id,
-      type: 'article' as const,
-      data: item
-    }));
-    const custom = customAssets.map((item: any) => ({
-      id: item.id,
-      type: 'custom' as const,
-      data: item
-    }));
-    return [...media, ...copy, ...articles, ...custom];
-  }, [mediaAssets, copyAssets, articleAssets, customAssets]);
+  // What is inside this card — derived ONCE, shared with the admin modal.
+  // This used to be four inline useMemos plus a merge, duplicated in spirit by
+  // anything else that needed a card's contents.
+  const {
+    mediaAssets,
+    copyAssets,
+    allMergedAssets,
+    counts,
+    primaryMediaUrl,
+  } = useSetAssets(set, isVideoAsset);
 
   const activeAssetForComment = useMemo(() => {
     if (!activeAssetIdForComment) return null;
     const found = allMergedAssets.find((a) => a.id === activeAssetIdForComment);
     return found ? found : null;
   }, [activeAssetIdForComment, allMergedAssets]);
+
+  /**
+   * Honour `&pcm_asset=<id>` — the per-asset share link.
+   *
+   * Runs once the assets exist, because the element cannot be scrolled to before
+   * it is rendered. Guarded on a ref so it fires ONCE: without that, every
+   * re-render (an approval, a comment) would yank the page back to the linked
+   * asset while the client was reading something else.
+   */
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (deepLinkDone.current || allMergedAssets.length === 0) return;
+    const wanted = new URLSearchParams(window.location.search).get('pcm_asset');
+    if (!wanted) { deepLinkDone.current = true; return; }
+    const el = document.querySelector(`[data-asset-id="${CSS.escape(wanted)}"]`);
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      deepLinkDone.current = true;
+    }
+  }, [allMergedAssets.length]);
 
   const filteredAssets = useMemo(() => {
     if (activeFilter === 'all') return allMergedAssets;
@@ -395,12 +398,12 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // Hero subtitle — describes asset breakdown for the client
   const heroSubtitle = useMemo(() => {
     const parts: string[] = [];
-    if (counts.images > 0) parts.push(`${counts.images} bild${counts.images !== 1 ? 'er' : ''}`);
-    if (counts.videos > 0) parts.push(`${counts.videos} video${counts.videos !== 1 ? 'r' : ''}`);
-    if (counts.copy > 0) parts.push(`${counts.copy} textvariant${counts.copy !== 1 ? 'er' : ''}`);
-    if (counts.articles > 0) parts.push(`${counts.articles} artikel${counts.articles !== 1 ? 'ar' : ''}`);
-    const assetSummary = parts.length > 0 ? parts.join(', ') : 'ditt kreativa material';
-    return `Granska ${assetSummary}. Godkänn allt eftersom, eller signera hela paketet via verktygsfältet.`;
+    if (counts.images > 0) parts.push(`${counts.images} image${counts.images !== 1 ? 's' : ''}`);
+    if (counts.videos > 0) parts.push(`${counts.videos} video${counts.videos !== 1 ? 's' : ''}`);
+    if (counts.copy > 0) parts.push(`${counts.copy} copy variant${counts.copy !== 1 ? 's' : ''}`);
+    if (counts.articles > 0) parts.push(`${counts.articles} article${counts.articles !== 1 ? 's' : ''}`);
+    const assetSummary = parts.length > 0 ? parts.join(', ') : 'your creative material';
+    return `Review ${assetSummary}. Approve items as you go, or sign off the whole set from the toolbar.`;
   }, [counts]);
 
   if (isLoading) {
@@ -411,7 +414,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         <div className="pcm-glow pcm-glow-3" aria-hidden="true" />
         <div className="pcm-state-center">
           <Spinner className="w-8 h-8 text-primary" />
-          <span className="pcm-state-text">Laddar granskning...</span>
+          <span className="pcm-state-text">Loading review...</span>
         </div>
       </div>
     );
@@ -441,7 +444,6 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
   // can still open asset threads and continue the conversation after approval.
   // A banner (rendered below) communicates the locked/approved state.
 
-  const primaryMediaUrl = mediaAssets[0]?.url || '';
   const brandName = set.snapshot.brandName || 'Client Board';
   const campaignName = set.name || 'Creative Review';
   const studioName = set.snapshot.studioName || 'Studio';
@@ -473,10 +475,15 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
       {/* Hero Header */}
       <section className="pcm-hero max-w-[1280px] w-full mx-auto px-7 pt-12 pb-5 select-none">
         <div className="pcm-hero-eyebrow">
-          {campaignName} · Granskning
+          {/* English-only law. This was "Granskning" and it survived TWO passes:
+              the 2026-08-04 cleanup that converted 17 Swedish strings, and my own
+              fact-check that reported zero Swedish left — because both searched
+              for å/ä/ö and this word has none. It was found by rendering the page
+              in a browser and reading what it actually said. */}
+          {campaignName} · Review
         </div>
         <h1 className="pcm-hero-title">
-          {totalCount} tillgång{totalCount !== 1 ? 'ar' : ''} <em>för din signering.</em>
+          {totalCount} asset{totalCount !== 1 ? "s" : ""} <em>for your sign-off.</em>
         </h1>
         <p className="pcm-hero-subtitle">
           {heroSubtitle}
@@ -486,7 +493,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         <div className="pcm-hero-status-row">
           <div className="pcm-progress select-none">
             <span className="progress-count">
-              {approvedCount} av {totalCount} godkända
+              {approvedCount} of {totalCount} approved
             </span>
             <div className="pcm-progress-bar">
               <div style={{ width: `${totalCount > 0 ? (approvedCount / totalCount) * 100 : 0}%` }} />
@@ -497,7 +504,7 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
             title="Status"
           >
             <span className="dot" aria-hidden="true" />
-            {totalCount > 0 && approvedCount === totalCount ? ' Omgång godkänd' : ' Inväntar din granskning'}
+            {totalCount > 0 && approvedCount === totalCount ? ' Round approved' : ' Awaiting your review'}
           </span>
         </div>
       </section>
@@ -518,63 +525,32 @@ export function ClientReviewPage({ token }: ClientReviewPageProps) {
         isSaving={saveDraftMutation.isPending}
       />
 
-      {/* Grid container */}
+      {/* Grid container — the SHARED renderer. The admin modal renders this
+          exact component, so the team sees the client view rather than a
+          lookalike that can drift away from it. */}
       <main className="max-w-[1280px] w-full mx-auto px-7 mt-4">
-        {filteredAssets.length === 0 ? (
-          <div className="pcm-empty-state">
-            <p>No assets found in this category.</p>
-          </div>
-        ) : (
-          <div className="pcm-grid transition-all duration-300">
-            {filteredAssets.map((item) => {
-              const isApproved = item.type === 'media'
-                ? approvedVisualIds.includes(item.id)
-                : item.type === 'article'
-                  ? approvedArticleIds.includes(item.id)
-                  : item.type === 'custom'
-                    ? approvedCustomIds.includes(item.id)
-                    : approvedCopyIds.includes(item.id);
-              const threadForAsset = comments[item.id] || [];
-              const userRole = isTeamMember ? 'team' : 'client';
-              const hasNewComment = threadForAsset.some(c => {
-                const isAuthorTeam = c.author === 'Team';
-                const isCurrentTeam = isTeamMember;
-                const isSelf = (isCurrentTeam && isAuthorTeam) || (!isCurrentTeam && !isAuthorTeam);
-                if (isSelf) return false;
-                return !c.readBy?.includes(userRole);
-              });
-
-              // Pair copy card with corresponding media item
-              let pairedMediaUrl = null;
-              if (item.type === 'copy') {
-                const copyIndex = copyAssets.findIndex((c: any) => c.id === item.id);
-                pairedMediaUrl = (mediaAssets.length > 0 && copyIndex !== -1)
-                  ? mediaAssets[copyIndex % mediaAssets.length]?.url
-                  : primaryMediaUrl;
-              }
-
-              return (
-                <CreativeAssetCard
-                  key={item.id}
-                  asset={item.data}
-                  type={item.type}
-                  isApproved={isApproved}
-                  commentCount={threadForAsset.length}
-                  hasNewComment={hasNewComment}
-                  onApprove={handleToggleApprove}
-                  brandLogoUrl={set.snapshot.brandLogoUrl}
-                  brandName={brandName}
-                  pairedMediaUrl={pairedMediaUrl}
-                  isSubmitted={isLocked || submitMutation.isPending}
-                  isTeamMember={isTeamMember}
-                  onAssetUpdate={handleAssetUpdate}
-                  onOpenComments={(id) => setActiveAssetIdForComment(id)}
-                  copyIndex={item.type === 'copy' ? copyAssets.findIndex((c: any) => c.id === item.id) : undefined}
-                />
-              );
-            })}
-          </div>
-        )}
+        <ApprovalSetContents
+          assets={filteredAssets}
+          approvedVisualIds={approvedVisualIds}
+          approvedCopyIds={approvedCopyIds}
+          approvedArticleIds={approvedArticleIds}
+          approvedCustomIds={approvedCustomIds}
+          comments={comments}
+          isTeamMember={isTeamMember}
+          isSubmitted={isLocked || submitMutation.isPending}
+          brandName={brandName}
+          brandLogoUrl={set.snapshot?.brandLogoUrl}
+          setBrandName={set.snapshot?.brandName}
+          setProjectName={set.snapshot?.projectName}
+          copyAssets={copyAssets}
+          mediaAssets={mediaAssets}
+          primaryMediaUrl={primaryMediaUrl}
+          onApprove={handleToggleApprove}
+          onAssetUpdate={handleAssetUpdate}
+          onOpenComments={(id) => setActiveAssetIdForComment(id)}
+          publicToken={token}
+          documentContainer={documentContainer}
+        />
       </main>
 
       {/* Floating Comment Inspector Drawer panel */}

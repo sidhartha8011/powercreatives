@@ -8,7 +8,7 @@
  * @package PowerCreatives
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { KanbanSquare, Plus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -16,19 +16,29 @@ import { Spinner } from '@/components/ui/spinner';
 import { colors, typography } from '@/components/shared/design-tokens';
 import { useApp } from '@/contexts/AppContext';
 
-import { SetsBoard } from './kanban/SetsBoard';
+import { SetsBoard, type CreateInLaneContext } from './kanban/SetsBoard';
 import { CreateCustomSetDialog } from './components/CreateCustomSetDialog';
 import { useApprovalSets } from './hooks/useApprovalSets';
+
+/** Everything a create entry point can pre-fill. All fields are hints. */
+type CreatePreset = {
+  brandId?: number | null;
+  projectId?: number | null;
+  deliveryId?: number | null;
+  status?: string | null;
+};
 
 export function ApprovalsModule() {
   const { sets, isLoading } = useApprovalSets();
   const [showCreate, setShowCreate] = useState(false);
 
+  // ONE dialog, two entry points — the header button and each lane's "+" —
+  // so they can never drift apart. Both funnel through this preset.
+  const [createPreset, setCreatePreset] = useState<CreatePreset | null>(null);
+
   // Create-from-delivery handover: a delivery project row's "+" lands here
   // with brand/project/delivery pre-selected in the create flow (one-shot).
   const { consumePendingCreate, state: appState } = useApp();
-  const [createPreset, setCreatePreset] =
-    useState<{ brandId: number | null; projectId: number; deliveryId: number } | null>(null);
   useEffect(() => {
     const ctx = consumePendingCreate('approvals');
     if (ctx) {
@@ -37,6 +47,17 @@ export function ApprovalsModule() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appState.pendingCreate]);
+
+  // Lane "+": born in that lane, pre-filled from whatever the board is filtered to.
+  const handleCreateInLane = useCallback((ctx: CreateInLaneContext) => {
+    setCreatePreset({
+      brandId: ctx.brandId,
+      projectId: ctx.projectId,
+      deliveryId: ctx.deliveryId,
+      status: ctx.status,
+    });
+    setShowCreate(true);
+  }, []);
 
   // First-load splash only when nothing is cached yet.
   const showSplash = isLoading && sets.length === 0;
@@ -64,7 +85,7 @@ export function ApprovalsModule() {
         </Button>
       </div>
 
-      <SetsBoard />
+      <SetsBoard onCreateInLane={handleCreateInLane} />
 
       {/* "Add Approval Set" → author a custom Notion-style card, then send it to the
           client through the shared SendToApprovalSetDialog (same flow as Copy). */}

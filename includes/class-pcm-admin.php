@@ -129,12 +129,22 @@ class PCM_Admin
         wp_enqueue_script('heartbeat');
 
         // Enqueue the main React app JS
-        // Using index-writer.js to bypass stubborn Nginx server caches
+        // Using index-writer.js to bypass stubborn Nginx server caches.
+        //
+        // Version = filemtime, matching the stylesheet above. It was time(), which
+        // changes on every request — so the browser could never cache the bundle and
+        // re-downloaded ~5 MB on EVERY admin page load. filemtime still busts the
+        // cache on every build (the filename is fixed, so the version is what does
+        // it), while letting an unchanged bundle be served from cache.
         wp_enqueue_script(
             'pcm-app',
             $app_url . 'index-writer.js',
             array('heartbeat'), // heartbeat must be present before the app binds its tick listener
-            time(), // Cache-bust on every page load for dev testing
+            // Cache-bust on the BUILD, not on every page load (origin change) — a
+            // per-request version defeated browser caching entirely.
+            file_exists($app_dir . 'index-writer.js')
+                ? filemtime($app_dir . 'index-writer.js')
+                : PCM_VERSION,
             true // Load in footer
         );
 
@@ -224,6 +234,10 @@ class PCM_Admin
             'deliveryTypePresets' => class_exists('PCM_Deliveries_Service')
                 ? PCM_Deliveries_Service::type_presets()
                 : array(),
+            // Approvals client review window, in days. 0 = show no deadline.
+            // The client board reads this; it was previously read from a key
+            // NOTHING emitted, so the due date could never render at all.
+            'approvalsReviewWindowDays' => (int) PCM_Settings::get('approvals_review_window_days', 0),
             // Plugin version
             'version' => PCM_VERSION,
         );

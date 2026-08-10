@@ -380,6 +380,16 @@ Return a JSON object with fields: title, content (clean semantic HTML — NO wra
             throw new \RuntimeException('Failed to decode base64 image data.');
         }
 
-        return PCM_Storage::save_data($decodedData, $filename, $mimeType, 'writer-inline-image');
+        // The Writer and Approvals editors embed the original attachment URL;
+        // they never request Media Library thumbnails. Generating every
+        // registered subsize here held the observed REST response open for
+        // tens of seconds and made the document appear locked while closing.
+        return PCM_Storage::save_data(
+            $decodedData,
+            $filename,
+            $mimeType,
+            'writer-inline-image',
+            false
+        );
     }
 }

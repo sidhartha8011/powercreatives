@@ -32,7 +32,13 @@ function statusClass(status: CommentStatus): string {
 interface ClientCommentInspectorProps {
   /** The asset being inspected */
   asset: { id: string; url?: string; name?: string; headline?: string; body?: string; mimeType?: string; [k: string]: unknown };
-  type: 'media' | 'copy';
+  /**
+   * Widened to every asset kind a card can hold. Comment threads are keyed by
+   * asset id for ALL four types — articles and documents were already
+   * commentable — so narrowing this to media|copy only ever described the two
+   * types that happened to render a preview here, not what could be inspected.
+   */
+  type: 'media' | 'copy' | 'article' | 'custom';
   /** Full comment thread for this asset */
   thread: CommentEntry[];
   /** Current viewer identity */

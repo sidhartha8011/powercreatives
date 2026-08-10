@@ -96,8 +96,39 @@ export function useImageUpload(options: UseImageUploadOptions = {}) {
     }
   }, [options, uploadImageMutation]);
 
+  /**
+   * Upload an image that is ALREADY a data URL, and return its hosted URL.
+   *
+   * `uploadImage` above takes a `File` and compresses it. Canvas output —
+   * a flattened annotation, a freehand draw layer — is already a finished PNG
+   * and arrives as a data URL, so it needs the same destination without the
+   * File round-trip or a second lossy pass.
+   *
+   * This exists because a data URL must never be stored in a document. WordPress
+   * strips `data:` from any `src` on save (`wp_allowed_protocols()` has no
+   * entry for it), which left images source-less and then emptied whole cards.
+   * The media library is where an image belongs; the document keeps a URL.
+   */
+  const uploadDataUrl = useCallback(async (dataUrl: string, filename: string): Promise<string> => {
+    const mimeType = dataUrl.slice(5, dataUrl.indexOf(';')) || 'image/png';
+    setIsUploading(true);
+    try {
+      const result = await uploadImageMutation.mutateAsync({ fileData: dataUrl, filename, mimeType });
+      options.onSuccess?.(result.url);
+      return result.url;
+    } catch (err: any) {
+      console.error('[useImageUpload] Data-URL upload failed:', err);
+      const errorObject = err instanceof Error ? err : new Error(String(err));
+      options.onError?.(errorObject);
+      throw errorObject;
+    } finally {
+      setIsUploading(false);
+    }
+  }, [options, uploadImageMutation]);
+
   return {
     isUploading,
     uploadImage,
+    uploadDataUrl,
   };
 }

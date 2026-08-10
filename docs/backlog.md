@@ -1,5 +1,6 @@
 ## Backlog
 
+- [ ] Confirm AP-001 through AP-007 in `ARCHITECTURE-PHILOSOPHY.md`, then produce an audited migration plan for the canonical Brand → Delivery → Project → Asset hierarchy and versioned Approval Set membership. No runtime migration is authorized by the philosophy document alone. [2026-08-06]
 - [x] Refaktorering av trpc.ts: Bröt ut ROUTE_MAP (472 rader) till dedikerad `trpc-routes.ts` config-fil. Raderade 12 duplicerade routes (articles.* och prompts.* med 0 konsumenter). Fixade oanvänd `useAtomValue`-import i useWriterPersistence. trpc.ts gick från 788 → 219 rader. [2026-05-30]
 - [x] Writer DB-persistens: Koppla ihop Jotai in-memory store med WordPress REST API via ny `useWriterPersistence`-hook (debounced autosave, load on mount, create/delete sync) + ny `POST /articles` CREATE-endpoint + `writer.create` tRPC-route. Artiklar sparas nu i databasen och överlever page refresh. [2026-05-30]
 - [x] Approvals articles typsäkerhet: Lade till `articles?: SnapshotAsset[]` i snapshot-typ, `approvedArticleIds?: string[]` i reviewFeedback-typ, uppdaterade PHP `update_snapshot_asset()` att söka i articles-array, och lade till `approvedArticleIds`-sanitering i `submit_review()` + `save_review_draft()`. [2026-05-30]

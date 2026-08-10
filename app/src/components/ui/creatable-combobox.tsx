@@ -19,7 +19,7 @@
 
 import { cn } from "@/lib/utils";
 import { Check, ChevronsUpDown, Plus, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "./button";
 import {
   Command,
@@ -65,10 +65,19 @@ export function CreatableCombobox({
   const [search, setSearch] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  // Reset search when popover closes
-  useEffect(() => {
-    if (!open) setSearch("");
-  }, [open]);
+  /**
+   * Open/close, clearing the query IN THE SAME UPDATE as the close.
+   *
+   * This was a `useEffect` on [open]. An effect runs after the commit, so a
+   * close produced two renders: the first started the exit animation with the
+   * list still filtered, the second re-rendered that still-visible list
+   * unfiltered — the full option set flashed back before fading. Batching the
+   * two state changes gives one render and no flash.
+   */
+  const setOpenState = (next: boolean) => {
+    if (!next) setSearch("");
+    setOpen(next);
+  };
 
   // Determine if the typed text is a new value (not in options)
   const trimmedSearch = search.trim();
@@ -79,12 +88,12 @@ export function CreatableCombobox({
 
   const handleSelect = (selected: string) => {
     onChange(selected);
-    setOpen(false);
+    setOpenState(false);
   };
 
   const handleCreate = () => {
     onChange(trimmedSearch);
-    setOpen(false);
+    setOpenState(false);
   };
 
   const handleClear = (e: React.MouseEvent) => {
@@ -93,43 +102,55 @@ export function CreatableCombobox({
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          ref={triggerRef}
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          disabled={disabled}
-          className={cn(
-            "justify-between font-normal bg-transparent",
-            compact ? "h-8 text-xs px-2 gap-1" : "h-9 text-sm px-3 gap-2",
-            !value && "text-muted-foreground",
-            className
-          )}
-        >
-          <span className="truncate flex-1 text-left">
-            {value || placeholder}
-          </span>
-          <span className="flex items-center gap-0.5 shrink-0">
-            {value && !disabled && (
-              <X
-                className={cn(
-                  "opacity-50 hover:opacity-100 transition-opacity cursor-pointer",
-                  compact ? "h-3 w-3" : "h-3.5 w-3.5"
-                )}
-                onClick={handleClear}
-              />
+    <Popover open={open} onOpenChange={setOpenState}>
+      {/* The clear button is a SIBLING of the trigger, not nested inside it.
+          Radix toggles the popover on pointerdown, so an X inside the trigger
+          opened the list before its own click handler ran — the clear read as
+          broken. Same fix as components/shared/SearchableSelect. */}
+      <div className={cn("relative inline-flex items-center", className)}>
+        <PopoverTrigger asChild>
+          <Button
+            ref={triggerRef}
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            disabled={disabled}
+            className={cn(
+              "w-full justify-between font-normal bg-transparent",
+              compact ? "h-8 text-xs px-2 gap-1" : "h-9 text-sm px-3 gap-2",
+              !value && "text-muted-foreground",
+              // Unconditional: reserves room for the chevron AND the clear
+              // button, so picking a value never re-lays-out the label.
+              compact ? "pr-11" : "pr-14"
             )}
+          >
+            <span className="truncate flex-1 text-left">
+              {value || placeholder}
+            </span>
             <ChevronsUpDown
               className={cn(
                 "opacity-50 shrink-0",
                 compact ? "h-3 w-3" : "h-3.5 w-3.5"
               )}
             />
-          </span>
-        </Button>
-      </PopoverTrigger>
+          </Button>
+        </PopoverTrigger>
+
+        {value && !disabled && (
+          <button
+            type="button"
+            onClick={handleClear}
+            aria-label="Clear selection"
+            title="Clear"
+            className={cn(
+              "absolute inline-flex items-center justify-center rounded-sm text-muted-foreground opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100",
+              compact ? "right-6 h-4 w-4" : "right-8 h-5 w-5"
+            )}
+          >
+            <X className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
+          </button>
+        )}
+      </div>
       <PopoverContent
         className="p-0"
         style={{

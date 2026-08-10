@@ -17,15 +17,22 @@
  * the drag handle props the board spreads on the wrapper.
  */
 
-import { useCallback, useMemo, type KeyboardEvent, type MouseEvent } from 'react';
-import { Check, Copy, MessageSquare, Trash2 } from 'lucide-react';
+import { useCallback, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { Check, ChevronRight, Copy, MessageSquare, Trash2 } from 'lucide-react';
 
 import type { ApprovalSet } from '../types';
+import { assetType } from '../assetTypes';
 
 import styles from './setCard.module.css';
 
 export interface SetCardProps {
   set: ApprovalSet;
+  /**
+   * Brand name resolved by the board from the brands registry. The list endpoint
+   * deliberately doesn't ship the (longtext) snapshot, so `set.snapshot.brandName`
+   * is empty here — this prop is the card's only source for the brand prefix.
+   */
+  brandName?: string | null;
   onCopyLink: (token: string) => void;
   onOpenFeedback: (set: ApprovalSet) => void;
   /** Opens the in-app preview dialog (iframe of the public board). */
@@ -39,10 +46,15 @@ export interface SetCardProps {
   /** True when ANY card is selected — drives select-mode visuals
    *  (checkbox stays visible on every card, hover-only chips hidden). */
   selectMode: boolean;
+  /** Open the card focused on one of its sub-assets. */
+  onOpenItem: (set: ApprovalSet, assetId: string) => void;
+  /** Remove one sub-asset. The parent owns the request and the undo. */
+  onDeleteItem: (set: ApprovalSet, assetId: string) => void;
 }
 
 export function SetCard({
   set,
+  brandName,
   onCopyLink,
   onOpenFeedback,
   onOpenPreview,
@@ -50,6 +62,8 @@ export function SetCard({
   onToggleSelect,
   isSelected,
   selectMode,
+  onOpenItem,
+  onDeleteItem,
 }: SetCardProps) {
   // Total feedback = sum of all comment entries across all asset threads
   // (comments are Record<assetId, CommentEntry[]>). Only used to gate the
@@ -104,24 +118,47 @@ export function SetCard({
     [stop, onRequestDelete, set]
   );
 
-  const brand = set.snapshot.brandName?.trim();
+  // Board rows carry NO snapshot — the list query omits it (approvals/service.php)
+  // and no longer ships a misleading empty one, so the old
+  // `?? set.snapshot.brandName` fallback was dead here and would now throw.
+  const brand = brandName?.trim();
+
+  /**
+   * Sub-assets, straight off the row.
+   *
+   * The list query ships `items[]` as an SQL-extracted summary, so expanding
+   * costs ZERO network — which is the whole point: on this host a per-card
+   * fetch measures seconds, and a disclosure that stalls is worse than none.
+   */
+  const [expanded, setExpanded] = useState(false);
+  const items = set.items ?? [];
+  const itemCount = set.itemCount ?? items.length;
+
+  const toggleExpanded = useCallback(
+    (e: MouseEvent) => { stop(e); setExpanded((v) => !v); },
+    [stop]
+  );
 
   return (
     <article
       className={styles.card}
       data-selected={isSelected || undefined}
       data-select-mode={selectMode || undefined}
-      role="link"
-      tabIndex={0}
-      aria-label={
-        selectMode
-          ? `${isSelected ? 'Deselect' : 'Select'} ${set.name}`
-          : `Open preview for ${set.name}`
-      }
-      aria-pressed={selectMode ? isSelected : undefined}
-      onClick={handleCardClick}
-      onKeyDown={handleKeyDown}
+      data-expanded={expanded || undefined}
     >
+      <div
+        className={styles.row}
+        role="link"
+        tabIndex={0}
+        aria-label={
+          selectMode
+            ? `${isSelected ? 'Deselect' : 'Select'} ${set.name}`
+            : `Open preview for ${set.name}`
+        }
+        aria-pressed={selectMode ? isSelected : undefined}
+        onClick={handleCardClick}
+        onKeyDown={handleKeyDown}
+      >
       <button
         type="button"
         className={styles.checkbox}
@@ -141,6 +178,23 @@ export function SetCard({
           </>
         ) : null}
         <span>{set.name}</span>
+
+        {/* What is inside, and the way in. Always present when the card holds
+            anything, because it is information rather than an action — the
+            hover-only chips to the right are the actions. */}
+        {itemCount > 0 && (
+          <button
+            type="button"
+            className={styles.disclosure}
+            onClick={toggleExpanded}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? 'Hide' : 'Show'} the ${itemCount} item${itemCount === 1 ? '' : 's'} in ${set.name}`}
+            tabIndex={-1}
+          >
+            <ChevronRight className={styles.disclosureIcon} aria-hidden="true" />
+            <span className={styles.disclosureCount}>{itemCount}</span>
+          </button>
+        )}
       </div>
 
       <div className={styles.actions} role="group" aria-label="Set actions">
@@ -176,6 +230,41 @@ export function SetCard({
           <Trash2 className={styles.actionIcon} aria-hidden="true" />
         </button>
       </div>
+      </div>
+
+      {expanded && items.length > 0 && (
+        <ul className={styles.items}>
+          {items.map((item) => {
+            // The type LABEL is what distinguishes items; a per-type glyph beside
+            // it was noise, and the generic document icon read as an artefact.
+            const def = assetType(item.type);
+            return (
+              <li key={item.id} className={styles.item}>
+                <button
+                  type="button"
+                  className={styles.itemOpen}
+                  onClick={(e) => { stop(e); onOpenItem(set, item.id); }}
+                  title={`Open ${def.label.toLowerCase()}`}
+                >
+                  <span className={styles.itemLabel}>{def.label}</span>
+                  {item.title ? (
+                    <span className={styles.itemTitle}>{item.title}</span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  className={styles.itemDelete}
+                  onClick={(e) => { stop(e); onDeleteItem(set, item.id); }}
+                  aria-label={`Remove ${def.label.toLowerCase()}${item.title ? ` ${item.title}` : ''}`}
+                  title="Remove"
+                >
+                  <Trash2 className={styles.itemDeleteIcon} aria-hidden="true" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </article>
   );
 }

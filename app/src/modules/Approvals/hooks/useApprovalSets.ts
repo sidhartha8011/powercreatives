@@ -15,6 +15,10 @@ import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { trpc } from '@/lib/trpc';
+import {
+  APPROVAL_SETS_QUERY_KEY,
+  buildPublicBoardUrl,
+} from '@/components/shared/approvalSets';
 
 import { APPROVAL_STATUSES, type ApprovalSet, type ApprovalStatus } from '../types';
 
@@ -68,18 +72,6 @@ export interface UseApprovalSetsResult {
   clearSelection: () => void;
 }
 
-interface PcmConfig {
-  shortcodePageUrl?: string;
-}
-
-function readShortcodePageUrl(): string {
-  const cfg = (window as unknown as { pcmConfig?: PcmConfig }).pcmConfig;
-  const explicit = cfg?.shortcodePageUrl;
-  if (typeof explicit === 'string' && explicit.length > 0) return explicit;
-  // Documented dev fallback — not a silent band-aid.
-  return `${window.location.origin}/`;
-}
-
 function emptyCounts(): ApprovalSetCountsByStatus {
   return APPROVAL_STATUSES.reduce(
     (acc, status) => {
@@ -91,13 +83,12 @@ function emptyCounts(): ApprovalSetCountsByStatus {
 }
 
 /**
- * Cache-key PREFIX for the list query. The tRPC adapter at `lib/trpc.ts`
- * constructs the full TanStack Query key as `[...path, input]`, which
- * for a no-input call produces `['approvals', 'listSets', undefined]`.
- * We operate via prefix-matching (`setQueriesData({ queryKey: prefix })`)
- * so cache writes target every list-sets slot regardless of input shape.
+ * Cache-key PREFIX for the list query — imported, never re-declared: the create
+ * dialogs write this same cache, and a second copy of the key here is exactly how
+ * those writes would silently land nowhere. See components/shared/approvalSets.ts
+ * for why prefix-matching is required (the adapter appends the input).
  */
-const LIST_QUERY_PREFIX = ['approvals', 'listSets'] as const;
+const LIST_QUERY_PREFIX = APPROVAL_SETS_QUERY_KEY;
 
 export function useApprovalSets(): UseApprovalSetsResult {
   const queryClient = useQueryClient();
@@ -134,11 +125,11 @@ export function useApprovalSets(): UseApprovalSetsResult {
     return counts;
   }, [sets]);
 
-  const getPublicBoardUrl = useCallback((token: string): string => {
-    const baseUrl = readShortcodePageUrl();
-    const separator = baseUrl.includes('?') ? '&' : '?';
-    return `${baseUrl}${separator}pcm_public_token=${token}`;
-  }, []);
+  // Same builder the create dialogs use — one definition of the client link.
+  const getPublicBoardUrl = useCallback(
+    (token: string): string => buildPublicBoardUrl(token),
+    []
+  );
 
   const copyShareLink = useCallback(
     (token: string) => {
