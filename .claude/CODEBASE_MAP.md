@@ -2,7 +2,7 @@
 _Last updated: 2026-07-28 · NEWEST (2026-07-27/28, UNCOMMITTED — a large Strategies/Keywords UI+config
 batch): 2 new item routes (`post-status`, `duplicate`) and 5 new strategy `config` keys — see
 **strategy** below for the contract. Frontend highlights, all in `Strategies/index.tsx` +
-`Keywords/CreateStrategyDialog.tsx`: the create dialog now doubles as the **full settings editor**
+`Keywords/CreateStrategyDialog.tsx` (**two entry points, both mounting this one dialog**: the *source-agnostic* **New Strategy** button lives on the **Strategies** page header — moved there 2026-08-08 because RSS/Social strategies involve no keyword at all; the Keyword Explorer keeps only its bulk-bar **Create Strategy**, which seeds a strategy FROM the selected rows. `selectedCount === 0` is what switches the dialog to its no-keyword mode. Don't "tidy" the second one away): the create dialog now doubles as the **full settings editor**
 (`editStrategy` prop; the row cog opens it — `ParentSettingsModal` is now unreachable); prompts+models
 consolidated into CONTENT with Publishing moved to 2nd and open; **source-aware template mapping**
 (`templateSourceFit()` detects `{{ post_* }}` usage to tell RSS/Social templates from keyword ones and

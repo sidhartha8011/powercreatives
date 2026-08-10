@@ -646,16 +646,11 @@ export function KeywordsModule() {
             {totalCount} results
           </Badge>
         )}
-        {/* RSS/social strategies need no keyword selection — always reachable. */}
-        <Button
-          variant="outline"
-          size="sm"
-          className="ml-auto h-8 text-xs"
-          onClick={() => setStrategyDialogOpen(true)}
-        >
-          <Zap className="mr-1.5 h-3.5 w-3.5 text-primary" />
-          New Strategy
-        </Button>
+        {/* The source-agnostic "New Strategy" button MOVED to the Strategies page
+            (2026-08-08, owner's call). Creating an RSS/Social strategy involves no
+            keyword at all, so requiring a trip to the Keyword Explorer was backwards.
+            What stays here is the bulk bar's "Create Strategy", which seeds a strategy
+            FROM the rows you selected — that one is genuinely keyword work. */}
       </div>
 
       {/* Search Bar */}

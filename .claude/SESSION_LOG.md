@@ -12905,3 +12905,95 @@ VERIFIED
   checks are invalid — other components legitimately use those classes).
 - UNVERIFIED VISUALLY — no dev server. Token-level only; worth an eyeball on a dense table row and
   a dialog, the two contexts now sharing one size.
+
+## 2026-08-08 — "New Strategy" moved to the Strategies page (a gap flagged 2026-07-16, never actioned)
+Owner: "create strategy we said should be in the strategies, not keywords. we said that before."
+They had. The 2026-07-16 entry records it verbatim as a known gap: "RSS create is only reachable via
+the Keywords page (needs >=1 keyword selected to OPEN the dialog); a source-agnostic 'New strategy'
+entry point is a candidate next step." It was never picked up. Doing it now.
+
+THE DISTINCTION THAT MATTERS — Keywords had TWO ways into the same dialog:
+  1. header "New Strategy" (Keywords/index.tsx:650) — source-agnostic, no selection required. An
+     RSS/Social strategy involves no keyword AT ALL, so routing it through the Keyword Explorer was
+     backwards. THIS is the one that moved.
+  2. BulkActionBar "Create Strategy" (:947) — only appears with rows selected, seeds the strategy
+     FROM that selection (incl. Ahrefs volume/difficulty via keywordMeta). Genuinely keyword work.
+     STAYS. Deleting this while "moving create out of Keywords" would silently destroy the whole
+     select-keywords -> strategy flow, so the test guards it explicitly as an over-correction case.
+
+CHANGED (2 files, no backend): Strategies/index.tsx gains createOpen state, a strategy.create
+mutation (same success/toast semantics as Keywords, incl. the RSS/social "pulling the latest posts
+now" wording, + refetch), handleCreateStrategy, a header button, and a second CreateStrategyDialog
+mount in CREATE mode (selectedCount 0 / selectedKeywords [] — which is exactly what makes the dialog
+default sourceMode to 'social' and offer its own primary+supporting keyword inputs). Keywords loses
+only the header button. The dialog itself is UNCHANGED and already fully prop-driven, so no shared
+component moved and no import cycle was created (Strategies already imported it for edit mode).
+
+Payload parity checked both ways: rss/social send keywords [] (seeding keyword items would also
+consume the weekly backpressure window); Strategies sends keywordMeta [] because there are no
+Explorer rows behind this entry point.
+
+VERIFIED
+- NEW tests/standalone/new_strategy_entry_point_test.mjs (23 checks): Strategies owns the button +
+  create-mode mount + create mutation + refetch; Keywords header button gone; selection flow intact;
+  both callers agree on payload shape; the shared dialog really supports selectedCount 0.
+- NEGATIVE CONTROL 7/7 incl. the over-correction (deleting the Keywords bulk action) and the button
+  creeping back; restored -> 23/23.
+- FOUR test-spelling bugs caught and fixed while writing it, all the same family — asserting a
+  SPELLING instead of a RULE: (a) `New Strategy` also exists as the dialog's defaultName in BOTH
+  files, so a bare string match survived renaming the button (missed a real regression in the first
+  control run — now matches the <Button> body); (b) the rss/social guard is `src === 'rss'` in
+  Keywords vs `rest.sourceMode === 'rss'` in Strategies; (c) Strategies uses a ternary rather than a
+  literal `keywords: []`; (d) `[^}]*` broke on the `${selectedCount}` template brace.
+- tsc 59 = baseline (the 3 Keywords errors reported are pre-existing baseline entries). FULL SUITE
+  24/24 files. Build clean. Zip 3.54 MB / 694 files; placement asserted against SOURCE, not the
+  bundle (bundle-wide string checks can't tell which module a label came from).
+- UNVERIFIED VISUALLY — no dev server. Worth one click-through: Strategies -> New Strategy -> pick
+  Social/RSS -> create, and confirm the Keywords bulk bar still creates from a selection.
+
+## 2026-08-08 — Strategy card: source folded onto the meta row (3 lines -> 2)
+Owner: "Put the source information on the same row as the 3/3 items (completion rate)."
+RSS/Social feeds rendered as a THIRD line under the meta line, so every sourced card stood taller
+than a keyword one purely to show one hostname.
+
+CHANGED (1 file, Strategies/index.tsx): the meta line became a flex row —
+`N/M items completed · date` then, when present, `· <icon> host[, host]`. Two standalone
+conditional <div>s collapsed into two <span> segments inside that row.
+Layout care, since this row now competes for width:
+  - counts/date span is `shrink-0` — a long feed list must never squeeze the numbers out;
+  - each source segment is `flex min-w-0` with a `truncate` label, so IT shortens instead;
+  - the outer row is `min-w-0` so it can actually shrink inside the flex identity row;
+  - each segment carries its own `·` separator, and the full URLs stay in the title tooltip.
+
+VERIFIED
+- strategy_card_layout_test.mjs 42 -> 52: new section 8 locates the meta row by tag-depth from the
+  counts expression and asserts the source lives INSIDE it, keeps its icon and dot, the counts can't
+  truncate, long feeds can, tooltips survive, and the source is rendered EXACTLY ONCE (a merge that
+  duplicates rather than moves would otherwise pass).
+- NEGATIVE CONTROL 6/6 after fixing TWO REAL TEST WEAKNESSES the first run exposed — both the same
+  mistake, asserting "somewhere in the row" when there are TWO source segments:
+    (a) `min-w-0` was matched anywhere in the row, but the inner spans carry the same class string,
+        so removing it from the OUTER container still passed -> now asserts the row's OPENING TAG;
+    (b) the `·` separator was matched once, so breaking the RSS dot passed on the Social one
+        -> now requires exactly 2.
+  Mutating only the RSS block is what surfaced both; a symmetric mutation would have hidden them.
+- tsc 59 = baseline, no errors in Strategies/index. FULL SUITE 24/24. Build clean.
+  Zip 3.54 MB / 694 files; placement asserted against SOURCE by tag-depth, not the minified bundle.
+- UNVERIFIED VISUALLY — no dev server. Worth an eyeball on a strategy with several feeds, which is
+  the case the truncation rules exist for.
+
+## 2026-08-10 — Zip build 18:17 (via scripts/build_zip.py)
+`~/Desktop/power-creatives.zip` — 3.54 MB, 694 files (+1 root dir entry; build_zip.py counts files,
+zipfile.namelist() counts entries — the 694/695 gap is that, not a missing file).
+No code change this task. Bundle was already current: verified by CONTENT, not mtime — the built
+index-writer.js already contained both of the last two tasks' fingerprints ("New Strategy",
+"items completed"), so no rebuild was needed.
+
+VERIFIED INSIDE THE ARCHIVE
+- Shape: single root `powerplatform/` (the folder-name trap that cost a whole session on 08-04 —
+  WordPress keys plugins by folder, so a `powercreatives/` root installs as a SECOND inactive
+  plugin), main plugin file present, dist js+css present, 0 app/src, 0 vendor, no .git/.claude/scripts.
+- This week's fixes all present: model_scope (web-version model visibility), admin_user_ids (stale
+  admin cache), language_law (SEO original-language), dropdown canon `data-[size=default]:h-8` +
+  ghost variant, New Strategy entry point, merged meta row.
+- Suite 24/24 green before packaging.

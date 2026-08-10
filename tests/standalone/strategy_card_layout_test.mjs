@@ -119,7 +119,46 @@ check('the expand chevron stays', headerRegion.includes('ChevronDown'));
 check('the identity row can wrap (controls need somewhere to go)',
   headerRegion.includes('flex flex-wrap items-center gap-x-3'), 'no wrap');
 
-console.log('\n8. A move, not a rewrite — handlers still wired');
+console.log('\n8. Source sits on the SAME row as the completion count');
+// Owner, 2026-08-08: "put the source information on the same row as the 3/3
+// items". RSS/Social feeds used to render as a THIRD line below the meta line,
+// so every sourced card was taller than a keyword one just to show a hostname.
+// Extract the meta line's own element and require the source to live inside it.
+const metaOpen = LINES.findIndex((l) => l.includes('{strategy.completedItems}/{strategy.totalItems}'));
+check('the meta line was found', metaOpen !== -1, metaOpen);
+// Walk back to the element that opens it, forward to where it closes.
+let mStart = metaOpen;
+while (mStart > 0 && !LINES[mStart].includes('<div')) mStart--;
+let depth = 0, mEnd = mStart;
+for (let i = mStart; i < LINES.length; i++) {
+  depth += (LINES[i].match(/<div\b/g) ?? []).length - (LINES[i].match(/<\/div>/g) ?? []).length;
+  if (depth === 0 && i > mStart) { mEnd = i; break; }
+}
+const metaRow = LINES.slice(mStart, mEnd + 1).join('\n');
+check('the RSS source renders inside the meta row', /rssFeeds\.map\(feedHost\)/.test(metaRow), 'RSS still a separate line');
+check('the Social source renders inside the meta row', /socialFeedLinks\.map\(feedHost\)/.test(metaRow), 'Social still a separate line');
+check('the source keeps its icon', /<Rss /.test(metaRow) && /<Share2 /.test(metaRow), 'icons dropped');
+// BOTH source segments need their own separator — checking "a dot exists
+// somewhere in the row" passes while one of the two is broken.
+check('each source segment is separated by its own dot',
+  (metaRow.match(/shrink-0">·</g) ?? []).length === 2,
+  (metaRow.match(/shrink-0">·</g) ?? []).length);
+// Layout guards: a long feed list must shorten ITSELF, not shove the counts out.
+// Assert on the ROW'S OPENING TAG specifically — the inner source spans carry
+// the same class string, so a row-wide search passes even when the outer
+// container has lost min-w-0 and can no longer shrink.
+const metaOpenTag = metaRow.slice(0, metaRow.indexOf('>') + 1);
+check('the row itself is a flex line that can shrink',
+  /flex items-center gap-1 min-w-0/.test(metaOpenTag), metaOpenTag.replace(/\s+/g, ' ').trim());
+check('the counts never truncate', /<span className="shrink-0">\s*\n\s*\{strategy\.completedItems\}/.test(metaRow), 'counts can be squeezed');
+check('long feed lists truncate instead', (metaRow.match(/truncate/g) ?? []).length >= 2, 'no truncation');
+check('full URLs stay reachable in the tooltip',
+  /title=\{rssFeeds\.join/.test(metaRow) && /title=\{socialFeedLinks\.join/.test(metaRow), 'tooltip lost');
+// The old third line must be gone, not merely duplicated.
+check('no leftover standalone source line',
+  (SRC.match(/rssFeeds\.map\(feedHost\)/g) ?? []).length === 1, 'source rendered twice');
+
+console.log('\n9. A move, not a rewrite — handlers still wired');
 for (const h of ['handlePublishingModeChange', 'handleSiteChange', 'handleApprovalChange',
   'handleImageModelChange', 'handleImageTemplateChange', 'handleTextModelChange']) {
   check(`${h} still wired`, SRC.includes(`${h}(strategy.id`), h);

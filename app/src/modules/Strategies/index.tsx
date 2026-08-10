@@ -362,6 +362,35 @@ export function StrategiesModule() {
     onSuccess: () => { toast.success('Strategy updated'); refetch(); },
     onError: (err: any) => toast.error(err.message ?? 'Failed to update strategy'),
   }) as any;
+  // Create — mirrors the Keyword Explorer's handler so both entry points behave
+  // identically; the only difference is that there is no keyword TABLE here, so
+  // every keyword comes from what the dialog collected.
+  const [createOpen, setCreateOpen] = useState(false);
+  const createStrategyMutation = (trpc as any).strategy.create.useMutation({
+    onSuccess: (_data: any, variables: any) => {
+      // RSS/social arm an immediate first source scan on the backend — say so,
+      // otherwise a strategy that lands with zero items reads as broken.
+      toast.success(variables?.sourceMode === 'rss' || variables?.sourceMode === 'social'
+        ? 'Strategy created — pulling the latest posts now'
+        : 'Strategy created successfully!');
+      setCreateOpen(false);
+      refetch();
+    },
+    onError: (err: any) => toast.error(err.message ?? 'Failed to create strategy'),
+  });
+  const handleCreateStrategy = useCallback((payload: StrategyPayload) => {
+    const { manualKeywords, ...rest } = payload as any;
+    // An RSS/social strategy's items come from its sources; seeding keyword
+    // items would also consume the weekly backpressure window. Sources only.
+    const isSourced = rest.sourceMode === 'rss' || rest.sourceMode === 'social';
+    createStrategyMutation.mutate({
+      ...rest,
+      keywords: isSourced ? [] : ((manualKeywords ?? []) as string[]),
+      // No Keyword Explorer rows behind this entry point, so there are no
+      // Ahrefs volume/difficulty metrics to carry onto the items.
+      keywordMeta: [],
+    });
+  }, [createStrategyMutation]);
   const publishItemMutation = trpc.strategy.publishItem.useMutation({
     onSuccess: (data: any) => {
       toast.success(data?.message ?? 'Published to site');
@@ -971,6 +1000,23 @@ export function StrategiesModule() {
         </Badge>
 
         <AutoScanStatus />
+
+        {/* New Strategy — the SOURCE-AGNOSTIC entry point, and it belongs here.
+            It used to live only on the Keyword Explorer header, which meant
+            creating an RSS or Social strategy — neither of which involves a
+            keyword at all — required visiting the Keywords page first. Flagged
+            as a gap on 2026-07-16, moved 2026-08-08 on the owner's reminder.
+            Keywords keeps its own bulk-bar "Create Strategy": that one seeds a
+            strategy FROM the rows you selected, which is genuinely keyword work. */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto h-8"
+          onClick={() => setCreateOpen(true)}
+        >
+          <Zap className="w-3.5 h-3.5 text-primary" />
+          New Strategy
+        </Button>
       </div>
 
       {/* Toolbar — its OWN row directly beneath the header. It used to be pinned to
@@ -1172,36 +1218,40 @@ export function StrategiesModule() {
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '2px' }} className="truncate">
-                    {strategy.completedItems}/{strategy.totalItems} items completed
-                    {strategy.failedItems > 0 && (
-                      <span style={{ color: colors.danger }}> · {strategy.failedItems} failed</span>
+                  {/* Meta line — counts, date, AND the RSS/Social source (owner,
+                      2026-08-08: "put the source information on the same row as the
+                      3/3 items"). The source used to occupy a third line of its own,
+                      making every sourced card taller than a keyword one for a single
+                      hostname. It is now the last `·` segment: flex so the source
+                      keeps its icon, min-w-0 + truncate so a long feed list shortens
+                      itself rather than pushing the counts out of the card. Full URLs
+                      stay in the title tooltip. */}
+                  <div
+                    className="flex items-center gap-1 min-w-0"
+                    style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '2px' }}
+                  >
+                    <span className="shrink-0">
+                      {strategy.completedItems}/{strategy.totalItems} items completed
+                      {strategy.failedItems > 0 && (
+                        <span style={{ color: colors.danger }}> · {strategy.failedItems} failed</span>
+                      )}
+                      <span> · {new Date(strategy.createdAt).toLocaleDateString()}</span>
+                    </span>
+                    {isRss && rssFeeds.length > 0 && (
+                      <span className="flex items-center gap-1 min-w-0" title={rssFeeds.join('\n')}>
+                        <span className="shrink-0">·</span>
+                        <Rss className="w-3 h-3 shrink-0" style={{ color: colors.accent }} />
+                        <span className="truncate">{rssFeeds.map(feedHost).join(', ')}</span>
+                      </span>
                     )}
-                    <span> · {new Date(strategy.createdAt).toLocaleDateString()}</span>
+                    {isSocial && socialFeedLinks.length > 0 && (
+                      <span className="flex items-center gap-1 min-w-0" title={socialFeedLinks.join('\n')}>
+                        <span className="shrink-0">·</span>
+                        <Share2 className="w-3 h-3 shrink-0" style={{ color: colors.primary }} />
+                        <span className="truncate">{socialFeedLinks.map(feedHost).join(', ')}</span>
+                      </span>
+                    )}
                   </div>
-                  {/* RSS/Social link list — its own line so all watched feeds/accounts are
-                      visible at a glance (full URLs in the tooltip). Social shows the
-                      de-duplicated union of pasted links + any converted feeds. */}
-                  {isRss && rssFeeds.length > 0 && (
-                    <div
-                      className="flex items-center gap-1 truncate"
-                      style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '1px' }}
-                      title={rssFeeds.join('\n')}
-                    >
-                      <Rss className="w-3 h-3 shrink-0" style={{ color: colors.accent }} />
-                      <span className="truncate">{rssFeeds.map(feedHost).join(', ')}</span>
-                    </div>
-                  )}
-                  {isSocial && socialFeedLinks.length > 0 && (
-                    <div
-                      className="flex items-center gap-1 truncate"
-                      style={{ fontSize: typography.xs, color: colors.textMuted, marginTop: '1px' }}
-                      title={socialFeedLinks.join('\n')}
-                    >
-                      <Share2 className="w-3 h-3 shrink-0" style={{ color: colors.primary }} />
-                      <span className="truncate">{socialFeedLinks.map(feedHost).join(', ')}</span>
-                    </div>
-                  )}
                 </div>
                 {/* Controls — UP in the header row (design note 2026-08-08): they fill
                     the empty space beside the title instead of a padded strip below, so
@@ -2119,6 +2169,20 @@ export function StrategiesModule() {
         </div>,
         document.body,
       )}
+
+      {/* CREATE mode — same dialog, no keyword selection behind it. selectedCount
+          0 / selectedKeywords [] is what tells it to offer its own primary +
+          supporting keyword inputs (and it blocks its own Create button until a
+          keyword exists by SOME route, or the source is switched to RSS/social). */}
+      <CreateStrategyDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        defaultName="New Strategy"
+        onSave={handleCreateStrategy}
+        isSaving={createStrategyMutation.isPending}
+        selectedCount={0}
+        selectedKeywords={[]}
+      />
 
       {/* FULL settings editor — the create dialog in edit mode, pre-filled from this
           strategy. Split on save: the four whitelisted top-level columns go as
