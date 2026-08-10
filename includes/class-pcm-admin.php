@@ -120,12 +120,20 @@ class PCM_Admin
             );
         }
 
+        // WordPress' heartbeat. Core hooks wp_refresh_heartbeat_nonces() onto
+        // `heartbeat_received`, so every tick returns a FRESH `rest_nonce`. The SPA
+        // listens for it (lib/trpc.ts) and swaps the nonce in place. Without this the
+        // nonce minted at page load is the only one the tab ever has, and once it ages
+        // out every write fails with WordPress' "Cookie check failed"
+        // (rest_cookie_invalid_nonce) — owner report 2026-08-10, hit on Create Strategy.
+        wp_enqueue_script('heartbeat');
+
         // Enqueue the main React app JS
         // Using index-writer.js to bypass stubborn Nginx server caches
         wp_enqueue_script(
             'pcm-app',
             $app_url . 'index-writer.js',
-            array(), // Dependencies managed by Vite build
+            array('heartbeat'), // heartbeat must be present before the app binds its tick listener
             time(), // Cache-bust on every page load for dev testing
             true // Load in footer
         );
@@ -187,6 +195,12 @@ class PCM_Admin
             'restUrl' => esc_url_raw(rest_url('pcm/v1/')),
             // Security nonce for REST API authentication
             'nonce' => wp_create_nonce('wp_rest'),
+            // admin-ajax endpoint used ONLY to re-mint an expired REST nonce.
+            // WordPress core registers `wp_ajax_rest-nonce`, which returns a fresh
+            // wp_rest nonce and authenticates on the login COOKIE alone — no nonce
+            // required, which is what breaks the chicken-and-egg when the one we
+            // hold has expired. The SPA calls it once, then retries the request.
+            'ajaxUrl' => esc_url_raw(admin_url('admin-ajax.php')),
             // Plugin URL for asset references
             'pluginUrl' => esc_url(PCM_PLUGIN_URL),
             // Shortcode page URL (for client shareable link resolution)

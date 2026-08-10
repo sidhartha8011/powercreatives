@@ -12997,3 +12997,37 @@ VERIFIED INSIDE THE ARCHIVE
   admin cache), language_law (SEO original-language), dropdown canon `data-[size=default]:h-8` +
   ghost variant, New Strategy entry point, merged meta row.
 - Suite 24/24 green before packaging.
+## 2026-08-10 — "Cookie check failed" creating a Strategy from keywords [/task]
+Report: screenshot of the Create Strategy dialog with a "Cookie check failed" toast.
+ROOT CAUSE: that string is WordPress core's own `rest_cookie_invalid_nonce` (grep-confirmed we never
+emit it — apiFetch passes the server message through). The REST nonce is minted ONCE at page load into
+window.pcmConfig (class-pcm-admin.php:189 / class-pcm-shortcode.php:531) and NOTHING ever refreshes it —
+grep for heartbeat/rest_nonce/refresh_nonce across includes/ + app/src returned only the unrelated
+connected-SITE heartbeat. So the nonce a tab holds is the only one it will ever have: once WordPress ages
+it out, or the session token changes (logging in again in another tab), every write 403s until a manual
+reload. Nothing to do with the Strategies module specifically — it was simply the next write attempted.
+FIXED IN TWO LAYERS (proactive + fallback):
+ 1. PROACTIVE — enqueue core's `heartbeat` on the plugin admin page and declare it a dependency of
+    pcm-app. Core hooks wp_refresh_heartbeat_nonces() onto `heartbeat_received`, so every tick already
+    carries a fresh `rest_nonce`; the SPA now binds `heartbeat-tick` and swaps the nonce in place. A tab
+    left open renews before it can lapse. Guarded on jQuery + the event, so it is inert where heartbeat
+    is not loaded (frontend shortcode).
+ 2. FALLBACK — in apiFetch (the ONE chokepoint every route passes through): on a 403 whose `code` is
+    rest_cookie_invalid_nonce, re-mint via core's `wp_ajax_rest-nonce` (authenticates on the login
+    COOKIE alone — no nonce — which is what breaks the chicken-and-egg), update the config, and retry
+    ONCE. Covers heartbeat being suspended on a background tab, or the session changing between ticks.
+DELIBERATE DETAILS: matching is on WordPress' machine-readable `code`, NOT the message — this install
+runs Swedish, where the text is not "Cookie check failed"; the sniff reads response.clone() so the error
+path can still consume the body; a "-1" reply (not logged into WP) is rejected by a token-shape test so
+a gate-only visitor gets the original error instead of a retry loop; and the retry is bounded to one
+attempt with no loop construct.
+VERIFIED: new tests/standalone/rest_nonce_refresh_test.mjs 18/18 — drives the real send→403→refresh→resend
+sequence against a faked fetch (success-after-retry, new nonce carried, config updated, bounded to one
+retry, "-1" rejected, a NON-nonce 403 does not trigger a refresh, translated message still recovers,
+body still readable after clone) plus 6 source-parity checks against the shipped trpc.ts.
+MUTATION-TESTED: deleting the retry block (the original bug) fails the suite; restoring passes.
+Also: php -l clean, tsc 59 = baseline with 0 in trpc.ts, vite build clean, full phpunit 636 (1 error +
+27 failures = unchanged pre-existing baseline), standalone run.php 88/88. Confirmed all three markers
+present in the BUILT bundle, not just source.
+NOT LIVE-VERIFIED: reproducing needs a genuinely expired nonce (12–24h old tab); proof is the unit +
+mutation tests. Not committed.

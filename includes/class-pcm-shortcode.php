@@ -529,6 +529,11 @@ class PCM_Shortcode
         return array(
             'restUrl' => esc_url_raw(rest_url('pcm/v1/')),
             'nonce' => wp_create_nonce('wp_rest'),
+            // Same expired-nonce recovery as wp-admin (see PCM_Admin::get_js_config).
+            // Only useful to a WP-logged-in visitor — core's rest-nonce action answers
+            // -1 for anyone else — so the client treats a failed refresh as "give up
+            // and surface the original error", never as a silent retry loop.
+            'ajaxUrl' => esc_url_raw(admin_url('admin-ajax.php')),
             'pluginUrl' => esc_url(PCM_PLUGIN_URL),
             'shortcodePageUrl' => esc_url_raw($shortcode_page_url),
             'user' => $user_payload,
