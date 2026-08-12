@@ -57,6 +57,11 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/content/(?P<id>\d+)/links', 'get_links'),
             array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)', 'update_link'),
             array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)/remove', 'remove_link'),
+            // Link optimization (card 2026-08-13): rel toggle, whole-element delete + ledger.
+            array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)/rel', 'set_link_rel'),
+            array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)/delete', 'delete_link'),
+            array('GET',  '/seo/content/(?P<id>\d+)/links/deleted', 'deleted_links'),
+            array('POST', '/seo/links/deleted/(?P<ledger>\d+)/restore', 'restore_deleted_link'),
             array('GET',  '/seo/content/(?P<id>\d+)/headings', 'get_headings'),
             array('GET',  '/seo/content/(?P<id>\d+)/content-nodes', 'get_content_nodes'),
             array('POST', '/seo/content/(?P<id>\d+)/headings/(?P<idx>\d+)', 'update_heading'),
@@ -90,6 +95,10 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links', 'remote_get_links', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)', 'remote_update_link', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/remove', 'remote_remove_link', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/rel', 'remote_set_link_rel', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/delete', 'remote_delete_link', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/deleted', 'remote_deleted_links', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/links/deleted/(?P<ledger>\d+)/restore', 'remote_restore_deleted_link', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings', 'remote_get_headings', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/content-nodes', 'remote_get_content_nodes', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/inventory', 'remote_get_inventory', array(), 'manage_options'),
@@ -464,6 +473,68 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success(array('links' => $result));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/links/{idx}/rel — follow/nofollow on a connected post. */
+    public function remote_set_link_rel(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $result = PCM_SEO_Service::remote_set_link_rel($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), !empty($params['nofollow']));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('links' => $result));
+    }
+
+    /** POST /seo/sites/{id}/content/{post}/links/{idx}/delete — whole-element delete + ledger. */
+    public function remote_delete_link(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
+        $result = PCM_SEO_Service::remote_delete_link($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), (int) $user->id);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('links' => $result));
+    }
+
+    /** GET /seo/sites/{id}/content/{post}/links/deleted — a connected post's restorable deletions. */
+    public function remote_deleted_links(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(array(
+            'deleted' => PCM_SEO_Local::deleted_links((int) $user->id, (int) $site->id, absint($request->get_param('post'))),
+        ));
+    }
+
+    /** POST /seo/sites/{id}/links/deleted/{ledger}/restore — restore onto the connected site. */
+    public function remote_restore_deleted_link(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $result = PCM_SEO_Service::remote_restore_deleted_link($site, absint($request->get_param('ledger')), (int) $user->id);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** GET /seo/sites/{id}/content/{post}/headings — a connected post's H1–H6 outline. */
@@ -1292,6 +1363,62 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success(array('links' => $result));
+    }
+
+    /** POST /seo/content/{id}/links/{idx}/rel — set the link to follow or nofollow. */
+    public function set_link_rel(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = PCM_SEO_Local::set_post_link_rel($id, absint($request->get_param('idx')), !empty($params['nofollow']));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('links' => $result));
+    }
+
+    /** POST /seo/content/{id}/links/{idx}/delete — cut the WHOLE element, recorded for restore. */
+    public function delete_link(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id = absint($request->get_param('id'));
+        if (!$id || !get_post($id)) {
+            return $this->not_found('Content');
+        }
+        if (!current_user_can('edit_post', $id)) {
+            return $this->error('You cannot edit this content.', 403, 'pcm_forbidden');
+        }
+        $user   = $this->get_current_pcm_user();
+        $result = PCM_SEO_Local::delete_post_link($id, absint($request->get_param('idx')), (int) $user->id);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('links' => $result));
+    }
+
+    /** GET /seo/content/{id}/links/deleted — this post's restorable deletions. */
+    public function deleted_links(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        return $this->success(array(
+            'deleted' => PCM_SEO_Local::deleted_links((int) $user->id, 0, absint($request->get_param('id'))),
+        ));
+    }
+
+    /** POST /seo/links/deleted/{ledger}/restore — put a deleted link back on its page. */
+    public function restore_deleted_link(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user   = $this->get_current_pcm_user();
+        $result = PCM_SEO_Local::restore_deleted_link(absint($request->get_param('ledger')), (int) $user->id);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
     }
 
     /** GET /seo/content/{id}/headings — the post's H1–H6 outline for the expandable editor. */

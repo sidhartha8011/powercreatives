@@ -495,6 +495,27 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/content/${input.id}/links/${input.index}/remove` }),
     },
+    // Link optimization: rel toggle + whole-element delete with a restorable ledger.
+    "seo.setLinkRel": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/links/${input.index}/rel`, body: { nofollow: input.nofollow } }),
+    },
+    "seo.deleteLink": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/links/${input.index}/delete` }),
+    },
+    "seo.deletedLinks": {
+        endpoint: "seo/content",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/links/deleted` }),
+    },
+    "seo.restoreDeletedLink": {
+        endpoint: "seo",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/links/deleted/${input.ledgerId}/restore` }),
+    },
     // ── Heading editor (expandable rows) — local ──
     "seo.getHeadings": {
         endpoint: "seo/content",
@@ -677,6 +698,26 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "seo/sites",
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/remove`, body: { type: input.type } }),
+    },
+    "seo.remoteSetLinkRel": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/rel`, body: { type: input.type, nofollow: input.nofollow } }),
+    },
+    "seo.remoteDeleteLink": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/delete`, body: { type: input.type } }),
+    },
+    "seo.remoteDeletedLinks": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/deleted` }),
+    },
+    "seo.remoteRestoreDeletedLink": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/links/deleted/${input.ledgerId}/restore` }),
     },
     "seo.remoteContent": {
         endpoint: "seo/sites",

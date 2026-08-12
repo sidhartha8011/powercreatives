@@ -275,17 +275,17 @@ class PCM_SEO_Local
             $status = 0;
             $broken = false;
             if ($check_status && $checked < 30 && preg_match('#^https?://#i', $check_url)) {
-                $resp = wp_remote_head($check_url, $args);
-                if (is_wp_error($resp)) {
-                    $broken = true;
-                } else {
-                    $status = (int) wp_remote_retrieve_response_code($resp);
-                    if ($status === 405) {
-                        $resp   = wp_remote_get($check_url, $args);
-                        $status = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
-                    }
-                    $broken = ($status === 0 || $status >= 400);
+                $resp   = wp_remote_head($check_url, $args);
+                $status = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
+                // A failing HEAD is never trusted on its own — hosts routinely
+                // 404/403 HEAD while serving GET fine (this retried only on 405
+                // before, and a working link still got flagged as a 404). The
+                // retry fires only for links about to be reported broken.
+                if ($status === 0 || $status >= 400) {
+                    $resp   = wp_remote_get($check_url, $args);
+                    $status = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
                 }
+                $broken = ($status === 0 || $status >= 400);
                 $checked++;
             }
             $links[] = array(
@@ -471,6 +471,170 @@ class PCM_SEO_Local
         self::purge_post_caches($post_id);
         self::scan_links($post_id, false); // fast refresh — skip per-link HTTP checks (avoid timeout)
         return self::get_post_links($post_id);
+    }
+
+    /**
+     * Toggle rel="nofollow" on a link IN PLACE (card: "set to no follow or set
+     * to follow - it just changes the link type in the code"). Other rel
+     * tokens (noopener, noreferrer) are preserved — only the nofollow token
+     * moves, and an emptied rel attribute is dropped entirely.
+     */
+    public static function set_post_link_rel(int $post_id, int $index, bool $nofollow)
+    {
+        $links = self::get_post_links($post_id);
+        if (!isset($links[$index])) {
+            return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
+        }
+        $post = get_post($post_id);
+        if (!$post) {
+            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
+        }
+        $old_html = (string) $links[$index]['html'];
+        $new_html = self::toggle_nofollow_html($old_html, $nofollow);
+        if ($new_html === $old_html) {
+            return self::get_post_links($post_id); // already in the requested state
+        }
+        $content = (string) $post->post_content;
+        $pos     = self::nth_link_pos($content, $links, $index);
+        if ($pos === null) {
+            return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
+        }
+        $content = substr_replace($content, $new_html, $pos, strlen($old_html));
+        wp_update_post(array('ID' => $post_id, 'post_content' => $content));
+        self::purge_post_caches($post_id);
+        self::scan_links($post_id, false);
+        return self::get_post_links($post_id);
+    }
+
+    /** Pure string surgery: add/remove the nofollow token on an <a>'s rel attribute. */
+    public static function toggle_nofollow_html(string $html, bool $nofollow): string
+    {
+        if (!preg_match('/^<a\s[^>]*>/is', $html, $open_m)) {
+            return $html;
+        }
+        $open = $open_m[0];
+        if (preg_match('/\srel=(["\'])(.*?)\1/i', $open, $rel_m)) {
+            $tokens = preg_split('/\s+/', trim($rel_m[2])) ?: array();
+            $tokens = array_values(array_filter($tokens, static fn($t) => strcasecmp($t, 'nofollow') !== 0));
+            if ($nofollow) {
+                $tokens[] = 'nofollow';
+            }
+            $new_open = empty($tokens)
+                ? str_replace($rel_m[0], '', $open)                      // rel emptied → drop it
+                : str_replace($rel_m[0], ' rel=' . $rel_m[1] . implode(' ', $tokens) . $rel_m[1], $open);
+        } else {
+            if (!$nofollow) {
+                return $html; // no rel attribute and follow requested → already follow
+            }
+            $new_open = preg_replace('/^<a\s/i', '<a rel="nofollow" ', $open);
+        }
+        return $new_open . substr($html, strlen($open));
+    }
+
+    /**
+     * DELETE a link — the ENTIRE element, not just the wrap (card: "on delete -
+     * it should delete the entire text and the entire html thing it is in").
+     * The cut is recorded in the seo_deleted_links ledger first, so the popup
+     * keeps showing it in its Deleted list and restore_deleted_link() can put
+     * it back — deletion here is reversible by design, never silent.
+     */
+    public static function delete_post_link(int $post_id, int $index, int $user_id, int $site_id = 0, string $type = 'post')
+    {
+        global $wpdb;
+        $links = self::get_post_links($post_id);
+        if (!isset($links[$index])) {
+            return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
+        }
+        $post = get_post($post_id);
+        if (!$post) {
+            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
+        }
+        $old_html = (string) $links[$index]['html'];
+        $content  = (string) $post->post_content;
+        $pos      = self::nth_link_pos($content, $links, $index);
+        if ($pos === null) {
+            return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
+        }
+        // Ledger BEFORE the cut — if the insert fails nothing is lost yet.
+        $inserted = $wpdb->insert(PCM_Schema::table('seo_deleted_links'), array(
+            'userId'   => $user_id,
+            'siteId'   => $site_id,
+            'postId'   => $post_id,
+            'postType' => $type === 'page' ? 'page' : 'post',
+            'anchor'   => (string) ($links[$index]['anchor'] ?? ''),
+            'toUrl'    => (string) ($links[$index]['to'] ?? ''),
+            'html'     => $old_html,
+            'context'  => substr($content, max(0, $pos - 120), min(120, $pos)),
+        ), array('%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s'));
+        if ($inserted === false) {
+            return new WP_Error('pcm_seo_ledger', __('Could not record the deletion — nothing was removed.', 'power-creatives'), array('status' => 500));
+        }
+        $content = substr_replace($content, '', $pos, strlen($old_html));
+        wp_update_post(array('ID' => $post_id, 'post_content' => $content));
+        self::purge_post_caches($post_id);
+        self::scan_links($post_id, false);
+        return self::get_post_links($post_id);
+    }
+
+    /** Ledger rows for a post (newest first) — the popup's "Deleted" list. */
+    public static function deleted_links(int $user_id, int $site_id, int $post_id): array
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_deleted_links');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, anchor, toUrl, html, createdAt FROM {$table}
+              WHERE userId = %d AND siteId = %d AND postId = %d ORDER BY id DESC",
+            $user_id, $site_id, $post_id
+        )) ?: array();
+        return array_map(static function ($r) {
+            return array(
+                'ledgerId'  => (int) $r->id,
+                'anchor'    => (string) $r->anchor,
+                'to'        => (string) $r->toUrl,
+                'html'      => (string) $r->html,
+                'deletedAt' => (string) $r->createdAt,
+            );
+        }, $rows);
+    }
+
+    /**
+     * Restore a deleted link into THIS site's post: back at its original spot
+     * when the stored context still exists, else appended to the content end
+     * (the page changed underneath — appended beats lost). The ledger row is
+     * removed on success, so the popup's Deleted list and the page agree.
+     */
+    public static function restore_deleted_link(int $ledger_id, int $user_id)
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_deleted_links');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d AND userId = %d", $ledger_id, $user_id));
+        if (!$row) {
+            return new WP_Error('pcm_seo_ledger_missing', __('Deleted-link record not found.', 'power-creatives'), array('status' => 404));
+        }
+        if ((int) $row->siteId !== 0) {
+            return new WP_Error('pcm_seo_ledger_remote', __('This link was deleted on a connected site — restore it from that site\'s row.', 'power-creatives'), array('status' => 400));
+        }
+        $post = get_post((int) $row->postId);
+        if (!$post) {
+            return new WP_Error('pcm_seo_not_found', __('The post this link belonged to no longer exists.', 'power-creatives'), array('status' => 404));
+        }
+        $content = (string) $post->post_content;
+        $ctx     = (string) ($row->context ?? '');
+        $at      = $ctx !== '' ? strpos($content, $ctx) : false;
+        if ($at !== false) {
+            $insert_at = $at + strlen($ctx);
+            $content   = substr_replace($content, (string) $row->html, $insert_at, 0);
+        } else {
+            $content .= "\n" . (string) $row->html;
+        }
+        wp_update_post(array('ID' => (int) $row->postId, 'post_content' => $content));
+        self::purge_post_caches((int) $row->postId);
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->delete($table, array('id' => $ledger_id), array('%d'));
+        self::scan_links((int) $row->postId, false);
+        return array('restored' => true, 'postId' => (int) $row->postId);
     }
 
     // =====================================================================

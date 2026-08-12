@@ -13632,3 +13632,114 @@ stripped. REMAINING HONEST LIMIT: "modal open and comment visible" = the page sc
 card with its comments inline — there is no separate comment modal on the client page; if the owner
 wants the comment INSPECTOR auto-opened (not just scrolled to), that is a frontend enhancement to
 ClientReviewPage's deep-link effect, ~15 lines, say the word.
+
+## 2026-08-13 — Links tab false 404s + phantom links on Brizy (both classes fixed, connector bumped)
+Owner, on brizy.profitmedia.pro: "It is finding false 404's — the 1 link is actually working; the
+3 links does not even exist on the page."
+
+TWO DISTINCT DEFECTS:
+1. FALSE 404 (working link flagged broken). The REMOTE checker (seo/service.php link_http_status)
+   was HEAD-only; hosts routinely answer 404/403/405 to HEAD while serving GET fine. The LOCAL
+   scanner had already learned this — but retried only on 405. Both now retry with GET whenever
+   HEAD says >=400 or errors, so a link is only called broken when GET AGREES. Cost is bounded by
+   the about-to-be-flagged count, not the link count; a healthy HEAD is still trusted with no GET.
+2. PHANTOM LINKS (not on the page at all). The connector's Brizy handler was DELIBERATELY
+   content-based ("walks post_content + ALL meta … surfaces links from Brizy's base64 compiled
+   HTML / editor JSON") — but on a Brizy page post_content is a STALE COMPILED COPY and the meta
+   carries a compiled-HTML render cache next to the editor data. Caches lag their source after
+   edits => links that no longer exist on the live page. Superseded: Brizy is now SOURCE-scoped
+   (source_keys = brizy-post/brizy), collect_links skips compiled|_cache|cached keys during the
+   walk (generic — any builder's render cache), and scan_links gained a zero-links fallback pass
+   (a Brizy version storing data elsewhere degrades to broad visibility, never a silently empty
+   tab). Connector version self-bumps via the template md5, so installed connectors will be offered
+   the new build.
+
+VERIFIED
+- NEW tests/standalone/seo_link_scan_test.php — 17 checks (35 files suite total). The remote
+  checker is EXECUTED with stubbed HTTP: HEAD-lies/GET-decides in 404/403/405 shapes, real 404
+  stays broken, healthy HEAD costs no GET. The connector template is EXTRACTED from its nowdoc and
+  php -l'd — CRITICAL, because the hub file's own lint NEVER parses that string (my Brizy edits
+  were invisible to php -l on the hub file).
+- NEGATIVE CONTROL 6/6: HEAD-only again, 405-only again, Brizy content-based again, caches scanned
+  again, fallback removed, and a syntactically BROKEN template — all red (the last proves the
+  extracted lint is not vacuous). Restored -> 17/17.
+- FULL SUITE 35/35. Zip 3.77 MB / 754 files. Archive verify hit a shell-escaping trap (`\b` in a
+  needle collapsed to BACKSPACE through bash->python — false FAIL); re-verified with an
+  escape-free needle: all five fixes in the archive.
+- HONEST LIMITS: no live Brizy site here — the phantom fix is validated against the template's
+  logic, not against brizy.profitmedia.pro's actual meta; and bot-walled hosts (Cloudflare
+  challenge) can still 403 BOTH verbs — that residual false-positive is documented, not solved.
+  After deploying: the connector on brizy.profitmedia.pro must self-update (or be reinstalled)
+  before the phantom fix takes effect there — the scan runs in the CONNECTOR, not the hub.
+
+## 2026-08-13 — Link-optimization PDF audit: NEW trio built (unlink/delete-restorable/nofollow), DB 1.47.0
+Owner attached the Add/SEO/Link-optimization card: "analyse all the fixes mentioned in this pdf and
+list all those that are not done and fix them."
+
+AUDIT LEDGER vs the PDF (verified against the tree, not memory):
+  - One-button scan, per-column popup (anchor/from/to/html/status/select) ......... DONE (existing)
+  - Every column editable + saves to the page .......... DONE for anchor/to (EditableTextCell);
+    from/html are identity/derived — editing them has no meaning on the page
+  - "Check anchor and fix if its not working" ........... anchor edit exists via saveField;
+    Brizy-page edits go through the connector universal replace (0703 item)
+  - Window wider, no left-right scrolling ............... DONE (1400px/95vw + resizable cols)
+  - Every cell clickable to open the page ............... DONE for from/to (+ per-row open button)
+  - False 404s + phantom links on brizy ................. DONE previous task (HEAD→GET, Brizy source-scope)
+  - NEW: unlink ......................................... EXISTED (Remove = unwrap, keeps text);
+    relabelled in the card's own words
+  - NEW: delete (entire element, marked deleted, restorable) ... WAS MISSING — BUILT
+  - NEW: set follow / set nofollow ...................... WAS MISSING — BUILT
+
+BUILT THIS ROUND:
+  - `articles`… no — NEW TABLE `seo_deleted_links` (v1.46.0→1.47.0, dbDelta-additive, drop_tables
+    entry per the schema law): userId/siteId(0=local)/postId/postType/anchor/toUrl/html/context.
+  - LOCAL ops (seo/local.php): set_post_link_rel + PURE toggle_nofollow_html (only the nofollow
+    token moves; noopener/noreferrer preserved; emptied rel dropped), delete_post_link (ledger row
+    INSERTED BEFORE the cut — a failed insert removes nothing), deleted_links, restore_deleted_link
+    (re-inserts at the stored 120-char context when it still exists, else appends — appended beats
+    lost; ledger row deleted on success so list and page agree).
+  - REMOTE ops (seo/service.php): remote_set_link_rel + remote_delete_link + remote_restore_deleted_link
+    through the EXISTING remote_rewrite_link_content seam; the remote ledger row is written only
+    AFTER the remote write succeeds (reverse of local — the remote write is the failable step, and a
+    ledger row for an uncut link would offer a bogus restore). Remote restore appends (no context
+    kept for transient raw reads).
+  - 12 routes (6 local + 6 remote, remote all manage_options + ownership-scoped), 8 tRPC entries.
+  - LinksPopup: Unlink retitled in the card's words; Shield/ShieldOff rel toggle (state read from
+    the row's own html); Trash2 delete with confirm; "Deleted links on this page — restorable"
+    section (struck-through rows + Restore). All three actions inside the SAME editable gate Remove
+    already used — builder-only rows stay locked rather than silently failing.
+
+VERIFIED
+- NEW tests/standalone/seo_link_actions_test.php — 50 checks; toggle_nofollow_html EXECUTED (9
+  shapes incl. token preservation, attribute drop, no stacking, single quotes, anchor text
+  untouched); ledger ordering asserted on BOTH paths; routes/gating/ownership; popup wiring; the
+  prior card items (width, clickable cells) pinned.
+- NEGATIVE CONTROL 12/12 after fixing ONE test weakness it exposed: the schema assertion matched a
+  RENAMED table because the real name is its prefix (now anchors the opening paren). Other 11:
+  rel clobbering, unrecorded cut, delete-degrades-to-unwrap, lost append fallback, lingering ledger
+  row, siteId dropped, route un-gated, toggle dropped, confirm dropped, list dropped, editable leak.
+- post_status_test.mjs SUPERSEDED assertion fixed: it pinned DB '1.46.0' exactly and broke on this
+  bump — now asserts >= 1.46.0 (the rule, not the spelling).
+- tsc 58, 0 in my files. FULL SUITE 36/36. Build clean. Zip 3.78 MB / 755 files; schema + ops +
+  bundle strings verified in the archive.
+- HONEST LIMITS: no live WP here — the ledger flows are asserted structurally, not executed against
+  a DB; builder-element (elId) rows are deliberately LOCKED for rel/delete (a Brizy button's rel
+  lives in builder JSON, not an <a> tag — unlocking that needs a connector op, say the word);
+  restore-position on remote pages is append-only. Visually unverified as always.
+
+## 2026-08-13 — Zip build 01:52 (via scripts/build_zip.py)
+`~/Desktop/power-creatives.zip` — 3.78 MB, 755 files. No code change; bundle + zip were already
+current (verified by mtime AND content). Suite 36/36 before packaging. Archive verified: shape
+(single powerplatform/ root, no src/vendor/tests), link actions + ledger + DB 1.47.0, link-scan
+fixes, automations vocabulary + 4x fix, commentUrl param, post-status + bulk generate all aboard.
+Dated copy power-creatives-2026-08-13.zip created. Deploy reminders: DB migrates to 1.47.0 on first
+load; the brizy connector must self-update before the phantom-link fix applies there.
+
+## 2026-08-13 — Zip rebuild 01:57: tests/ had shipped in EVERY zip; now excluded (755 -> 658 files)
+Correction to the 01:52 entry: its archive check asserted /tests/ absence for the first time and
+FAILED — correctly. tests/ (36 dev-only standalone test files + fixtures, ~97 files with dirs) was
+never in build_zip.py's EXCLUDE_DIRS, so every zip to date shipped the test suite to client
+installs. Nothing under includes/ references tests/ at runtime (grepped). Added 'tests' to
+EXCLUDE_DIRS with a dated comment. Rebuilt: 3.46 MB / 658 files (was 3.78 / 755). All feature
+checks re-verified in the slimmer archive; suite was 36/36 before packaging. The dated
+power-creatives-2026-08-13.zip carries the fix too.

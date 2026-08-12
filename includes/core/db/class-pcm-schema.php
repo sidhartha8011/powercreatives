@@ -849,6 +849,30 @@ class PCM_Schema
             KEY idx_userId (userId)
         ) $charset_collate;";
         dbDelta($sql);
+
+        // ── SEO deleted links (v1.47.0) ──
+        // The Links popup's DELETE action removes the ENTIRE element (the whole
+        // <a>…</a>, not just the wrap) — this ledger is what makes that safe:
+        // the row stays visible in the popup's "Deleted" list and can be
+        // restored. `context` = the content immediately BEFORE the cut, so a
+        // restore re-inserts at the original spot when it still exists (falls
+        // back to appending). siteId 0 = this site's own post.
+        $sql = "CREATE TABLE {$prefix}seo_deleted_links (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            userId bigint(20) unsigned NOT NULL,
+            siteId int(11) DEFAULT 0 NOT NULL,
+            postId bigint(20) unsigned NOT NULL,
+            postType varchar(20) DEFAULT 'post' NOT NULL,
+            anchor text DEFAULT NULL,
+            toUrl text DEFAULT NULL,
+            html text NOT NULL,
+            context text DEFAULT NULL,
+            createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY idx_post (siteId, postId),
+            KEY idx_userId (userId)
+        ) $charset_collate;";
+        dbDelta($sql);
     }
 
     /**
@@ -1318,6 +1342,7 @@ class PCM_Schema
             'notifications',
             'seo_views',
             'seo_dynamic_rules',
+            'seo_deleted_links',
             'seo_tenants',
             'seo_hmac_nonces',
             'delivery_assignments',

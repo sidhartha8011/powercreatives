@@ -552,20 +552,37 @@ class PCM_SEO_Service
     }
 
     /** Per-link details for a connected post (computed on-demand from its raw content). */
-    /** HTTP status of a URL (HEAD; 0 on transport error). Note: bot-protected hosts (Google,
-     *  Cloudflare challenge) can answer 403/503 to automated checks — a known false-positive. */
+    /**
+     * HTTP status of a URL (0 on transport error).
+     *
+     * HEAD first (cheap), but a failing HEAD is NEVER trusted on its own:
+     * plenty of ordinary hosts answer 404/403/405 to HEAD while serving the
+     * page perfectly over GET — which is exactly how a WORKING link got
+     * reported as a 404 in the Links tab (the local scanner already retried on
+     * 405; this remote path retried on nothing). The GET retry only fires for
+     * links about to be flagged broken, so the extra request is bounded by the
+     * broken count, not the link count. Bot-protected hosts (Cloudflare
+     * challenge etc.) can still 403 both verbs — a known residual
+     * false-positive we surface rather than guess away.
+     */
     private static function link_http_status(string $url): int
     {
         if ($url === '' || !preg_match('#^https?://#i', $url)) {
             return 0;
         }
-        $resp = wp_remote_head($url, array(
+        $args = array(
             'timeout'     => 8,
             'redirection' => 3,
             'sslverify'   => false,
             'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreatives link check)',
-        ));
-        return is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
+        );
+        $resp   = wp_remote_head($url, $args);
+        $status = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
+        if ($status === 0 || $status >= 400) {
+            $resp   = wp_remote_get($url, $args);
+            $status = is_wp_error($resp) ? 0 : (int) wp_remote_retrieve_response_code($resp);
+        }
+        return $status;
     }
 
     public static function remote_get_links(object $site, int $post_id, string $type, bool $check_status = true): array
@@ -923,6 +940,95 @@ class PCM_SEO_Service
         return self::remote_rewrite_link_content($site, $post_id, $type, $index, static function ($old_html) {
             return preg_replace('/^<a\s[^>]*>(.*)<\/a>$/is', '$1', $old_html);
         });
+    }
+
+    /** Toggle rel="nofollow" on a connected post's link — same rewrite seam as remove. */
+    public static function remote_set_link_rel(object $site, int $post_id, string $type, int $index, bool $nofollow)
+    {
+        return self::remote_rewrite_link_content($site, $post_id, $type, $index, static function ($old_html) use ($nofollow) {
+            return PCM_SEO_Local::toggle_nofollow_html((string) $old_html, $nofollow);
+        });
+    }
+
+    /**
+     * DELETE a connected post's link — the entire element — recording it in the
+     * hub's seo_deleted_links ledger first (siteId set), same reversibility
+     * contract as the local delete. The ledger context is the raw content
+     * before the element, captured by the $build callback via reference.
+     */
+    public static function remote_delete_link(object $site, int $post_id, string $type, int $index, int $user_id)
+    {
+        global $wpdb;
+        $captured = array('html' => '', 'anchor' => '', 'to' => '');
+        $result = self::remote_rewrite_link_content(
+            $site,
+            $post_id,
+            $type,
+            $index,
+            static function ($old_html, $link = null) use (&$captured) {
+                $captured['html']   = (string) $old_html;
+                $captured['anchor'] = is_array($link) ? (string) ($link['anchor'] ?? '') : '';
+                $captured['to']     = is_array($link) ? (string) ($link['to'] ?? '') : '';
+                return ''; // cut the whole element
+            }
+        );
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        if ($captured['html'] !== '') {
+            // Ledger after the remote write succeeded (the reverse order of the
+            // local path, because the remote write is the step that can fail
+            // long after validation — a ledger row for an uncut link would
+            // offer a bogus restore).
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+            $wpdb->insert(PCM_Schema::table('seo_deleted_links'), array(
+                'userId'   => $user_id,
+                'siteId'   => (int) $site->id,
+                'postId'   => $post_id,
+                'postType' => $type === 'page' ? 'page' : 'post',
+                'anchor'   => $captured['anchor'],
+                'toUrl'    => $captured['to'],
+                'html'     => $captured['html'],
+                'context'  => '', // remote raw is read transiently; restore appends
+            ), array('%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s'));
+        }
+        return $result;
+    }
+
+    /**
+     * Restore a link deleted on a CONNECTED site: append its stored html to the
+     * remote post's raw content (position context is not kept for remote cuts)
+     * and drop the ledger row on success.
+     */
+    public static function remote_restore_deleted_link(object $site, int $ledger_id, int $user_id)
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_deleted_links');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE id = %d AND userId = %d AND siteId = %d",
+            $ledger_id, $user_id, (int) $site->id
+        ));
+        if (!$row) {
+            return new WP_Error('pcm_seo_ledger_missing', __('Deleted-link record not found for this site.', 'power-creatives'), array('status' => 404));
+        }
+        self::ensure_sites_service();
+        $type  = (string) $row->postType === 'page' ? 'page' : 'post';
+        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . (int) $row->postId;
+        $res   = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content'));
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return new WP_Error('pcm_seo_remote_fetch', __('Could not read the remote post.', 'power-creatives'), array('status' => 502));
+        }
+        $raw = (string) ($res['body']['content']['raw'] ?? '');
+        $put = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), array(
+            'content' => $raw . "\n" . (string) $row->html,
+        ));
+        if (is_wp_error($put) || (int) ($put['status'] ?? 0) >= 300) {
+            return new WP_Error('pcm_seo_remote_save', __('The site rejected the restore.', 'power-creatives'), array('status' => 502));
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $wpdb->delete($table, array('id' => $ledger_id), array('%d'));
+        return array('restored' => true, 'postId' => (int) $row->postId);
     }
 
     /**

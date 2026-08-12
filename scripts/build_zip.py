@@ -19,6 +19,10 @@ EXCLUDE_DIRS = {
     # the plugin never loads vendor/autoload at runtime. Shipping it bloated the zip
     # ~1.9MB -> 5.1MB with test frameworks a client install must not receive.
     'vendor',
+    # tests/ is DEV-ONLY too — nothing under includes/ requires it at runtime.
+    # It had shipped in every zip simply because it was never listed here
+    # (found 2026-08-13 when an archive check first asserted its absence).
+    'tests',
 }
 
 EXCLUDE_FILES = {

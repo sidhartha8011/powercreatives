@@ -144,8 +144,12 @@ check('it surfaces the server reason, not just a count', handler.includes('lastE
 console.log('\n6. The remote status is actually PERSISTED (or the dropdown snaps back)');
 check('articles gained publishedStatus',
   readFileSync(join(ROOT, 'includes/core/db/class-pcm-schema.php'), 'utf8').includes('publishedStatus varchar(20)'), 'no column');
-check('the DB version was bumped for it',
-  readFileSync(join(ROOT, 'power-creatives.php'), 'utf8').includes("PCM_DB_VERSION', '1.46.0"), 'not bumped');
+// The RULE is "at or after the release that added the column", not one pinned
+// spelling — the exact-match version broke the first time the DB version moved
+// again (1.47.0, the deleted-links ledger).
+const dbVer = readFileSync(join(ROOT, 'power-creatives.php'), 'utf8').match(/PCM_DB_VERSION', '(\d+)\.(\d+)\.(\d+)'/);
+check('the DB version is at or past 1.46.0 (the publishedStatus release)',
+  !!dbVer && (Number(dbVer[1]) > 1 || (Number(dbVer[1]) === 1 && Number(dbVer[2]) >= 46)), dbVer?.[0]);
 check('the item query selects it',
   readFileSync(join(ROOT, 'includes/core/db/class-pcm-db.php'), 'utf8').includes('a.publishedStatus AS articlePublishedStatus'), 'not joined');
 check('the API serialises it', ctl.includes("'articlePublishedStatus'"), 'not exposed');

@@ -934,8 +934,15 @@ class PCM_Conn_B_Breakdance extends PCM_Conn_Builder_Base {
 class PCM_Conn_B_Brizy extends PCM_Conn_Builder_Base {
     public function key() { return 'brizy'; }
     public function label() { return 'Brizy'; }
-    // No source_keys → treated as CONTENT-based, so scan_links walks post_content + ALL meta and the
-    // base64-aware collect_links surfaces links from Brizy's base64 compiled HTML / editor JSON.
+    // SOURCE-scoped since 2026-08-13 (this was "No source_keys → content-based" before, on the
+    // theory that walking everything maximised visibility). In practice it manufactured phantom
+    // 404s: a Brizy page's post_content is a STALE COMPILED COPY and its meta carries a
+    // compiled-HTML render cache alongside the editor data — links that are not on the live page
+    // at all ("the 3 links does not even exist on the page"). Scan only Brizy's own meta; the
+    // compiled/cache keys inside it are skipped by collect_links, leaving the editor SOURCE —
+    // which is what the page actually renders from. scan_links keeps a zero-links fallback for
+    // Brizy versions that store data elsewhere, so visibility can degrade but never vanish.
+    public function source_keys() { return array('brizy-post', 'brizy'); }
     public function detect($post_id) {
         return (class_exists('Brizy_Editor_Post') || defined('BRIZY_VERSION'))
             && (get_post_meta($post_id, 'brizy_post_uid', true) !== ''
@@ -1216,16 +1223,28 @@ class PCM_Conn_Builder_Manager {
      *  builder data (Elementor/Divi/etc. custom fields) that post_content scanning misses. De-duped
      *  by URL (replace-url rewrites every occurrence). Returns [{anchor,to,html,source}]. */
     public function scan_links($post_id) {
-        $out = array();
-        // When a META-BASED builder owns this post (Elementor/Bricks/Oxygen/Breakdance), the page
-        // renders from the builder's SOURCE meta — post_content is dead weight and other metas are
-        // render caches. Scanning those produced phantom rows (invisible post_content links, stale
-        // cache copies of edited links), so scan ONLY the source keys. Content-based builders
+        // When a META-BASED builder owns this post (Elementor/Bricks/Oxygen/Breakdance/Brizy), the
+        // page renders from the builder's SOURCE meta — post_content is dead weight and other metas
+        // are render caches. Scanning those produced phantom rows (invisible post_content links,
+        // stale cache copies of edited links), so scan ONLY the source keys. Content-based builders
         // (Divi/WPBakery shortcodes) and classic posts keep the full post_content + all-meta scan.
         $source_keys = array();
         foreach ($this->detect($post_id) as $h) {
             foreach ((array) $h->source_keys() as $k) { $source_keys[] = (string) $k; }
         }
+        $result = $this->scan_links_pass($post_id, $source_keys);
+        // Visibility floor: a builder version that stores its data OUTSIDE the expected source
+        // keys (e.g. a Brizy release using custom tables) would otherwise scan to zero. Better a
+        // broad content pass — the compiled/cache keys are still skipped inside collect_links —
+        // than a Links tab that silently shows nothing.
+        if (!empty($source_keys) && empty($result)) {
+            $result = $this->scan_links_pass($post_id, array());
+        }
+        return $result;
+    }
+    /** One harvest pass: $source_keys scopes the meta scan; empty = post_content + all meta. */
+    private function scan_links_pass($post_id, $source_keys) {
+        $out = array();
         $meta_based = !empty($source_keys);
 
         if (!$meta_based) {
@@ -1281,6 +1300,13 @@ class PCM_Conn_Builder_Manager {
             // so each captured link can be edited in isolation — rewriting just that one element, not
             // every link that happens to share the URL.
             if (isset($val['id'], $val['elType']) && is_string($val['id'])) { $el_id = $val['id']; }
+            // RENDER CACHES are not sources. Brizy keeps a compiled-HTML copy of the page inside
+            // the same meta as its editor data; other builders stash cached fragments too. A cache
+            // lags its source after edits, so scanning it reports links that are no longer on the
+            // page (phantom 404s). Editable truth lives in the source keys beside it.
+            foreach (array_keys($val) as $ck) {
+                if (is_string($ck) && preg_match('/compiled|_cache\b|cached/i', $ck)) { unset($val[$ck]); }
+            }
             // A widget's text/title labels its link, which is a nested {url:...} field. Pass the label
             // DOWN so the link inherits it — and capture each link ONCE (no empty-anchor duplicate).
             $lbl = $label;

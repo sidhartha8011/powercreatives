@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useMemo, useState, type PointerEvent } from 'react';
-import { ExternalLink, Unlink, Loader2, Trash2, RefreshCw, Lock } from 'lucide-react';
+import { ExternalLink, Unlink, Loader2, Trash2, RefreshCw, Lock, Shield, ShieldOff, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
@@ -97,6 +97,21 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
   const removeLocal = trpc.seo.removeLink.useMutation();
   const updateRemote = trpc.seo.remoteUpdateLink.useMutation();
   const removeRemote = trpc.seo.remoteRemoveLink.useMutation();
+  // Link optimization (card): rel toggle + whole-element delete with a restorable ledger.
+  const relLocal = trpc.seo.setLinkRel.useMutation();
+  const relRemote = trpc.seo.remoteSetLinkRel.useMutation();
+  const deleteLocal = trpc.seo.deleteLink.useMutation();
+  const deleteRemote = trpc.seo.remoteDeleteLink.useMutation();
+  const restoreLocal = trpc.seo.restoreDeletedLink.useMutation();
+  const restoreRemote = trpc.seo.remoteRestoreDeletedLink.useMutation();
+  const deletedLocalQuery = trpc.seo.deletedLinks.useQuery({ id: postId }, { enabled: open && isLocal });
+  const deletedRemoteQuery = trpc.seo.remoteDeletedLinks.useQuery(
+    { siteId: siteId ?? 0, postId },
+    { enabled: open && !isLocal && siteId != null },
+  );
+  const deletedRows: { ledgerId: number; anchor: string; to: string; html: string; deletedAt: string }[] =
+    ((isLocal ? deletedLocalQuery.data : deletedRemoteQuery.data) as any)?.deleted ?? [];
+  const refetchDeleted = () => { void (isLocal ? deletedLocalQuery.refetch() : deletedRemoteQuery.refetch()); };
   const localScan = trpc.seo.scanLinks.useMutation();
   const remoteScan = trpc.seo.remoteScanLinks.useMutation();
   const [rescanning, setRescanning] = useState(false);
@@ -214,6 +229,57 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
       toast.error(err?.message || 'Failed to remove the link');
     } finally {
       setBusyIdx(null);
+    }
+  };
+
+  // rel="nofollow" toggle — "it just changes the link type in the code". Current state is
+  // read off the row's own html, so the button always shows the OTHER state.
+  const setRel = async (l: LinkRow, nofollow: boolean) => {
+    setBusyIdx(l.id);
+    try {
+      const res = isLocal
+        ? await relLocal.mutateAsync({ id: postId, index: l.id, nofollow } as any)
+        : await relRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, nofollow } as any);
+      applyResult(res);
+      toast.success(nofollow ? 'Link set to nofollow' : 'Link set to follow');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to change the link rel');
+    } finally {
+      setBusyIdx(null);
+    }
+  };
+
+  // DELETE the whole element (the entire <a>…</a>), not just the wrap. Reversible by
+  // design: the cut lands in the Deleted list below, where Restore puts it back.
+  const deleteWhole = async (l: LinkRow) => {
+    if (!window.confirm('Delete this entire link element from the page? It moves to the Deleted list below, where you can restore it.')) return;
+    setBusyIdx(l.id);
+    try {
+      const res = isLocal
+        ? await deleteLocal.mutateAsync({ id: postId, index: l.id } as any)
+        : await deleteRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id } as any);
+      applyResult(res);
+      refetchDeleted();
+      toast.success('Element deleted — restorable from the Deleted list below.');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to delete the element');
+    } finally {
+      setBusyIdx(null);
+    }
+  };
+
+  const restoreDeleted = async (ledgerId: number) => {
+    setBulkBusy(true);
+    try {
+      if (isLocal) await restoreLocal.mutateAsync({ ledgerId } as any);
+      else await restoreRemote.mutateAsync({ siteId: siteId ?? 0, ledgerId } as any);
+      refetchDeleted();
+      void (isLocal ? localQuery.refetch() : remoteQuery.refetch());
+      toast.success('Link restored to the page.');
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to restore the link');
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -415,9 +481,26 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
                             <ExternalLink className="h-3 w-3" />
                           </Button>
                           {editable ? (
-                            <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-destructive" disabled={rowBusy} onClick={() => remove(l)} title="Remove link">
-                              {busyIdx === l.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Unlink className="h-3 w-3" />}
-                            </Button>
+                            <>
+                              {/* Unlink = unwrap, text/element stays (card wording). */}
+                              <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-destructive" disabled={rowBusy} onClick={() => remove(l)} title="Unlink — remove the link but keep the text">
+                                {busyIdx === l.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Unlink className="h-3 w-3" />}
+                              </Button>
+                              {/* Follow/nofollow — state read from the row's own html. */}
+                              {/nofollow/i.test(l.html) ? (
+                                <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" disabled={rowBusy} onClick={() => setRel(l, false)} title="Currently nofollow — set to follow">
+                                  <Shield className="h-3 w-3" />
+                                </Button>
+                              ) : (
+                                <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" disabled={rowBusy} onClick={() => setRel(l, true)} title="Currently follow — set to nofollow">
+                                  <ShieldOff className="h-3 w-3" />
+                                </Button>
+                              )}
+                              {/* Delete = the ENTIRE element, restorable from the list below. */}
+                              <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-destructive" disabled={rowBusy} onClick={() => deleteWhole(l)} title="Delete the entire element (restorable below)">
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </>
                           ) : (
                             <span className="inline-flex h-7 w-7 items-center justify-center text-muted-foreground/50" title={roTitle}>
                               <Lock className="h-3 w-3" />
@@ -439,6 +522,33 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
               {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
               Remove {selected.size} selected
             </Button>
+          </div>
+        )}
+
+        {/* Deleted links — the card's contract: a deleted element "is still
+            visible so we can add it back". Rows come from the hub's
+            seo_deleted_links ledger for THIS page and restore in one click. */}
+        {deletedRows.length > 0 && (
+          <div className="mt-4 space-y-1.5">
+            <p className="text-xs font-semibold text-muted-foreground">
+              Deleted links on this page — restorable
+            </p>
+            <div className="rounded-md border border-border">
+              {deletedRows.map((d) => (
+                <div key={d.ledgerId} className="flex items-center gap-3 border-b border-border px-3 py-1.5 last:border-b-0">
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground line-through" title={d.html}>
+                    {d.anchor || d.to || d.html}
+                  </span>
+                  <a href={d.to} target="_blank" rel="noopener noreferrer" className="max-w-[16rem] shrink-0 truncate text-xs text-muted-foreground hover:text-primary hover:underline" title={d.to}>
+                    {d.to}
+                  </a>
+                  <span className="shrink-0 text-[10px] text-muted-foreground/60">{d.deletedAt}</span>
+                  <Button variant="outline" size="sm" className="h-7 shrink-0 gap-1.5" disabled={bulkBusy} onClick={() => restoreDeleted(d.ledgerId)} title="Put this element back on the page">
+                    <Undo2 className="h-3 w-3" /> Restore
+                  </Button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </DialogContent>
