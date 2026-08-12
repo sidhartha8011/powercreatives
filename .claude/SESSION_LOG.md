@@ -13032,3 +13032,32 @@ present in the BUILT bundle, not just source.
 NOT LIVE-VERIFIED: reproducing needs a genuinely expired nonce (12–24h old tab); proof is the unit +
 mutation tests. Not committed.
 
+
+## 2026-08-10 — Admin "Set not found or not owned by this user" deleting an approval card [/task]
+ROOT CAUSE — the same read/write split as the deliveries bug. list_sets_by_user() DROPS the userId
+filter for admins (service.php:76), so the board shows an admin EVERY set; but delete_set,
+bulk_delete_sets and update_status all scoped their WHERE to `userId = <caller>`, matched 0 rows, and
+the service reported that as "not found". The admin could see a card and was refused the instant they
+touched it. update_status was doubly blocked: its pre-load used get_set_by_id(), which goes through the
+strictly owner-scoped PCM_DB::get_by_id().
+⚠ NOTE — THIS WAS DOCUMENTED AS DELIBERATE. get_set_scoped()'s docblock said "Destructive operations
+(status/delete/share/reply) stay owner-scoped via get_set_by_id." That contradicts PCM_Access::is_admin's
+own contract, which names this module: "a platform admin gets the same team-wide oversight (all
+brands/deliveries/approvals) a WP admin has". Resolved in favour of admin oversight (owner reported it as
+a bug, and it matches what deliveries now does), but deliberately NARROWER than the view rule: owner or
+ADMIN only — a brand/project GRANTEE may still view and append via get_set_scoped(), never destroy.
+Stale docblock corrected rather than left contradicting the code.
+BUILT: PCM_Approvals_Service::can_write_set($id,$user_id) — one gate, owner OR admin, and a missing row
+returns false so a genuine 404 stays a 404 and an admin is not waved onto a non-existent set. Used by
+delete_set, bulk_delete_sets (per-id, so a mixed selection deletes exactly what the caller may destroy
+and the returned count stays honest) and update_status. The WHERE clauses dropped `userId` — the gate is
+the authorisation, and keeping it would have matched 0 rows for the very admin just allowed. update_status
+also switched its pre-load from get_set_by_id to get_set_scoped for the same reason.
+VERIFIED: new tests/unit/ApprovalsWritePermissionTest.php 7/7 — owner allowed, admin allowed on a set
+they do not own (the bug), plain user refused, MISSING set refused even for an admin, zero-ids
+short-circuit without a query, plus two source-invariant tests (every destructive path gates on
+can_write_set; no write re-imposes owner-only in its WHERE). MUTATION-TESTED BOTH HALVES: removing the
+admin grant fails it, and re-imposing `userId` in the UPDATE WHERE fails it — restoring passes both.
+phpunit 643 (was 636; 1 error + 27 failures = unchanged pre-existing baseline), Approvals/Automations
+suites 23/23, standalone 95/95, orphan gate clean, php -l clean. No frontend change.
+NOT LIVE-VERIFIED: needs a real second admin account; proof is unit + mutation tests. Not committed.

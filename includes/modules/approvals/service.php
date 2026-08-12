@@ -229,10 +229,47 @@ class PCM_Approvals_Service
     }
 
     /**
+     * May this user perform a DESTRUCTIVE operation on this set (delete, bulk
+     * delete, lane change)? Owner, or an admin.
+     *
+     * The board already shows an admin EVERY set (list_sets_by_user drops the
+     * userId filter for them), so without the same grant here an admin sees a
+     * card and is refused the moment they touch it — "Set not found or not
+     * owned by this user" (owner report 2026-08-10, hit on delete).
+     *
+     * Deliberately narrower than get_set_scoped(): a brand/project GRANTEE may
+     * view and append, but only the owner or an admin may destroy. That keeps
+     * the original restriction for everyone except the role whose entire
+     * purpose is team-wide oversight — PCM_Access::is_admin's own contract
+     * names approvals: "a platform admin gets the same team-wide oversight
+     * (all brands/deliveries/approvals) a WP admin has".
+     *
+     * @param int $id      Approval-set id.
+     * @param int $user_id PCM user id.
+     */
+    public static function can_write_set(int $id, int $user_id): bool
+    {
+        if ($id <= 0 || $user_id <= 0) {
+            return false;
+        }
+        global $wpdb;
+        $table = PCM_Schema::table('approval_sets');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $owner = $wpdb->get_var($wpdb->prepare("SELECT userId FROM {$table} WHERE id = %d", $id));
+        if ($owner === null) {
+            return false; // genuinely missing — the 404 is correct
+        }
+        if ((int) $owner === $user_id) {
+            return true;
+        }
+        return class_exists('PCM_Access') && PCM_Access::is_admin($user_id);
+    }
+
+    /**
      * Retrieve a set the user may VIEW (and append to): their own, any set
      * for admins, or a set within their granted brand/project scope.
-     * Destructive operations (status/delete/share/reply) stay owner-scoped
-     * via get_set_by_id.
+     * Destructive operations (status/delete/share/reply) use can_write_set()
+     * — owner or admin, NOT brand/project grantees.
      */
     public static function get_set_scoped(int $id, int $user_id): ?object
     {
@@ -497,9 +534,17 @@ class PCM_Approvals_Service
             return false;
         }
 
-        // Load first so we know the previous lane (to fire the trigger only on
-        // an actual change) and have the name/token for the payload.
-        $set = self::get_set_by_id($id, $user_id);
+        // Owner OR admin. get_set_by_id() is strictly owner-scoped (it goes
+        // through PCM_DB::get_by_id), so an admin dragging a card between lanes
+        // failed here before the UPDATE was even attempted.
+        if (!self::can_write_set($id, $user_id)) {
+            return false;
+        }
+
+        // Load for the previous lane (fire the trigger only on an actual change)
+        // and the name/token for the payload. get_set_scoped, not get_set_by_id,
+        // so an admin's load succeeds for a set they do not own.
+        $set = self::get_set_scoped($id, $user_id);
         if (!$set) {
             return false;
         }
@@ -519,12 +564,15 @@ class PCM_Approvals_Service
         }
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        // id only — can_write_set() above is the authorisation gate. Keeping
+        // `userId` here as well would re-impose owner-only and match 0 rows for
+        // the very admin the gate just allowed.
         $rows = $wpdb->update(
             $table,
             $update_data,
-            array('id' => $id, 'userId' => $user_id),
+            array('id' => $id),
             $update_formats,
-            array('%d', '%d')
+            array('%d')
         );
 
         if ($rows === false || $rows <= 0) {
@@ -591,15 +639,17 @@ class PCM_Approvals_Service
             return false;
         }
 
+        // Owner OR admin (can_write_set) — an admin sees every set on the board,
+        // so an owner-only DELETE matched 0 rows and surfaced as "not found".
+        if (!self::can_write_set($id, $user_id)) {
+            return false;
+        }
+
         global $wpdb;
         $table = PCM_Schema::table('approval_sets');
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-        $rows = $wpdb->delete(
-            $table,
-            array('id' => $id, 'userId' => $user_id),
-            array('%d', '%d')
-        );
+        $rows = $wpdb->delete($table, array('id' => $id), array('%d'));
 
         return $rows !== false && $rows > 0;
     }
@@ -624,6 +674,14 @@ class PCM_Approvals_Service
             return 0;
         }
 
+        // Same owner-or-admin rule as delete_set, applied PER id so a mixed
+        // selection deletes exactly what this user may destroy and silently
+        // skips the rest — the caller reports the count, never a partial lie.
+        $ids = array_values(array_filter($ids, static fn(int $n): bool => self::can_write_set($n, $user_id)));
+        if (empty($ids)) {
+            return 0;
+        }
+
         global $wpdb;
         $table = PCM_Schema::table('approval_sets');
         $placeholders = implode(',', array_fill(0, count($ids), '%d'));
@@ -631,8 +689,8 @@ class PCM_Approvals_Service
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
         $deleted = $wpdb->query(
             $wpdb->prepare(
-                "DELETE FROM {$table} WHERE userId = %d AND id IN ({$placeholders})",
-                array_merge(array($user_id), $ids)
+                "DELETE FROM {$table} WHERE id IN ({$placeholders})",
+                $ids
             )
         );
 
