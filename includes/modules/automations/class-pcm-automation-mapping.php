@@ -88,6 +88,22 @@ class PCM_Automation_Mapping
      */
     private static function lookup(string $key, array $context)
     {
-        return array_key_exists($key, $context) ? $context[$key] : null;
+        // Exact match first — `setID` and `setId` are BOTH real keys, and the
+        // exact spelling must always win over a case-folded neighbour.
+        if (array_key_exists($key, $context)) {
+            return $context[$key];
+        }
+        // Case-insensitive fallback (reported: `{{ deliveryname }}` typed into a
+        // webhook payload resolved to NULL because the context key is
+        // `deliveryName` — a silent null in the consumer's payload is a worse
+        // outcome than tolerating a case slip). First case-folded hit wins in
+        // context order.
+        $folded = strtolower($key);
+        foreach ($context as $k => $v) {
+            if (strtolower((string) $k) === $folded) {
+                return $v;
+            }
+        }
+        return null;
     }
 }

@@ -661,17 +661,32 @@ class PCM_Automation_Engine
         global $wpdb;
         $table = PCM_Schema::table('automations');
 
-        // Admins see every user's rules (team-wide oversight — same law as
-        // brands/deliveries/approvals lists).
-        if (class_exists('PCM_Access') && PCM_Access::is_admin($user_id)) {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $rows = $wpdb->get_results("SELECT * FROM {$table} ORDER BY createdAt DESC") ?: array();
-        } else {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $rows = $wpdb->get_results(
-                $wpdb->prepare("SELECT * FROM {$table} WHERE userId = %d ORDER BY createdAt DESC", $user_id)
-            ) ?: array();
-        }
+        // The list shows exactly the rules that can FIRE for this caller — the
+        // same set run_rules() executes (own rules + foreign ADMINS' CUSTOM
+        // rules, which apply platform-wide; see the __seedKey gate below).
+        //
+        // 2026-08-12, reverting a 08-07 over-reach: this briefly had the
+        // team-wide admin branch (`admins see every row`), but automation rules
+        // are PER-USER EXECUTION CONFIG and every user carries an identical
+        // seeded set — so an admin's list showed one copy per platform user
+        // ("why is everything four of everything?"). Toggling a teammate's copy
+        // never changed the caller's behaviour anyway; listing it was pure
+        // noise, not oversight.
+        $users = PCM_Schema::table('users');
+        // esc_like: `_` is a LIKE wildcard, and the marker is literally "__seedKey".
+        $seed_marker = '%' . $wpdb->esc_like('"__seedKey"') . '%';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$table}
+              WHERE userId = %d
+                 OR (userId IN (SELECT id FROM {$users} WHERE role = 'admin')
+                     AND userId != %d
+                     AND config NOT LIKE %s)
+              ORDER BY createdAt DESC",
+            $user_id,
+            $user_id,
+            $seed_marker
+        )) ?: array();
 
         return array_map(static function ($row) {
             $config = json_decode((string) $row->config, true);
@@ -953,7 +968,7 @@ class PCM_Automation_Engine
                         continue;
                     }
 
-                    $context = array(
+                    $context = array_merge(PCM_Approvals_Service::enrich_context($set), array(
                         'setId'         => (int) $set->id,
                         'name'          => (string) $set->name,
                         'status'        => (string) $set->status,
@@ -962,7 +977,7 @@ class PCM_Automation_Engine
                         'daysSinceSent' => $days,
                         'clientEmail'   => (string) ($set->clientEmail ?? ''),
                         'brandId'       => $set->brandId !== null ? (int) $set->brandId : null,
-                    );
+                    ));
 
                     self::fire_trigger(
                         'approvals.set_pending_in_client',

@@ -1008,7 +1008,10 @@ class PCM_Approvals_Service
 
         // Allow callers to point the email/webhook at a specific asset thread.
         if (!empty($extra['assetId'])) {
-            $context['assetUrl'] = $share_url . '#asset-' . rawurlencode((string) $extra['assetId']);
+            // Same contract as enrich_context's commentUrl: `?pcm_asset=` is the
+            // param ClientReviewPage actually consumes; `#asset-` was a hash
+            // nothing read, so this link opened the page at the top.
+            $context['assetUrl'] = add_query_arg('pcm_asset', rawurlencode((string) $extra['assetId']), $share_url);
         }
 
         return array_merge($context, $extra);
@@ -1149,7 +1152,11 @@ class PCM_Approvals_Service
      * @param string|null $asset_id Optional asset id for the comment deep link.
      * @return array
      */
-    private static function enrich_context(object $set, ?string $asset_id = null, string $comment = ''): array
+    // Public since 2026-08-12: the automations module's reminder scanner is the one
+    // emit site living OUTSIDE this class, and it fired with the bare legacy context
+    // — so "still awaiting client approval" webhooks carried none of the mapping
+    // fields (brandExtID/deliveryExtID/…) the other five triggers send.
+    public static function enrich_context(object $set, ?string $asset_id = null, string $comment = ''): array
     {
         global $wpdb;
 
@@ -1259,8 +1266,13 @@ class PCM_Approvals_Service
             'projectName'     => $project_name,
             'projectExtID'    => $project_ext,
             'projectAssignee' => $assignees,
+            // `?pcm_asset=<id>` is the param the review page ACTUALLY handles
+            // (ClientReviewPage's deep-link effect scrolls the linked asset into
+            // view with its comments visible). This used to emit `#asset-<id>`,
+            // a hash NOTHING consumed — the card's "link to the review comment"
+            // opened the page at the top and never surfaced the comment.
             'commentUrl'      => $asset_id !== null && $asset_id !== ''
-                ? $share_url . '#asset-' . rawurlencode($asset_id)
+                ? add_query_arg('pcm_asset', rawurlencode($asset_id), $share_url)
                 : $share_url,
             'dashboardUrl'    => admin_url('admin.php?page=power-creatives'),
         );

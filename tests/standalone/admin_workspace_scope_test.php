@@ -245,9 +245,22 @@ check('projects list rides scope_clause (assets controller)',
     strpos(file_get_contents($ROOT . '/includes/modules/assets/controller.php'), 'scope_clause') !== false,
     'projects not covered');
 
-echo "\n6. The automations list carries the same law\n";
+echo "\n6. The automations list is EXEMPT from the law (superseded 2026-08-12)\n";
+// This section used to require the admin branch on list_rules — that was the
+// 08-07 sweep over-reaching. Automation rules are per-user EXECUTION CONFIG and
+// every user carries an identical seeded set, so the team-wide list rendered one
+// copy per platform user ("why is everything four of everything?"). The list is
+// now scoped to what actually FIRES for the caller: own rules + foreign ADMINS'
+// CUSTOM rules (mirroring run_rules()'s __seedKey gate). Deep coverage lives in
+// automation_field_variables_test.php §5; this guards the exemption itself.
 $auto = file_get_contents($ROOT . '/includes/modules/automations/service.php');
-check('list_rules has the admin branch', str_contains($auto, 'team-wide oversight'), 'branch missing');
+$lr_at = strpos($auto, 'function list_rules(');
+check('list_rules found', $lr_at !== false, 'missing');
+$lr = substr($auto, (int) $lr_at, 2400);
+check('list_rules does NOT have the team-wide admin branch',
+    !str_contains($lr, 'FROM {$table} ORDER BY createdAt DESC"'), 'the 4x bug is back');
+check('foreign admin CUSTOM rules stay visible (they fire for everyone)',
+    str_contains($lr, "role = 'admin'") && str_contains($lr, 'NOT LIKE'), 'over-reverted');
 
 echo "\n" . str_repeat('─', 52) . "\n";
 echo "  passed: $PASS   failed: $FAIL\n";

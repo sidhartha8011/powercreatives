@@ -13474,3 +13474,161 @@ VERIFIED
 - OPEN FOR THE OWNER: check Templates → SEO for a row whose Type is a Meta Title section but whose
   Value asks for {"html":…,"changes":…}, and fix or delete it. After this build that row produces a
   clear 422 instead of a JSON blob, but it will still fail until the template itself is corrected.
+
+## 2026-08-12 — Automations field variables: mostly CONFIRMED, two real gaps closed
+Owner card: brandName/brandExtID/deliveryName/deliveryExtID/projectName/projectExtID/setID/setName/
+setStatus/setLink/setInternalLink/setComment must be available in automation payloads, "just exactly
+using these names" — for mapping deliveries to client chats in n8n. Plus a sizing bug in the dialog.
+
+CONFIRMED (already shipped by the pulled Approvals redesign — the owner's screenshots predate the
+08-10 pull): PCM_Approvals_Service::enrich_context() returns every requested field with the exact
+names (setLink = public review link, setInternalLink = admin deep link
+admin.php?page=power-creatives&pcm_approval_set=ID, *ExtID = the entity's externalId column); all
+five set-level triggers merge it into their emits and declare it in contextKeys; the payload
+builder's hint is dynamic click-to-copy chips of the trigger's contextKeys (the stale
+"Available: {{setId}}…" text is gone); and the dialog sizing bug (locked size + stray horizontal
+scrollbar) was already fixed — pinned header/footer, scrollable body, min()-clamped width.
+
+TWO REAL GAPS CLOSED THIS TASK:
+1. THE OWNER'S FAILING TEST ("name": null): PCM_Automation_Mapping::lookup() was case-sensitive, so
+   `{{ deliveryname }}` missed `deliveryName` and a lone unresolved token returned raw null into the
+   webhook body. Lookup is now exact-spelling-FIRST (setID and setId are both real keys and each
+   exact spelling must get its own value), then case-insensitive fallback. A genuinely unknown token
+   still resolves to null — visible in the consumer beats silently fabricating ''.
+2. The "still awaiting client approval" REMINDER scanner (automations/service.php) was the last emit
+   still firing the bare legacy context — its webhooks carried NONE of the mapping fields. It now
+   merges enrich_context() (made public: this scanner lives in the automations module) and its
+   contextKeys declaration was widened to match the other five.
+
+VERIFIED
+- NEW tests/standalone/automation_field_variables_test.php — 43 checks. Section 1 runs the REAL
+  resolver: exact names, the reported lowercase slip, ALL-CAPS, exact-beats-folded both ways, lone
+  tokens keeping their TYPE (setID stays int), inline interpolation, unknown->null. Sections 2-4:
+  every required key in enrich_context, declared on all six triggers, all six emits enriched, UI
+  chips dynamic with no stale hardcoded list.
+- NEGATIVE CONTROL 8/8: reverting case-sensitivity, dropping exact-first, fabricating '' for unknown
+  tokens, un-enriching the reminder, dropping a vocabulary field, degrading setInternalLink to the
+  public link, shrinking the reminder declaration, re-privatising enrich_context. Restored -> 43/43.
+- php -l clean x4. FULL SUITE 33/33. tsc 58. Zip 3.76 MB / 752 files; lookup + vocabulary + reminder
+  merge + chips all verified in the archive (code with comments stripped).
+- NOT VERIFIED HERE: no live n8n endpoint — the resolver is exercised for real, but an end-to-end
+  webhook delivery (incl. the reminder cron path) needs one fired against a real URL. The owner's
+  own n8n flow is the natural test: the previously-null `{{ deliveryname }}` row should now carry
+  "August content"-style values after this build.
+
+## 2026-08-12 — Automations round 2: LIVE-tested at webhook.site; the "4x of everything" was my bug
+Owner: copy-click not working; setComment missing; "are they all variables tested so that you know
+they actually send the values?"; "pick a free webhook site and test"; "why is everything four of
+everything? … looks like you have not even checked it".
+
+THE 4x — my regression, owned: the 08-07 workspace-law sweep added the admin branch to
+list_rules(), so an admin's list returned EVERY user's rows. Every platform user carries an
+IDENTICAL seeded rule set, so with 4 users the page showed 4 copies of each rule. Toggling a
+teammate's copy never changed the caller's behaviour — the listing was noise, not oversight.
+FIX: list_rules() now returns exactly what run_rules() executes for the caller — own rules +
+foreign ADMINS' CUSTOM rules (platform-wide by design; seeds excluded via the same __seedKey gate,
+esc_like()'d because `_` is a LIKE wildcard). admin_workspace_scope_test §6 SUPERSEDED (it demanded
+the branch this removes) and rewritten to guard the exemption in both directions; map updated so a
+future sweep doesn't re-add it.
+
+LIVE END-TO-END TEST (the owner's explicit ask) — NEW automation_webhook_live_test.php: creates a
+webhook.site token, resolves a 12-token payload through the REAL PCM_Automation_Mapping (including
+the owner's exact lowercase `{{ deliveryname }}` slip), sends through the REAL PCM_Webhook_Channel
+(wp_remote_post backed by curl), then reads back what ARRIVED via webhook.site's API:
+all 12 variables with exact values, setID still an int, event + timestamp present, and the
+X-PCM-Signature HMAC re-verified against the RECEIVED bytes. 21/21 LIVE. Skips (exit 0, labelled)
+when offline so the suite stays green without network. NOT covered live: enrich_context's DB reads
+(needs a WP install) — those stay covered structurally.
+
+setComment: was declared only on comment_added, so its chip was missing from five of six pickers.
+enrich_context always emits it (empty for non-comment events) — now declared on ALL six triggers.
+
+COPY-CLICK + STATIC HINT: the current tree is already right (dynamic click-to-copy chips via the
+fallback-capable copyToClipboard with a visible failure toast; no "Available: {{…}}" static text
+exists anywhere in the codebase). The owner's screenshot — new keys but static text — matches an
+INTERMEDIATE deployed build (commit 3024d19 era, keys added before chips). Deploying this zip is
+the fix; no code change existed to make here.
+
+VERIFIED
+- automation_field_variables_test 43 -> 49 (+ list scoping §5, copy-helper §6, setComment on all six).
+- NEGATIVE CONTROL 6/6: resurrect the 4x branch, leak foreign seeds, drop esc_like, remove
+  setComment, bypass the copy fallback, silence copy failure — all red; restored -> 49/49.
+- FULL SUITE 34/34 (incl. the live test hitting webhook.site for real). php -l clean x3. tsc 58.
+  Zip 3.77 MB / 753 files; 4x fix + setComment + lookup + chips verified in the archive.
+- HONEST LIMITS: the live test exercises resolver->channel->internet->consumer, not the DB
+  enrichment or the cron reminder path; and the 4x diagnosis (4 platform users) is inferred from
+  the code + seeded-per-user design — if the owner still sees duplicates AS A NON-ADMIN after this
+  build, that would be same-user duplicate seed ROWS, a different bug (say so and I'll chase it).
+
+## 2026-08-13 — "Why do webhook have more variables?" — answered, and parity now machine-checked
+Owner, comparing an email rule on the REMINDER trigger (8 old chips) against a webhook rule on a
+set trigger (full list): "is there hardcoded somewhere, it should have the same … I consider this
+bug or a not complete delivery."
+
+ANSWER, precisely:
+- NOT hardcoded per action. Email and webhook actions on the SAME trigger always show identical
+  chips — both render selectedTrigger.contextKeys and both resolve through the same
+  PCM_Automation_Mapping. There is no per-action variable list anywhere.
+- The difference in the screenshots is per-TRIGGER: the reminder trigger
+  (set_pending_in_client) WAS the one lagging behind — exactly the gap closed on 08-12 (declaration
+  widened + emit enriched). The screenshot shows chips (post-pull UI) with the OLD reminder list =
+  a build between the teammate's chips commit and my 08-12 zip. Current tree: all six triggers
+  carry the full vocabulary; legitimate per-trigger EXTRAS remain (daysSinceSent/clientEmail on the
+  reminder, commentUrl/author/body on comment_added) — those are real context only that event has.
+
+WHAT THIS ROUND ADDED — the guarantee, not just the fix. New §7 in
+automation_field_variables_test.php parses BOTH sides from source and asserts, per trigger:
+  (a) every advertised chip is actually emitted (no ghost chips — the user-visible lie), and
+  (b) every core emitted variable has a chip (nothing hidden).
+Declared keys come from each contextKeys block; emitted keys from the trigger's actual fire site
+(array literal + enrich_context()'s parsed return keys). So the NEXT lagging trigger fails the
+suite instead of shipping.
+
+Writing the scanner surfaced two of its own bugs (both fixed): a forward-only window missed the
+reminder's prebuilt `$context = …` shape and reported ALL its chips as ghosts; and anchoring on the
+first `fire_trigger` occurrence landed on the ENGINE DEFINITION (the id also appears in a rules
+query), yielding a keyless window. Now: call located by id-adjacency scan; prebuilt-$context shape
+followed to its assignment.
+
+VERIFIED
+- automation_field_variables_test 49 -> 68 (parity ×6 triggers ×2 directions + fire-site sanity).
+- NEGATIVE CONTROL 9/9 (3 new): a ghost chip in a declaration, the reminder emit un-enriched, and
+  a hidden core variable all turn the suite red; restored -> 68/68.
+- FULL SUITE 34/34 (incl. the live webhook.site test). Zip 3.77 MB / 753 files; archive check:
+  all six triggers ship the full vocabulary (setComment ×6, setInternalLink ×6).
+- No production code changed this round — the fix itself shipped on 08-12; this round delivered the
+  DIAGNOSIS (stale build between two commits) and the parity guard that keeps it fixed.
+
+## 2026-08-13 — PDF audit ("have you solved everything?"): one real gap found and closed
+Owner attached the full card PDF and asked for an honest completeness check. Audited every line
+against the TREE (not memory). Result: everything previously reported done IS done — with ONE
+genuinely unfinished item found, from the card's FYI block: "link to the review comment with the
+modal open and the comment visible".
+
+THE GAP: enrich_context emitted commentUrl as `share_url#asset-<id>` — and NOTHING consumes that
+hash. ClientReviewPage's deep-link effect reads `?pcm_asset=<id>` (scrolls the asset into view,
+run-once guard). Two conventions that never met: the "link to the comment" opened the page AT THE
+TOP and never surfaced the comment. Fixed by emitting the param the page actually handles
+(add_query_arg composes onto the tokened share URL). THEN the archive check failed — correctly:
+a SECOND dead-hash emitter existed (build_event_context's assetUrl), which my first, function-scoped
+assertion missed. Fixed identically; the test now bans '#asset-' FILE-WIDE with comments stripped,
+and asserts both ends of the contract (emitter param == consumer param) so they cannot drift apart.
+
+AUDIT LEDGER vs the PDF (all verified against source this session):
+  - 12 exact-name variables .......... DONE (enrich_context; live-tested at webhook.site 21/21)
+  - {{ deliveryname }} case slip ..... DONE (exact-first, case-insensitive lookup)
+  - setInternalLink opens the set .... DONE end-to-end (?pcm_approval_set → AppContext →
+                                       SetsBoard.openPreview — consumer verified, not just the URL)
+  - dialog size lock BUGFIX .......... DONE (pinned header/footer, scrollable body, clamped width)
+  - click-to-copy .................... DONE (chips + fallback helper; owner's build predated them)
+  - setComment ....................... DONE (declared on all six triggers)
+  - live webhook-site test ........... DONE (webhook.site, 21/21, HMAC verified on received bytes)
+  - "four of everything" ............. DONE (list_rules scoped to what fires for the caller)
+  - webhook-vs-email variable parity . DONE (per-trigger, machine-checked §7 both directions)
+  - FYI: comment link opens at the comment ... WAS NOT DONE — fixed this round (both emitters)
+VERIFIED: automation_field_variables_test 68 -> 72; negative control 2/2 on the new contract
+(both directions); FULL SUITE 34/34; zip 3.77 MB / 753 files, archive-checked with comments
+stripped. REMAINING HONEST LIMIT: "modal open and comment visible" = the page scrolls to the asset
+card with its comments inline — there is no separate comment modal on the client page; if the owner
+wants the comment INSPECTOR auto-opened (not just scrolled to), that is a frontend enhancement to
+ClientReviewPage's deep-link effect, ~15 lines, say the word.
