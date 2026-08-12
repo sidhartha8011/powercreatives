@@ -13743,3 +13743,39 @@ installs. Nothing under includes/ references tests/ at runtime (grepped). Added 
 EXCLUDE_DIRS with a dated comment. Rebuilt: 3.46 MB / 658 files (was 3.78 / 755). All feature
 checks re-verified in the slimmer archive; suite was 36/36 before packaging. The dated
 power-creatives-2026-08-13.zip carries the fix too.
+
+## 2026-08-13 — SEO-posting PDF audit: 3 open items built (dialog consolidation), 2 verified done
+Owner attached the Add/SEO-Strategies/SEO-posting card (19 pages, strikethrough = done): "fix the
+issues that haven't been cut out." Non-struck inventory: 5 items — 2 already done in prior rounds
+(New Strategy button on Strategies 🗸; source on the meta row 🗸, both pinned in the new test), 3 built
+this round, all in CreateStrategyDialog.tsx:
+
+1. "The keyword input should be in the top of the box": the per-source INPUTS (keyword primary/
+   supporting, RSS feeds, social links) moved ABOVE the Template/Model pickers inside Source.
+2. "Consolidate Publishing + Schedule + Duration into just Publishing": the Schedule & cadence and
+   Duration accordions are GONE; Publishing now holds Draft/Automatic + site/approvals, a
+   "Publishing schedule" sub-group (release-mode toggle + cadence or recurrence, unchanged state),
+   and "Stop publishing" (the old Duration fields relabelled Never / On a date / After N articles),
+   GATED to as-posts-arrive mode only — the card's own rationale, verbatim: in scheduled mode the
+   recurrence's Ends already IS duration and a second control "makes users wonder which one wins".
+3. Content -> three labelled groups VISUALS (featured/in-content toggles + media settings + image
+   prompt/model grid moved in) / LINKING (auto-interlink) / RESEARCH (depth checkboxes + model).
+   Keyword hierarchy stays above the groups (it is content STRUCTURE, not one of the three).
+PAYLOAD UNCHANGED by design: every control id exists exactly once (asserted), duration still emits
+{mode/endDate/maxArticles}, scheduled mode still folds duration into recurrence.ends.
+
+Two surgery slips caught by tsc mid-round (both fixed): a comment replacement left the OLD
+multi-line comment's tail orphaned (stray `*/}`), and the first payload assertion guessed
+`mode: durationMode` where the real emit is `{ mode: 'until', … }`.
+
+VERIFIED
+- NEW tests/standalone/strategy_dialog_layout_test.mjs — 43 checks: exactly 3 accordions, inputs
+  before pickers (both tabs), schedule+stop-publishing inside Publishing with the gate, group order
+  V<L<R with each control in its group, 12 control ids exactly once, payload emits pinned, and the
+  two previously-done PDF items pinned so they cannot regress.
+- NEGATIVE CONTROL 7/7: Duration accordion resurrected, gate dropped, labels reverted, group header
+  dropped, image grid floated out, schedule sub-header renamed, payload emit dropped — all red.
+- tsc 58 = baseline. FULL SUITE 37/37. Build clean. Zip 3.46 MB / 658 files; consolidated labels
+  verified in the bundle.
+- UNVERIFIED VISUALLY — no dev server; this is a layout-heavy change, worth one open of the Create
+  Strategy dialog across all three source tabs before calling it reviewed.

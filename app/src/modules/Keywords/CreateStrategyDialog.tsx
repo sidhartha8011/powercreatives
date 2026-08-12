@@ -767,85 +767,9 @@ export function CreateStrategyDialog({
               ]}
             />
 
-            {/* The TEMPLATE + MODEL that this source maps to — the real pickers, not
-                a read-only summary pointing at another accordion (which is what used
-                to be here). Placed directly under the source tabs so choosing a
-                source and choosing what writes it is ONE motion.
-                The list is ordered fit-first from `sourceTemplates`: templates written
-                for the current source lead, and the rest stay selectable but labelled,
-                so a deliberate mismatch is still possible while an accidental one is
-                obvious. The auto-map effect above already swaps the pick when the
-                source changes; this just makes that visible and overridable. */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="source-template">Template</Label>
-                <Select value={templateId} onValueChange={setTemplateId}>
-                  <SelectTrigger id="source-template" className="w-full">
-                    <SelectValue placeholder="Select Template..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {templatesLoading ? (
-                      <div className="flex items-center p-2 text-sm text-muted-foreground">
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Fetching...
-                      </div>
-                    ) : templates && (templates as any[]).length > 0 ? (
-                      [...(templates as any[])]
-                        .sort((a, b) => Number(templateFitsSource(b, sourceMode)) - Number(templateFitsSource(a, sourceMode)))
-                        .map((t: any) => (
-                          <SelectItem key={t.id} value={t.id.toString()}>
-                            {t.name}
-                            {!templateFitsSource(t, sourceMode) && (
-                              <span className="text-muted-foreground">
-                                {sourceMode === 'keywords' ? ' — for RSS/Social' : ' — for Keywords'}
-                              </span>
-                            )}
-                          </SelectItem>
-                        ))
-                    ) : (
-                      <div className="p-2 text-sm text-muted-foreground text-center">
-                        No Writer templates found.
-                      </div>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="source-model" title="Which model writes each article. Leave unset to use the default.">
-                  Model
-                </Label>
-                <Select value={modelId} onValueChange={setModelId}>
-                  <SelectTrigger id="source-model" className="w-full">
-                    <SelectValue placeholder={modelsLoading ? 'Loading models…' : 'Default (Gemini 2.5 Flash)'} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(genModels as any[]).length > 0 ? (
-                      (genModels as any[]).map((m) => (
-                        <SelectItem key={m.modelId} value={m.modelId}>
-                          {(m.customName || m.originalName || m.modelId)} ({m.provider})
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <div className="p-2 text-sm text-muted-foreground text-center">
-                        No text models registered — add one in Settings → Models.
-                      </div>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* Kept from the old summary line: when NOTHING fits this source the
-                Create button is blocked (it requires templateId), so say why. */}
-            {!templatesLoading && sourceTemplates.length === 0 && (
-              <div className="text-xs text-destructive">
-                No writer template is written for this source
-                {sourceMode === 'keywords'
-                  ? ' — keyword templates must not rely on the {{ post_* }} variables.'
-                  : ' — add one that uses {{ post_title }} / {{ post_content }} / {{ post_link }}.'}
-              </div>
-            )}
-
+            {/* The INPUTS come first (owner card: "The keyword input should be in
+                the top of the box") — what feeds the strategy is the primary decision;
+                the template/model that writes it follows below. */}
             {sourceMode === 'keywords' ? (
               <div className="space-y-3">
                 {(selectedKeywords?.length ?? 0) > 0 && (
@@ -1074,6 +998,86 @@ export function CreateStrategyDialog({
                 )}
               </div>
             )}
+
+            {/* The TEMPLATE + MODEL that this source maps to — the real pickers, not
+                a read-only summary pointing at another accordion (which is what used
+                to be here). Sits BELOW the source inputs (the owner wants the keyword
+                input at the top of the box); picking what writes the source follows it.
+                The list is ordered fit-first from `sourceTemplates`: templates written
+                for the current source lead, and the rest stay selectable but labelled,
+                so a deliberate mismatch is still possible while an accidental one is
+                obvious. The auto-map effect above already swaps the pick when the
+                source changes; this just makes that visible and overridable. */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="source-template">Template</Label>
+                <Select value={templateId} onValueChange={setTemplateId}>
+                  <SelectTrigger id="source-template" className="w-full">
+                    <SelectValue placeholder="Select Template..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templatesLoading ? (
+                      <div className="flex items-center p-2 text-sm text-muted-foreground">
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Fetching...
+                      </div>
+                    ) : templates && (templates as any[]).length > 0 ? (
+                      [...(templates as any[])]
+                        .sort((a, b) => Number(templateFitsSource(b, sourceMode)) - Number(templateFitsSource(a, sourceMode)))
+                        .map((t: any) => (
+                          <SelectItem key={t.id} value={t.id.toString()}>
+                            {t.name}
+                            {!templateFitsSource(t, sourceMode) && (
+                              <span className="text-muted-foreground">
+                                {sourceMode === 'keywords' ? ' — for RSS/Social' : ' — for Keywords'}
+                              </span>
+                            )}
+                          </SelectItem>
+                        ))
+                    ) : (
+                      <div className="p-2 text-sm text-muted-foreground text-center">
+                        No Writer templates found.
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="source-model" title="Which model writes each article. Leave unset to use the default.">
+                  Model
+                </Label>
+                <Select value={modelId} onValueChange={setModelId}>
+                  <SelectTrigger id="source-model" className="w-full">
+                    <SelectValue placeholder={modelsLoading ? 'Loading models…' : 'Default (Gemini 2.5 Flash)'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(genModels as any[]).length > 0 ? (
+                      (genModels as any[]).map((m) => (
+                        <SelectItem key={m.modelId} value={m.modelId}>
+                          {(m.customName || m.originalName || m.modelId)} ({m.provider})
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <div className="p-2 text-sm text-muted-foreground text-center">
+                        No text models registered — add one in Settings → Models.
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Kept from the old summary line: when NOTHING fits this source the
+                Create button is blocked (it requires templateId), so say why. */}
+            {!templatesLoading && sourceTemplates.length === 0 && (
+              <div className="text-xs text-destructive">
+                No writer template is written for this source
+                {sourceMode === 'keywords'
+                  ? ' — keyword templates must not rely on the {{ post_* }} variables.'
+                  : ' — add one that uses {{ post_title }} / {{ post_content }} / {{ post_link }}.'}
+              </div>
+            )}
+
           </AccordionSection>
 
           {/* ② PUBLISHING — where finished articles go */}
@@ -1140,12 +1144,15 @@ export function CreateStrategyDialog({
                     : 'Connect a site in the Sites module to publish automatically.'}
                 </p>
               )}
-            </div>
-          </AccordionSection>
 
-          {/* ③ SCHEDULE & CADENCE — how often finished articles publish */}
-          <AccordionSection title="Schedule & cadence" defaultOpen>
-            <div className="space-y-3">
+              {/* PUBLISHING SCHEDULE — merged in from the old "Schedule & cadence"
+                  accordion (owner card: "We consolidate Publishing + Schedule +
+                  Duration into just Publishing"). Same state, same payload — one
+                  home for every decision about WHEN content goes live. */}
+              <div className="flex items-center gap-2 pt-1">
+                <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Publishing schedule</Label>
+                <div className="flex-1 border-t border-border" />
+              </div>
               {sourceMode === 'keywords' ? (
                 <>
                   <div className="space-y-1.5">
@@ -1274,51 +1281,58 @@ export function CreateStrategyDialog({
                   )}
                 </>
               )}
+              {/* STOP PUBLISHING — the old Duration accordion, folded in. Shown ONLY
+                  for "as posts arrive" mode: in scheduled mode the recurrence's own
+                  Ends IS the duration, and a second Ongoing/Until control elsewhere
+                  "makes users wonder which one wins" (owner card, verbatim). */}
+              {sourceMode !== 'keywords' && !socialScheduled && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 pt-1">
+                    <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Stop publishing</Label>
+                    <div className="flex-1 border-t border-border" />
+                  </div>
+                <Segmented
+                  value={durationMode}
+                  onChange={setDurationMode}
+                  options={[
+                    { value: 'ongoing', label: 'Never' },
+                    { value: 'until', label: 'On a date' },
+                    { value: 'limit', label: 'After N articles' },
+                  ]}
+                />
+                {durationMode === 'until' && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="duration-end">End date</Label>
+                    <Input
+                      id="duration-end"
+                      type="date"
+                      value={durationEndDate}
+                      onChange={(e) => setDurationEndDate(e.target.value)}
+                      className="w-full bg-card"
+                    />
+                    {missingEndDate && (
+                      <p className="text-[0.75rem] text-destructive">Pick an end date to stop publishing on it.</p>
+                    )}
+                  </div>
+                )}
+                {durationMode === 'limit' && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="duration-max">Maximum articles</Label>
+                    <Input
+                      id="duration-max"
+                      type="number"
+                      min={1}
+                      value={durationMaxArticles}
+                      onChange={(e) => setDurationMaxArticles(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                      className="w-24 h-8 text-xs bg-card"
+                    />
+                  </div>
+                )}
+                </div>
+              )}
             </div>
           </AccordionSection>
 
-          {/* ④ DURATION — how long it keeps running */}
-          <AccordionSection title="Duration">
-            <div className="space-y-3">
-              <Segmented
-                value={durationMode}
-                onChange={setDurationMode}
-                options={[
-                  { value: 'ongoing', label: 'Ongoing' },
-                  { value: 'until', label: 'Until date' },
-                  { value: 'limit', label: 'Article limit' },
-                ]}
-              />
-              {durationMode === 'until' && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="duration-end">End date</Label>
-                  <Input
-                    id="duration-end"
-                    type="date"
-                    value={durationEndDate}
-                    onChange={(e) => setDurationEndDate(e.target.value)}
-                    className="w-full bg-card"
-                  />
-                  {missingEndDate && (
-                    <p className="text-[0.75rem] text-destructive">Pick an end date to use “Until date”.</p>
-                  )}
-                </div>
-              )}
-              {durationMode === 'limit' && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="duration-max">Maximum articles</Label>
-                  <Input
-                    id="duration-max"
-                    type="number"
-                    min={1}
-                    value={durationMaxArticles}
-                    onChange={(e) => setDurationMaxArticles(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                    className="w-24 h-8 text-xs bg-card"
-                  />
-                </div>
-              )}
-            </div>
-          </AccordionSection>
 
           {/* ⑤ CONTENT — how each article is written (incl. research) */}
           {/* defaultOpen: the REQUIRED content prompt lives in here now, and the
@@ -1326,53 +1340,6 @@ export function CreateStrategyDialog({
               would hide the only thing blocking submission. */}
           <AccordionSection title="Content" defaultOpen>
             <div className="space-y-4">
-              {/* IMAGE prompt + IMAGE model. The TEXT pair (Template + Model) now
-                  lives in SOURCE, where choosing a source and choosing what writes it
-                  is one motion — keeping a second copy here would be the same state in
-                  two accordions, free to disagree. */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="image-prompt" title="Template that writes the featured-image prompt. Leave as Default to use the built-in wording.">
-                    Image prompt
-                  </Label>
-                  <Select value={imageTemplateId || 'default'} onValueChange={(v) => setImageTemplateId(v === 'default' ? '' : v)}>
-                    <SelectTrigger id="image-prompt" className="w-full">
-                      <SelectValue placeholder="Default image prompt" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="default">Default image prompt</SelectItem>
-                      {((imageTemplates as any[]) ?? []).map((t: any) => (
-                        <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="image-model" title="Which model generates the images. Leave unset to use the default.">
-                    Image AI model
-                  </Label>
-                  <Select value={imageModelId} onValueChange={setImageModelId}>
-                    <SelectTrigger id="image-model" className="w-full">
-                      <SelectValue placeholder={imgModelsLoading ? 'Loading models…' : 'Default (DALL·E 3)'} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(imgModels as any[]).length > 0 ? (
-                        (imgModels as any[]).map((m) => (
-                          <SelectItem key={m.modelId} value={m.modelId}>
-                            {(m.customName || m.originalName || m.modelId)} ({m.provider})
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <div className="p-2 text-sm text-muted-foreground text-center">
-                          No image models registered — add one in Settings → Models.
-                        </div>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
               {sourceMode === 'keywords' ? (
               <>
               <div className="grid grid-cols-2 gap-3">
@@ -1448,8 +1415,16 @@ export function CreateStrategyDialog({
                 </p>
               )}
 
+              {/* VISUALS / LINKING / RESEARCH — the owner card: "image settings,
+                  linking, research behavior, and model choices are visually mixed
+                  together … consolidate into three groups inside one Content
+                  section". Everything kept, nothing renamed in the payload — the
+                  toggles gate their settings exactly as before. */}
+              <div className="flex items-center gap-2 pt-1">
+                <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Visuals</Label>
+                <div className="flex-1 border-t border-border" />
+              </div>
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">Generation options</Label>
                 <div className="space-y-2">
                   <div
                     className="flex items-center space-x-2"
@@ -1519,6 +1494,60 @@ export function CreateStrategyDialog({
                     </div>
                   )}
 
+              {/* Image prompt + image AI model — part of VISUALS: they only matter
+                  when images are being made. (The TEXT pair lives in SOURCE.) */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="image-prompt" title="Template that writes the featured-image prompt. Leave as Default to use the built-in wording.">
+                    Image prompt
+                  </Label>
+                  <Select value={imageTemplateId || 'default'} onValueChange={(v) => setImageTemplateId(v === 'default' ? '' : v)}>
+                    <SelectTrigger id="image-prompt" className="w-full">
+                      <SelectValue placeholder="Default image prompt" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">Default image prompt</SelectItem>
+                      {((imageTemplates as any[]) ?? []).map((t: any) => (
+                        <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="image-model" title="Which model generates the images. Leave unset to use the default.">
+                    Image AI model
+                  </Label>
+                  <Select value={imageModelId} onValueChange={setImageModelId}>
+                    <SelectTrigger id="image-model" className="w-full">
+                      <SelectValue placeholder={imgModelsLoading ? 'Loading models…' : 'Default (DALL·E 3)'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(imgModels as any[]).length > 0 ? (
+                        (imgModels as any[]).map((m) => (
+                          <SelectItem key={m.modelId} value={m.modelId}>
+                            {(m.customName || m.originalName || m.modelId)} ({m.provider})
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <div className="p-2 text-sm text-muted-foreground text-center">
+                          No image models registered — add one in Settings → Models.
+                        </div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Linking</Label>
+                <div className="flex-1 border-t border-border" />
+              </div>
+              <div className="space-y-2">
                   <div
                     className="flex items-center space-x-2"
                     title="Automatically inject internal links between articles when content is generated."
@@ -1561,11 +1590,13 @@ export function CreateStrategyDialog({
                       </div>
                     </div>
                   )}
-                </div>
               </div>
 
+              <div className="flex items-center gap-2 pt-1">
+                <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Research</Label>
+                <div className="flex-1 border-t border-border" />
+              </div>
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">Research depth</Label>
             <div className="space-y-2.5">
               <div
                 className="flex items-start space-x-2"
