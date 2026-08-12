@@ -1208,6 +1208,7 @@ class PCM_DB
             $wpdb->prepare(
                 "SELECT si.*, a.publishedUrl AS articlePublishedUrl, a.siteId AS articleSiteId,
                         a.publishedPostId AS articlePublishedPostId, a.status AS articleStatus,
+                        a.publishedStatus AS articlePublishedStatus,
                         a.publishedAt AS articlePublishedAt
                  FROM {$items_table} si
                  LEFT JOIN {$articles_table} a ON a.id = si.articleId

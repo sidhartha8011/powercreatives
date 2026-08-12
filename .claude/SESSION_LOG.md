@@ -13061,3 +13061,214 @@ admin grant fails it, and re-imposing `userId` in the UPDATE WHERE fails it — 
 phpunit 643 (was 636; 1 error + 27 failures = unchanged pre-existing baseline), Approvals/Automations
 suites 23/23, standalone 95/95, orphan gate clean, php -l clean. No frontend change.
 NOT LIVE-VERIFIED: needs a real second admin account; proof is unit + mutation tests. Not committed.
+
+## 2026-08-10 — Pulled 87 commits (Approvals redesign), then shipped bulk "Generate (N)"
+PULL FIRST (owner ask). Checked before touching anything: 0 local commits ahead, 87 behind,
+and `git diff --name-only HEAD...origin` proved the incoming set does NOT touch my one dirty file
+(Strategies/index.tsx) — so a --ff-only pull was safe with work in progress. Confirmed this week's
+fixes (model_scope / admin_user_ids / language_law / dropdown canon) were already upstream before
+pulling, so nothing of mine could be lost. Fast-forwarded to b182789; my 3 in-progress files intact.
+POST-PULL BASELINE MOVED: tsc 59 -> 58 (teammate work fixed one). 0 of the 58 are in my files.
+
+FEATURE — Generate the SELECTION. NO backend work needed: POST /strategies/{id}/generate has always
+accepted an optional `itemId` (the per-item Retry uses it). The risk was never the call, it was
+WHICH items get called, because the server explicitly allows a targeted call at ANY status
+("any current status is allowed"). A naive loop over the ticked ids would therefore:
+  - overwrite finished (possibly published) articles with no warning, and
+  - re-issue items a worker had already claimed, double-generating them.
+So the decision logic went into app/src/modules/Strategies/bulkGenerate.ts — pure, no React, no
+imports — and the callback only does I/O:
+  - 'generating' items skipped (reported as "N already generating", not silently dropped);
+  - finished items get ONE confirm, and declining still runs the rest of the selection;
+  - CONSOLIDATED strategies collapse to a SINGLE call — every keyword shares one article, so a
+    per-item loop would have been N expensive LLM runs for one result;
+  - the run is SEQUENTIAL, deliberately: concurrent generates are exactly what took the optimizer
+    down with 502s on 08-07.
+Button is the primary action in the item bulk bar, labelled "Generate (N)", disabled while any
+generate run owns the strategy.
+
+VERIFIED
+- NEW tests/standalone/bulk_generate_test.mjs — 49 checks. It IMPORTS AND EXECUTES the real planner
+  (node --experimental-strip-types), rather than transcribing it the way the sibling frontend tests
+  do; a transcription drifts from the shipped code, this cannot. Covers selection fidelity, in-flight
+  skip, all three "done" spellings, confirm/decline, consolidated collapse, plus static checks that
+  the button is wired, awaited, targeted, and that route+PHP really carry itemId.
+- NEGATIVE CONTROL 10/10: re-issuing in-flight items, dropping the confirm, ignoring a decline,
+  missing a 'done' spelling, fanning consolidated out to N calls, generating the whole strategy,
+  going concurrent, dropping itemId, removing the button, making it double-fireable — every one
+  turns the suite red; restored -> 49/49.
+  (A first run failed 7 checks for the WRONG reason: I had moved the handler below runItemBulk, so
+   the test's end-anchor sat ABOVE its start-anchor and sliced an empty string. Fixed by anchoring
+   on the handler's own deps array + a guard check that the slice is non-empty.)
+- tsc 58, 0 in my files. FULL STANDALONE SUITE 27/27 (24 + 2 teammate + 1 new). Build clean.
+  Zip 3.73 MB / 746 files; button, planner and confirm all verified in the bundle.
+- NOT RUN, and it is not covered by the standalone suite: tests/unit/ (60 PHPUnit files, incl. the
+  teammate's new ApprovalsWritePermissionTest). vendor/ carries only the composer autoloader and
+  composer is not on PATH; the PATH `phpunit` is an ancient XAMPP build that dies on each().
+  My change is frontend-only so PHPUnit would not exercise it, but the 87 pulled commits ARE
+  backend-heavy and I could not verify them here.
+- UNVERIFIED VISUALLY — no dev server.
+
+## 2026-08-10 — WordPress post status: full vocabulary, per-item + bulk (DB 1.45.0 -> 1.46.0)
+Owner: bulk dropdown to change WordPress status using ALL statuses a post/page can have, plus an
+individual dropdown per post.
+
+REALITY CHECK: the per-item dropdown ALREADY existed — it offered only publish/draft/trash. So this
+was "widen + add bulk", not "add both". Said so rather than re-announcing an existing control.
+
+THE REAL DEFECT behind it: that control derived its VALUE from `articles.status`
+(`articleStatus === 'published' ? 'publish' : 'draft'`). `articles.status` is the LOCAL WRITER
+workflow vocabulary — draft|review|ready|published (writer/controller.php:78) — NOT the remote WP
+status. So every non-published state collapsed to "Draft" and Pending/Private would have looked like
+they never saved (this week's recurring snap-back class). Overloading that column was not an option:
+it would corrupt Writer's states.
+=> NEW COLUMN `articles.publishedStatus varchar(20) NULL` (v1.46.0, additive+nullable so dbDelta
+   alone migrates it; no custom migrate_ needed). Two status columns now, documented at the table:
+   `status` = local Writer workflow, `publishedStatus` = live WordPress status.
+
+STATUSES: publish | future | draft | pending | private | trash. auto-draft/inherit excluded — they
+are internal WordPress states, never user-selectable. ONE list, twice: PCM_Strategy_Service::
+POST_STATUSES (controller now validates against it instead of its own hardcoded triple) and
+app/src/modules/Strategies/postStatus.ts; the test asserts the two against EACH OTHER, because
+drift means the UI offers something the server 400s.
+
+'future' IS NOT A PLAIN STATUS WRITE: WordPress downgrades future->publish when the date has passed,
+so status alone would publish immediately. The hub now sends the item's scheduledDate as `date`, and
+REFUSES with an actionable message when there is no date or it is in the past.
+
+No new endpoint — both surfaces loop the existing POST /strategies/{id}/items/{itemId}/post-status.
+Bulk is SEQUENTIAL (concurrent fan-out to a client's WordPress is the 502 lesson), filters items with
+no live post (the hub throws for those, so a mixed selection would otherwise report false failures),
+confirms before Trash, and surfaces the SERVER's reason rather than a bare count. sync_items_from_wp
+now records the remote status too, so a status changed directly in wp-admin reconciles.
+
+VERIFIED
+- NEW tests/standalone/post_status_test.mjs — 57 checks, IMPORTING the real postStatus.ts
+  (--experimental-strip-types) rather than transcribing it: vocabulary, destructive flagging,
+  UI-vs-hub parity, bulk targeting/skipping, both surfaces wired, persistence end to end
+  (schema -> join -> serializer -> write -> sync), and the future-date guards.
+- NEGATIVE CONTROL 14/14: dropping a status, adding an internal one, unflagging trash, un-filtering
+  unpublished items, reverting either whitelist, dropping persistence, overloading the Writer
+  vocabulary, removing the column/join, reverting the per-item value, going concurrent, and both
+  future-date guards — all turn it red; restored -> 57/57.
+  ONE REAL TEST WEAKNESS FOUND BY IT: the future-date checks asserted the ERROR MESSAGE only, so
+  disabling the guard (`if (false)`) left the message as dead code and PASSED. Both now bind the
+  message to its live condition in one regex.
+- php -l clean x4. tsc 58 (post-pull baseline), 0 in my files. FULL SUITE 28/28. Build clean.
+  Zip 3.74 MB / 747 files; all six labels + schema + version + guards verified in the archive.
+- MIGRATION NOTE: maybe_upgrade() runs on page load and dbDelta ADDs the column; existing rows get
+  NULL publishedStatus, and the UI falls back to the old articleStatus derivation until the first
+  status change or a "sync status" run — so nothing looks broken pre-backfill.
+- UNVERIFIED: no dev server (visual), and no live WordPress to prove the REST writes land —
+  the status/date payloads are asserted at the call site, not against a real site.
+
+## 2026-08-12 — Zip build 14:46 (via scripts/build_zip.py)
+`~/Desktop/power-creatives.zip` — 3.74 MB, 747 files (+1 root dir entry). No code change.
+Bundle already current: verified by CONTENT as well as mtime (the negative-control scripts rewrite
+files on restore, so a timestamp alone is not proof) — both of the last two features' fingerprints
+were already in the built index-writer.js, so no rebuild was needed.
+Pre-flight: suite 28/28, php -l clean on all five changed PHP files.
+
+VERIFIED INSIDE THE ARCHIVE
+- Shape: single root `powerplatform/` (the 08-04 folder-name trap — WordPress keys plugins by
+  folder, so a `powercreatives/` root installs as a SECOND inactive plugin), dist js+css, 0 app/src,
+  0 vendor, no .git/.claude/scripts.
+- Post status: all six labels, publishedStatus column, DB_VERSION 1.46.0, shared POST_STATUSES on
+  hub + controller, future-date guard. Bulk generate: button + planner.
+- Earlier work still aboard: model_scope, admin_user_ids, language_law, dropdown canon, and the
+  pulled Approvals module.
+REMINDER CARRIED FORWARD: this build contains DB 1.46.0 (adds articles.publishedStatus via dbDelta
+on the next page load) and 87 pulled backend commits whose PHPUnit suite (tests/unit/, 60 files)
+could NOT be run here — vendor/ holds only the composer autoloader and composer is not on PATH.
+
+## 2026-08-12 — Per-post status dropdown moved ONTO the item row (owner was right, I was wrong)
+Owner: "you didn't add this feature — individual status dropdown for each post in strategy module."
+
+I HAD CLAIMED the control already existed and was merely widened. That claim was misleading. The
+control did exist in the file, but inside `{openOverridesItemId === item.id && (…)}` — the per-item
+overrides SUB-PANEL, which is collapsed behind its own toggle. Reaching it meant: expand the
+strategy, then open that item's overrides panel. On the post row itself there was no status control
+at all, so from the owner's seat the feature genuinely was not there.
+
+FIX: moved it onto the always-visible item row, beside View/Edit/Preview/See live, gated on
+`livePostOf(item)` exactly like those three (no live post = nothing to set). Removed the buried
+copy rather than leaving two — one control, one place. The StatusBadge next to it stays: that is the
+ITEM's generation state (Pending/Written/Published), a different thing from the post's WordPress
+status, so both are shown.
+
+WHY MY TEST DID NOT CATCH THIS — the important part. post_status_test.mjs asserted the dropdown
+EXISTED ("renders the shared list") and never asserted WHERE. It passed at 57/57 while the control
+was unreachable. Existence is not placement. Section 5 now splits the file at the overrides gate and
+asserts: on the row, NOT in the sub-panel, exactly ONE copy, gated on a live post, and its own
+trigger stops propagation.
+
+VERIFIED
+- post_status_test.mjs 57 -> 62.
+- NEGATIVE CONTROL 17/17 (3 new placement cases), including the reported bug itself: hiding the row
+  dropdown so only a buried one would remain now turns the suite red. Restored -> 62/62.
+- THREE MORE OF MY OWN TEST BUGS surfaced by that control, all the same "somewhere in the region"
+  mistake I have now hit repeatedly:
+    (a) the live-post gate used a FORWARD regex that anchored on the first `livePostOf(item) && (`
+        in the region — the Edit/Preview block far above — and failed on distance, not on the
+        condition. Now scans BACKWARDS from the dropdown.
+    (b) the stopPropagation check matched ANY one in the row (the due-date input has one), so
+        stripping it from the status trigger still passed. Now scoped to the trigger's own window.
+    (c) a negative-control anchor went stale when the duplicate was deleted and reported SKIP.
+  Also: my first removal script asserted `removed.count('<Select') == 1`, which is wrong because
+  `<Select` prefixes SelectTrigger/Value/Content/Item — the guard fired and stopped a bad slice.
+- tsc 58 (post-pull baseline), 0 in Strategies. FULL SUITE 28/28. Build clean. Zip 3.74 MB /
+  747 files; placement asserted against SOURCE by region split, labels against the bundle.
+- UNVERIFIED VISUALLY — no dev server. This is a placement change, which is exactly the class a
+  token-level check is weakest at; worth one look at a row with a live post.
+
+## 2026-08-12 — SEO Author dropdown now works on CONNECTED sites (it was local-only)
+Owner, with a screenshot of a Swedish client site whose Author column was blank: "There should be a
+drop down for selecting the author from the WordPress authors' existing users, and there should also
+be a plus button to create the new author."
+
+BOTH ALREADY EXISTED — for LOCAL rows only. The cell bailed to read-only text on `!isLocal`, and
+that gate was RIGHT: `options.authors` is get_users() on the HUB, and hub user ids mean nothing on a
+client's install. Writing id 5 from here would have handed the client's post to whoever is id 5 over
+there. The old comment said as much ("remote rows stay read-only until the connector can serve that
+site's own users"). So the fix was never "delete the gate" — it was "feed the control the RIGHT list".
+
+BUILT (no connector change — core WP REST does all of it, same lesson as post-status):
+  - PCM_SEO_Service::remote_authors($site) — GET /wp/v2/users?who=authors (core's own "users who can
+    write posts" filter, mirroring the local capability=edit_posts query).
+  - PCM_SEO_Service::remote_create_author($site,$name,$email) — POST /wp/v2/users. Same hard rules as
+    the hub-side create_author, aimed at someone else's install: role HARDCODED to 'author', password
+    GENERATED, neither readable from input. Username collisions retry with a suffix (the remote owns
+    its own namespace, and no list_users cap is needed to discover a clash this way).
+  - Routes GET+POST /seo/sites/{id}/authors, both manage_options, both ownership-scoped via
+    PCM_DB::get_site($id, $user->id).
+  - remote_save_cell: `author` is now a NATIVE field ($payload['author']) and joins
+    title/slug/status in skipping the meta-verification round trip — it would otherwise have 400'd
+    as an unknown meta key.
+  - Frontend: authorOptions resolves to hub users for local rows and the SITE's users for remote;
+    extraAuthors resets on siteId change (a session-created author's id means someone else on the
+    next site); the create dialog now NAMES the site it will write to; the submit button watches
+    BOTH mutations (it only watched the local one, so a remote create was double-submittable with
+    no spinner).
+
+VERIFIED
+- NEW tests/standalone/seo_author_dropdown_test.mjs — 33 checks, most of them guarding the id-space
+  hazard against someone who sees the `!isLocal` gate and simply deletes it.
+- NEGATIVE CONTROL 17/17: reverting to local-only, feeding hub users to a remote row, discarding the
+  fetched list, leaking session authors across a site switch, creating on the hub instead of the
+  site, un-gating the routes, dropping ownership scoping, caller-controlled role, input password,
+  fatal username clash, author-as-meta, wrong tRPC url — all turn it red. Restored -> 33/33.
+  ONE CASE WAS REWRITTEN, HONESTLY: the "list never fetched" mutation first used
+  `({data: []} as any) || useQuery(...)` — a RUNTIME short-circuit that leaves both the call and its
+  consumer textually intact, which no static test can see. That was a contrived mutation, not a test
+  gap; replaced with the realistic regression (result discarded), which IS caught. A new assertion
+  now also requires the query's data to be consumed, not merely called.
+- Two more of my own test bugs found by the control: a fixed-character window between a PHP
+  condition and its assignment failed on COMMENT LENGTH rather than on the code (now slices the
+  function), and a single-match url check passed while one of the two routes had been repointed at
+  the hub (now requires exactly 2).
+- php -l clean x2. tsc 58 (post-pull baseline), 0 in SEO/index. FULL SUITE 29/29. Build clean.
+  Zip 3.74 MB / 748 files; both routes + gating + role/password rules verified INSIDE the archive.
+- UNVERIFIED: no dev server (visual), and NO LIVE CLIENT SITE here — the remote list/create calls are
+  asserted at the call site, never executed. Creating a user on a client install is the highest-risk
+  thing in this change; try it on one site before using it widely. It also needs the connection's
+  application-password user to hold list_users/create_users, or the site returns 403 (surfaced verbatim).

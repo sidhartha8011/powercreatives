@@ -35,6 +35,8 @@ import { ParentSettingsModal } from './ParentSettingsModal';
 // THE create dialog, reused in edit mode — the row's settings button must expose the
 // SAME fields you set at creation, and reusing it is the only way that stays true.
 import { CreateStrategyDialog, type StrategyPayload } from '../Keywords/CreateStrategyDialog';
+import { planBulkGenerate, isFinishedItemStatus } from './bulkGenerate';
+import { POST_STATUSES, planBulkPostStatus, isDestructiveStatus } from './postStatus';
 import { RecurrenceEditor, recurrenceFromConfig, recurrenceToConfig, type ScheduleRecurrence } from './RecurrenceEditor';
 // THE SEO page editor, reused verbatim (mode="page"): it self-fetches the served
 // content and saves through the existing dynamic-rule paths, so editing a strategy
@@ -58,6 +60,10 @@ interface StrategyItem {
   articlePublishedPostId?: number | null;
   /** The linked article's local status ('published' | 'draft' | …). */
   articleStatus?: string | null;
+  /** The LIVE WordPress status (publish|future|draft|pending|private), or null
+   *  when the article is not on a site. Distinct from articleStatus, which is
+   *  the local Writer workflow state. */
+  articlePublishedStatus?: string | null;
   /** When the linked article actually went live (backend LEFT JOIN, articles.publishedAt). */
   articlePublishedAt?: string | null;
   /** The connected site the article was published to (backend LEFT JOIN) — with
@@ -273,7 +279,7 @@ export function isPublishableItem(item: {
   articlePublishedUrl?: string;
   articlePublishedPostId?: number | null;
 }): boolean {
-  const finished = item.status === 'written' || item.status === 'completed' || item.status === 'complete';
+  const finished = isFinishedItemStatus(item.status);
   const live = !!item.articlePublishedPostId || !!item.articlePublishedUrl;
   return finished && !!item.articleId && !live;
 }
@@ -798,6 +804,124 @@ export function StrategiesModule() {
     if (failed > 0) toast.error(`${verb} ${ok}, ${failed} failed`);
     else toast.success(`${verb} ${ok} item${ok === 1 ? '' : 's'}`);
   }, [clearItemSelection, refetch]);
+
+  // Generate ONLY the ticked items (bulk bar). No new endpoint: the backend has
+  // always accepted a targeted generate — POST /strategies/{id}/generate with
+  // `itemId` — which is the exact call the per-item Retry makes. This is that
+  // call, looped over the selection.
+  //
+  // SEQUENTIAL on purpose. Firing these concurrently is what took the SEO
+  // optimizer down with 502s (2026-08-07): each generate is a long synchronous
+  // PHP request holding an LLM call, and N at once exhausts the pool. One at a
+  // time also lets the server's atomic claim do its job.
+  //
+  // Two hazards the naive "loop over selected ids" version gets wrong:
+  //  1. 'generating' items are already claimed by another worker — re-issuing
+  //     would double-generate, so they are skipped.
+  //  2. A finished item is REGENERATED, not skipped: the server explicitly
+  //     allows any status for a targeted call ("any current status is
+  //     allowed"), so it would silently overwrite a written — possibly
+  //     published — article. That gets one confirm, and declining keeps the
+  //     rest of the selection running instead of cancelling everything.
+  const handleGenerateSelected = useCallback(async (strategy: Strategy, ids: number[]) => {
+    const items = strategy.items ?? [];
+    const consolidated = parseStrategyConfig(strategy.config)?.structure === 'consolidated';
+
+    // Probe with regeneration ON to learn what a full run would destroy, ask
+    // once, then re-plan with the real answer. The rules live in
+    // planBulkGenerate (pure, unit-tested) — this callback only does I/O.
+    const probe = planBulkGenerate(items, ids, consolidated, true);
+    let regenerateFinished = true;
+    if (probe.finished.length > 0) {
+      const n = probe.finished.length;
+      const rest = probe.targets.length - n;
+      regenerateFinished = window.confirm(
+        `${n} of the selected item${n === 1 ? ' already has an article' : 's already have articles'}. `
+        + `Regenerate ${n === 1 ? 'it' : 'them'}? This overwrites the existing draft — anything already published stays live until you publish again.\n\n`
+        + `Cancel to generate only the ${rest} remaining item${rest === 1 ? '' : 's'}.`,
+      );
+    }
+
+    const plan = planBulkGenerate(items, ids, consolidated, regenerateFinished);
+    if (plan.calls.length === 0) {
+      toast.info(plan.inFlight > 0 ? 'Those items are already generating.' : 'Nothing to generate in this selection.');
+      return;
+    }
+
+    setBulkStrategyId(strategy.id);
+    bulkModeRef.current = true;
+    let ok = 0;
+    let fail = 0;
+    try {
+      for (const itemId of plan.calls) {
+        try {
+          await generateMutation.mutateAsync({ id: strategy.id, itemId });
+          ok++;
+        } catch {
+          fail++; // marked 'error' server-side; keep going so one bad item can't abort the batch
+        }
+      }
+    } finally {
+      bulkModeRef.current = false;
+      setBulkStrategyId(null);
+      clearItemSelection();
+      refetch();
+      // Consolidated: one call finished every targeted item, so report items, not calls.
+      const made = consolidated && ok > 0 ? plan.targets.length : ok;
+      const skipped = plan.inFlight > 0 ? ` (${plan.inFlight} already generating)` : '';
+      if (fail > 0) toast.error(`Generated ${made}, ${fail} failed — retry the failed item(s).${skipped}`);
+      else toast.success(`Generated ${made} article${made === 1 ? '' : 's'}${skipped}`);
+    }
+  }, [generateMutation, refetch, clearItemSelection]);
+
+  // Bulk WordPress status change for the ticked items. Same endpoint the row's
+  // own dropdown uses, looped — no new route.
+  //
+  // SEQUENTIAL, like every other bulk action here: each call is a synchronous
+  // round trip to the client's WordPress, and firing N at once is what took the
+  // optimizer down with 502s.
+  //
+  // Items with no live post are FILTERED, not sent: the hub throws "not
+  // published to a site yet" for those, so a mixed selection would otherwise
+  // report failures for items that were never publishable. They are reported
+  // as skipped instead.
+  const handleBulkPostStatus = useCallback(async (strategy: Strategy, ids: number[], status: string) => {
+    const plan = planBulkPostStatus(strategy.items ?? [], ids);
+    if (plan.targets.length === 0) {
+      toast.info('None of the selected items are published to a site yet.');
+      return;
+    }
+    if (isDestructiveStatus(status)
+      && !window.confirm(`Move ${plan.targets.length} post${plan.targets.length === 1 ? '' : 's'} to the site’s Trash? They can be restored there.`)) {
+      return;
+    }
+
+    setItemBulkBusy(true);
+    let ok = 0;
+    let failed = 0;
+    let lastError = '';
+    for (const target of plan.targets) {
+      try {
+        await postStatusMutation.mutateAsync({ id: strategy.id, itemId: target.id, status });
+        ok++;
+      } catch (e: any) {
+        failed++;
+        lastError = e?.message ?? lastError;
+      }
+    }
+    setItemBulkBusy(false);
+    clearItemSelection();
+    refetch();
+
+    const skipped = plan.skipped > 0 ? ` (${plan.skipped} not on a site)` : '';
+    if (failed > 0) {
+      // Surface the server's reason — "Set a schedule date before choosing
+      // Scheduled" is actionable, "3 failed" is not.
+      toast.error(`Updated ${ok}, ${failed} failed${skipped}${lastError ? ` — ${lastError}` : ''}`);
+    } else {
+      toast.success(`Updated ${ok} post${ok === 1 ? '' : 's'}${skipped}`);
+    }
+  }, [postStatusMutation, refetch, clearItemSelection]);
 
   // "Select as Parent" (crown): the strategy's parent is identified by KEYWORD
   // (config.parentKeyword) and hierarchyMode must be parent_and_children for the
@@ -1670,6 +1794,46 @@ export function StrategiesModule() {
                         <span style={{ fontSize: typography.xs, color: colors.textSecondary }}>
                           {ids.length} selected
                         </span>
+                        {/* Generate the SELECTION (owner, 2026-08-10). The header keeps
+                            "Generate All" (whole strategy) and "Generate" (next pending);
+                            this is the third case — exactly these N. Primary variant
+                            because it is the main thing you do with a selection, and
+                            disabled while any generate run owns this strategy so it
+                            can't be double-fired. */}
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="h-7"
+                          disabled={itemBulkBusy || bulkStrategyId === strategy.id || generatingItemId === strategy.id}
+                          title={`Generate the ${ids.length} selected item${ids.length === 1 ? '' : 's'}`}
+                          onClick={() => handleGenerateSelected(strategy, ids)}
+                        >
+                          {bulkStrategyId === strategy.id
+                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            : <Zap className="w-3.5 h-3.5" />}
+                          Generate ({ids.length})
+                        </Button>
+                        {/* Bulk WordPress status (owner, 2026-08-10). Resets to the
+                            placeholder after each run — it is an ACTION, not a
+                            setting, and a mixed selection has no single "current"
+                            status to display. */}
+                        <Select
+                          value=""
+                          disabled={itemBulkBusy || bulkStrategyId === strategy.id}
+                          onValueChange={(value) => handleBulkPostStatus(strategy, ids, value)}
+                        >
+                          <SelectTrigger
+                            className="w-40"
+                            title="Change the WordPress status of every selected item that is live on a site"
+                          >
+                            <SelectValue placeholder="Set post status…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {POST_STATUSES.map((s) => (
+                              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <Button
                           variant="outline"
                           size="sm"
@@ -1828,6 +1992,41 @@ export function StrategiesModule() {
                         status={item.status}
                         published={!!item.articlePublishedPostId || !!item.articlePublishedUrl}
                       />
+
+                      {/* WordPress status of THIS post — on the row itself (owner,
+                          2026-08-12). It used to live inside the per-item overrides
+                          sub-panel, which is collapsed behind its own toggle, so in
+                          practice the row had no status control at all.
+                          Gated on a live post, exactly like Edit/Preview/See live
+                          beside it: with no post on the site there is nothing to set.
+                          The badge to its left is the ITEM's generation state
+                          (Pending/Written/Published) — a different thing from the
+                          post's WordPress status, which is why both are shown. */}
+                      {livePostOf(item) && (
+                        <Select
+                          value={item.articlePublishedStatus
+                            || (item.articleStatus === 'published' ? 'publish' : 'draft')}
+                          disabled={postStatusMutation.isPending}
+                          onValueChange={(value) => {
+                            if (isDestructiveStatus(value)
+                              && !window.confirm('Move this post to the site’s Trash? It can be restored there.')) return;
+                            postStatusMutation.mutate({ id: strategy.id, itemId: item.id, status: value });
+                          }}
+                        >
+                          <SelectTrigger
+                            className="w-36 shrink-0"
+                            title="Change this post’s status on the connected site"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {POST_STATUSES.map((s) => (
+                              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
 
                       {/* Article link */}
                       {item.articleId && (
@@ -2020,35 +2219,6 @@ export function StrategiesModule() {
                           </SelectContent>
                         </Select>
 
-                        {/* Live post status on the connected site. Unlike its three
-                            siblings above (which are INHERIT-style overrides saved to
-                            the item's config) this one acts on the REAL post right
-                            away, so it stays disabled until the article actually has
-                            one — the tooltip explains the precondition rather than
-                            hiding the control. */}
-                        <span style={{ fontSize: typography.xs, color: colors.textMuted }}>Post</span>
-                        <Select
-                          value={item.articlePublishedPostId ? (item.articleStatus === 'published' ? 'publish' : 'draft') : ''}
-                          disabled={!item.articlePublishedPostId || postStatusMutation.isPending}
-                          onValueChange={(value) => {
-                            if (value === 'trash' && !window.confirm('Delete this post on the site? It moves to the site’s Trash and can be restored there.')) return;
-                            postStatusMutation.mutate({ id: strategy.id, itemId: item.id, status: value });
-                          }}
-                        >
-                          <SelectTrigger
-                            className="w-32"
-                            title={item.articlePublishedPostId
-                              ? 'Change this post’s status on the connected site'
-                              : 'Available once this article is published to the site'}
-                          >
-                            <SelectValue placeholder="Not on site" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="publish">Published</SelectItem>
-                            <SelectItem value="draft">Draft</SelectItem>
-                            <SelectItem value="trash">Delete</SelectItem>
-                          </SelectContent>
-                        </Select>
                       </div>
                     )}
                     </div>

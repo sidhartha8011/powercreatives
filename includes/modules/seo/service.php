@@ -232,6 +232,12 @@ class PCM_SEO_Service
             $payload['slug'] = sanitize_title($value);
         } elseif ($field === 'status') {
             $payload['status'] = $value; // native post field (publish/draft/…) — core REST validates
+        } elseif ($field === 'author') {
+            // Native post field. The id MUST be a user on the REMOTE site — the
+            // Author dropdown is fed by remote_authors() for exactly this reason;
+            // sending a hub user id here would reassign the post to whoever holds
+            // that id on the client's site.
+            $payload['author'] = absint($value);
         } else {
             $keys = self::remote_meta_keys($field);
             if (empty($keys)) {
@@ -256,7 +262,7 @@ class PCM_SEO_Service
         // plugin, or a REST-aware SEO plugin). WordPress silently DROPS unregistered meta
         // and still returns 200 — so re-read and confirm the key exists, otherwise report
         // the phantom save instead of faking success. (title/slug are native — always OK.)
-        if (!in_array($field, array('title', 'slug', 'status'), true)) {
+        if (!in_array($field, array('title', 'slug', 'status', 'author'), true)) {
             $verify = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'meta'));
             $saved  = (!is_wp_error($verify) && is_array($verify['body'] ?? null) && isset($verify['body']['meta']) && is_array($verify['body']['meta']))
                 ? $verify['body']['meta']
@@ -281,6 +287,109 @@ class PCM_SEO_Service
             $value = (string) $res['body']['slug'];
         }
         return array('field' => $field, 'value' => $value);
+    }
+
+    /**
+     * The authors on a CONNECTED site, for that site's rows in the content table.
+     *
+     * Local rows use get_users() on the hub. Those two id spaces are unrelated, so a
+     * remote row must never be offered hub users — assigning id 5 from the hub would
+     * hand the client's post to whoever is id 5 over there. This is the remote half.
+     *
+     * `who=authors` is core WP REST's own "users who can write posts" filter, which is
+     * exactly the local `capability => edit_posts` query it mirrors.
+     *
+     * @param object $site Connected site row.
+     * @return array<int, array{id:int,name:string}>|\WP_Error
+     */
+    public static function remote_authors(object $site)
+    {
+        self::ensure_sites_service();
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/wp/v2/users', array(
+            'who'      => 'authors',
+            'per_page' => 100,
+            '_fields'  => 'id,name',
+        ));
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_remote_authors', $res->get_error_message(), array('status' => 502));
+        }
+        if ((int) ($res['status'] ?? 0) >= 300) {
+            $msg = (is_array($res['body'] ?? null) && !empty($res['body']['message']))
+                ? (string) $res['body']['message']
+                : ('HTTP ' . (int) ($res['status'] ?? 0));
+            return new WP_Error('pcm_seo_remote_authors', $msg, array('status' => 502));
+        }
+        $out = array();
+        foreach ((array) ($res['body'] ?? array()) as $u) {
+            $u = (array) $u;
+            if (!empty($u['id'])) {
+                $out[] = array('id' => (int) $u['id'], 'name' => (string) ($u['name'] ?? ('#' . (int) $u['id'])));
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Create an author ON A CONNECTED SITE and return {id,name}.
+     *
+     * Mirrors the hub-side create_author()'s hard rules, because this is the same
+     * privilege-escalation surface pointed at someone else's install:
+     *   - the role is HARDCODED to 'author' and never read from input;
+     *   - the password is GENERATED, never accepted;
+     *   - a username is derived and de-duplicated remotely by retrying on conflict.
+     * Whether the caller may create users at all is enforced by the connection's own
+     * credentials — the remote refuses with 403 if the application password's user
+     * lacks create_users, and that message is surfaced verbatim.
+     *
+     * @return array{id:int,name:string}|\WP_Error
+     */
+    public static function remote_create_author(object $site, string $name, string $email)
+    {
+        self::ensure_sites_service();
+        if ($name === '') {
+            return new WP_Error('pcm_seo_author_name', __('A name is required.', 'power-creatives'), array('status' => 400));
+        }
+        if ($email === '' || !is_email($email)) {
+            return new WP_Error('pcm_seo_author_email', __('A valid email address is required.', 'power-creatives'), array('status' => 400));
+        }
+
+        // sanitize_user() can empty a non-latin name outright (the hub-side path hit
+        // this too), so fall back to the email's local part before giving up.
+        $base = sanitize_user(sanitize_title($name), true);
+        if ($base === '') {
+            $base = sanitize_user((string) strstr($email, '@', true), true);
+        }
+        if ($base === '') {
+            return new WP_Error('pcm_seo_author_login', __('Could not derive a username from that name — try a different one.', 'power-creatives'), array('status' => 400));
+        }
+
+        // The remote owns its own username namespace, so collisions can only be found
+        // by asking it. Retry with a suffix rather than pre-checking (no list_users needed).
+        $last = null;
+        for ($i = 0; $i < 5; $i++) {
+            $login = $i === 0 ? $base : $base . ($i + 1);
+            $res = PCM_Sites_Service::remote_rest($site, 'POST', '/wp/v2/users', array(), array(
+                'username' => $login,
+                'email'    => $email,
+                'name'     => $name,
+                'password' => wp_generate_password(24, true, true), // generated, never from input
+                'roles'    => array('author'),                     // hardcoded, never from input
+            ));
+            if (is_wp_error($res)) {
+                return new WP_Error('pcm_seo_remote_author', $res->get_error_message(), array('status' => 502));
+            }
+            $code = (int) ($res['status'] ?? 0);
+            $body = is_array($res['body'] ?? null) ? $res['body'] : array();
+            if ($code < 300 && !empty($body['id'])) {
+                return array('id' => (int) $body['id'], 'name' => (string) ($body['name'] ?? $name));
+            }
+            $last = !empty($body['message']) ? (string) $body['message'] : ('HTTP ' . $code);
+            // Only a USERNAME clash is worth retrying; an existing email is terminal.
+            if ((string) ($body['code'] ?? '') !== 'existing_user_login') {
+                return new WP_Error('pcm_seo_remote_author', $last, array('status' => $code >= 400 && $code < 500 ? $code : 502));
+            }
+        }
+        return new WP_Error('pcm_seo_remote_author', $last ?: __('Could not find a free username on that site.', 'power-creatives'), array('status' => 409));
     }
 
     /**

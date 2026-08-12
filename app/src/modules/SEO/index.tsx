@@ -414,26 +414,58 @@ export function SEOModule() {
   const [newAuthorName, setNewAuthorName] = useState('');
   const [newAuthorEmail, setNewAuthorEmail] = useState('');
   const [extraAuthors, setExtraAuthors] = useState<{ id: number; name: string }[]>([]);
+
+  // The CONNECTED SITE's own authors. Hub user ids and remote user ids are
+  // unrelated id spaces, so a remote row must be offered this list — assigning a
+  // hub id would hand the client's post to whoever holds that id over there.
+  // Which is why the column used to be read-only for remote rows.
+  const remoteAuthorsQuery = trpc.seo.remoteAuthors.useQuery(
+    { siteId },
+    { enabled: !isLocal && typeof siteId === 'number', staleTime: 60_000, retry: false },
+  ) as any;
+  const remoteAuthors: { id: number; name: string }[] =
+    Array.isArray(remoteAuthorsQuery.data) ? remoteAuthorsQuery.data : [];
+
+  // Session-created authors belong to the site they were created on. Without this
+  // reset, switching sites would leave a stale name in the list whose id means
+  // someone else entirely on the new site.
+  useEffect(() => { setExtraAuthors([]); }, [siteId]);
+
+  /** Authors valid for the CURRENT scope, plus any created in this session. */
+  const authorOptions = useMemo(
+    () => [...(isLocal ? (options?.authors ?? []) : remoteAuthors), ...extraAuthors],
+    [isLocal, options?.authors, remoteAuthors, extraAuthors],
+  );
+
   const createAuthorMutation = trpc.seo.createAuthor.useMutation({
     onError: (e: any) => toast.error(e.message ?? 'Could not create the author'),
   }) as any;
+  const createRemoteAuthorMutation = trpc.seo.remoteCreateAuthor.useMutation({
+    onError: (e: any) => toast.error(e.message ?? 'Could not create the author on that site'),
+  }) as any;
+  // Either path may be in flight; the dialog must reflect whichever is running.
+  const creatingAuthor = createAuthorMutation.isPending || createRemoteAuthorMutation.isPending;
   const submitNewAuthor = useCallback(() => {
     const rowId = newAuthorFor;
     if (rowId === null) return;
-    createAuthorMutation.mutate(
-      { name: newAuthorName.trim(), email: newAuthorEmail.trim() },
-      {
-        onSuccess: (created: any) => {
-          const a = { id: Number(created?.id), name: String(created?.name ?? newAuthorName.trim()) };
-          if (!a.id) { toast.error('The server did not return a user id.'); return; }
-          setExtraAuthors((prev) => [...prev, a]);
-          saveCell(rowId, 'author', String(a.id));   // assign the new author to the row
-          toast.success(`“${a.name}” created and assigned`);
-          setNewAuthorFor(null); setNewAuthorName(''); setNewAuthorEmail('');
-        },
-      },
-    );
-  }, [newAuthorFor, newAuthorName, newAuthorEmail, createAuthorMutation, saveCell]);
+    const name = newAuthorName.trim();
+    const email = newAuthorEmail.trim();
+    const onSuccess = (created: any) => {
+      const a = { id: Number(created?.id), name: String(created?.name ?? name) };
+      if (!a.id) { toast.error('The server did not return a user id.'); return; }
+      setExtraAuthors((prev) => [...prev, a]);
+      saveCell(rowId, 'author', String(a.id));   // assign the new author to the row
+      toast.success(`“${a.name}” created and assigned`);
+      setNewAuthorFor(null); setNewAuthorName(''); setNewAuthorEmail('');
+    };
+    // Create the user WHERE the post lives, or the id would be meaningless there.
+    if (isLocal) {
+      createAuthorMutation.mutate({ name, email }, { onSuccess });
+    } else {
+      createRemoteAuthorMutation.mutate({ siteId, name, email }, { onSuccess });
+    }
+  }, [newAuthorFor, newAuthorName, newAuthorEmail, isLocal, siteId,
+      createAuthorMutation, createRemoteAuthorMutation, saveCell]);
   const isLoading = isLocal ? localLoading : remote.isLoading;
   // Generation works for both: the hub runs the LLM, then writes back via saveCell.
   const generateField = isLocal ? localGenerateField : remote.generateField;
@@ -1199,13 +1231,15 @@ export function SEOModule() {
           </TableCell>
         );
       case 'author': {
-        // LOCAL rows only. `options.authors` are users on THIS WordPress install, so offering
-        // them for a connected site would write a hub user id onto a remote post and silently
-        // reassign it to whoever happens to hold that id there. Remote rows stay read-only until
-        // the connector can serve that site's own users.
-        // Server list + any author created in this session (see extraAuthors).
-        const authors = [...(options?.authors ?? []), ...extraAuthors];
-        if (!isLocal || authors.length === 0) {
+        // Editable for BOTH scopes now. `authorOptions` resolves to the hub's users for
+        // local rows and to the CONNECTED SITE's own users for remote ones — the two id
+        // spaces are unrelated, and mixing them would reassign a client's post to
+        // whoever holds that id over there. That hazard is why remote rows were
+        // read-only before; it is handled by the list, not by disabling the control.
+        // Falls back to read-only text when the list is empty — e.g. the site's
+        // credentials cannot list users, so there is nothing safe to offer.
+        const authors = authorOptions;
+        if (authors.length === 0) {
           return <TableCell key={key} className="text-xs text-muted-foreground">{row.author}</TableCell>;
         }
         return (
@@ -1907,8 +1941,12 @@ export function SEOModule() {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="mb-1 text-sm font-medium">New author</h3>
+            {/* Name WHERE the user is created — on a client's install this is not a
+                detail the operator should have to infer. */}
             <p className="mb-3 text-xs text-muted-foreground">
-              Creates a WordPress user with the <strong>Author</strong> role and assigns them to this page.
+              Creates a WordPress user with the <strong>Author</strong> role on{' '}
+              <strong>{isLocal ? 'this site' : (activeSite?.name || activeSite?.url || 'the connected site')}</strong>
+              {' '}and assigns them to this page.
             </p>
             <div className="space-y-2">
               <Input
@@ -1934,10 +1972,10 @@ export function SEOModule() {
               <Button
                 size="sm"
                 className="h-8"
-                disabled={!newAuthorName.trim() || !newAuthorEmail.trim() || createAuthorMutation.isPending}
+                disabled={!newAuthorName.trim() || !newAuthorEmail.trim() || creatingAuthor}
                 onClick={submitNewAuthor}
               >
-                {createAuthorMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Create'}
+                {creatingAuthor ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Create'}
               </Button>
             </div>
           </div>

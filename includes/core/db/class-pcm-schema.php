@@ -457,6 +457,16 @@ class PCM_Schema
         // ── Articles ──
         // Generated content documents, editable in the Writer module.
         // Bridges Strategies (source) → Writer (edit) → Sites (publish).
+        //
+        // TWO status columns, deliberately:
+        //   `status`          — the LOCAL Writer workflow state. Its vocabulary is
+        //                       draft|review|ready|published (writer/controller.php).
+        //   `publishedStatus` — (v1.46.0) the REMOTE WordPress post status
+        //                       (publish|future|draft|pending|private). NULL when the
+        //                       article was never published, or was trashed/deleted.
+        // They are NOT interchangeable: writing 'pending'/'private' into `status`
+        // would corrupt Writer's workflow states, and reading the remote status back
+        // out of it is what made the post-status dropdown snap back to Draft.
         $sql = "CREATE TABLE {$prefix}articles (
             id int(11) NOT NULL AUTO_INCREMENT,
             userId int(11) NOT NULL,
@@ -474,6 +484,7 @@ class PCM_Schema
             seoScore int(11) DEFAULT NULL,
             publishedUrl text DEFAULT NULL,
             publishedPostId int(11) DEFAULT NULL,
+            publishedStatus varchar(20) DEFAULT NULL,
             siteId int(11) DEFAULT NULL,
             createdAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,

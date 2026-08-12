@@ -426,6 +426,22 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.contentOptions": { endpoint: "seo/content/options", method: "GET" },
     // Creates a WordPress user (role fixed to `author` server-side).
     "seo.createAuthor": { endpoint: "seo/authors", method: "POST" },
+    // Authors ON a connected site. Separate from the two above on purpose: hub user
+    // ids and remote user ids are unrelated id spaces, so a remote row must be fed
+    // the remote list or it would reassign the post to a stranger.
+    "seo.remoteAuthors": {
+        endpoint: "seo",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/authors` }),
+    },
+    "seo.remoteCreateAuthor": {
+        endpoint: "seo",
+        method: "POST",
+        transform: (input: any) => ({
+            url: `seo/sites/${input.siteId}/authors`,
+            body: { name: input.name, email: input.email },
+        }),
+    },
     "seo.quickCreate": { endpoint: "seo/content", method: "POST" },
     "seo.saveCell": {
         endpoint: "seo/content",

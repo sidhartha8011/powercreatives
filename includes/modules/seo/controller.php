@@ -66,6 +66,11 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/content/(?P<id>\d+)/optimize', 'optimize_body'),
             // Remote-site SEO — read + inline-edit a connected site's posts/pages
             // via the connector proxy (admin only; site is owner-scoped in the handler).
+            // Authors ON a connected site — the remote twin of /seo/authors. Both are
+            // manage_options: creating a user on a client's install is the same
+            // privilege-escalation surface as creating one here.
+            array('GET',  '/seo/sites/(?P<id>\d+)/authors', 'remote_authors', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/authors', 'remote_create_author', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content', 'remote_content', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content', 'remote_create', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/cell', 'remote_save_cell', array(), 'manage_options'),
@@ -1105,6 +1110,46 @@ class PCM_REST_SEO extends PCM_REST_Base
         $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
         $types  = array_map('sanitize_text_field', (array) ($params['types'] ?? array()));
         $result = PCM_SEO_Service::remote_set_schema($site, absint($request->get_param('post')), $type, $types);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /** GET /seo/sites/{id}/authors — the authors on a connected site. */
+    public function remote_authors(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $result = PCM_SEO_Service::remote_authors($site);
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    /**
+     * POST /seo/sites/{id}/authors — create an author ON the connected site.
+     *
+     * ⚠ Same shape as create_author() above, aimed at someone else's install: the role
+     * is hardcoded to 'author' in the service and the password is generated there, so
+     * neither can be influenced from input. Whether the connection may create users at
+     * all is the remote's decision — its 403 is surfaced verbatim.
+     */
+    public function remote_create_author(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $p     = $request->get_json_params();
+        $name  = is_array($p) ? sanitize_text_field((string) ($p['name'] ?? '')) : '';
+        $email = is_array($p) ? sanitize_email((string) ($p['email'] ?? '')) : '';
+        $result = PCM_SEO_Service::remote_create_author($site, $name, $email);
         if ($result instanceof WP_Error) {
             return $result;
         }

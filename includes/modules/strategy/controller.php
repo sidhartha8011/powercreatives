@@ -187,6 +187,11 @@ class PCM_REST_Strategy extends PCM_REST_Base
                     // what enables the row's live post-status control.
                     'articlePublishedPostId' => !empty($item->articlePublishedPostId) ? (int)$item->articlePublishedPostId : null,
                     'articleStatus'          => isset($item->articleStatus) ? (string)$item->articleStatus : null,
+                    // The LIVE WordPress status (publish|future|draft|pending|private).
+                    // Distinct from articleStatus, which is the local Writer workflow
+                    // state — the row's post-status dropdown reads THIS one, or it would
+                    // show "Draft" for a post that is actually Pending or Private.
+                    'articlePublishedStatus' => !empty($item->articlePublishedStatus) ? (string)$item->articlePublishedStatus : null,
                     // WHEN it actually went live. The row's date tag prefers this over
                     // scheduledDate, which only ever exists for schedule-mode strategies.
                     'articlePublishedAt'     => !empty($item->articlePublishedAt) ? (string)$item->articlePublishedAt : null,
@@ -1090,10 +1095,16 @@ class PCM_REST_Strategy extends PCM_REST_Base
             return $this->not_found('Strategy');
         }
 
+        require_once __DIR__ . '/service.php';
         $params = $request->get_json_params();
         $status = is_array($params) ? sanitize_text_field((string)($params['status'] ?? '')) : '';
-        if (!in_array($status, array('draft', 'publish', 'trash'), true)) {
-            return $this->error('Status must be draft, publish or trash.', 400);
+        // ONE list, shared with the service, so validation and execution can never
+        // drift apart (they were two separate hardcoded triples before).
+        if (!in_array($status, PCM_Strategy_Service::POST_STATUSES, true)) {
+            return $this->error(
+                'Status must be one of: ' . implode(', ', PCM_Strategy_Service::POST_STATUSES) . '.',
+                400
+            );
         }
 
         try {

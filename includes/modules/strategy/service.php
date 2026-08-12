@@ -4749,9 +4749,21 @@ class PCM_Strategy_Service
         return array('id' => (int)$wpdb->insert_id, 'keyword' => (string)$source->keyword);
     }
 
+    /**
+     * Every status a WordPress post or page can be moved to from the UI.
+     * 'auto-draft' and 'inherit' are internal to WordPress and deliberately absent.
+     * 'trash' is a DELETE, not a status write — see set_item_post_status().
+     *
+     * One list, used by the controller's validation AND the service, so the two
+     * can never disagree about what is allowed.
+     *
+     * @var string[]
+     */
+    public const POST_STATUSES = array('publish', 'future', 'draft', 'pending', 'private', 'trash');
+
     public static function set_item_post_status(object $strategy, int $item_id, int $user_id, string $status): array
     {
-        if (!in_array($status, array('draft', 'publish', 'trash'), true)) {
+        if (!in_array($status, self::POST_STATUSES, true)) {
             throw new \RuntimeException('Unsupported post status.');
         }
 
@@ -4794,7 +4806,23 @@ class PCM_Strategy_Service
             // site stays recoverable from the site's own Trash.
             $res = PCM_Sites_Service::remote_rest($site, 'DELETE', $route, array('force' => 'false'));
         } else {
-            $res = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), array('status' => $status));
+            $body = array('status' => $status);
+            if ($status === 'future') {
+                // 'future' without a FUTURE date is not a scheduled post — WordPress
+                // publishes it immediately (wp_insert_post downgrades future→publish
+                // when the date has passed). Send the item's scheduled date, and
+                // refuse rather than silently publishing when there isn't a usable one.
+                $when = trim((string)($item->scheduledDate ?? ''));
+                if ($when === '' || strtotime($when) === false) {
+                    throw new \RuntimeException('Set a schedule date on this item before choosing Scheduled.');
+                }
+                if (strtotime($when) <= time()) {
+                    throw new \RuntimeException('That item\'s schedule date is in the past — pick a future date before choosing Scheduled.');
+                }
+                // WP REST wants ISO-8601 in SITE time; `date` is exactly that field.
+                $body['date'] = gmdate('Y-m-d\TH:i:s', strtotime($when));
+            }
+            $res = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), $body);
         }
         if (is_wp_error($res)) {
             throw new \RuntimeException('Could not reach the site: ' . $res->get_error_message());
@@ -4813,10 +4841,19 @@ class PCM_Strategy_Service
                 'status'           => 'draft',
                 'publishedPostId'  => null,
                 'publishedUrl'     => null,
+                'publishedStatus'  => null, // no longer on the site
             ));
         } else {
             PCM_DB::update_article((int)$article->id, $user_id, array(
-                'status' => $status === 'publish' ? 'published' : 'draft',
+                // LOCAL Writer workflow state. Only a real 'publish' counts as
+                // published — pending/private/future/draft are all "not live yet"
+                // to Writer. Unchanged on purpose: widening this vocabulary would
+                // break Writer's draft|review|ready|published states.
+                'status'          => $status === 'publish' ? 'published' : 'draft',
+                // REMOTE status, which is what the row's dropdown reads back. Without
+                // this the control would show Draft for a Pending or Private post and
+                // appear to "not save".
+                'publishedStatus' => $status,
             ));
         }
 
@@ -4969,13 +5006,21 @@ class PCM_Strategy_Service
                 PCM_DB::update_article((int)$article->id, $user_id, array(
                     'publishedUrl'    => '',
                     'publishedPostId' => null,
+                    'publishedStatus' => null,
                 ));
                 $deleted++;
                 $updated++;
                 continue;
             }
+            // Record the REMOTE status whatever it is, so a status changed directly
+            // in wp-admin (or a schedule that has since fired) reconciles here and
+            // the row's dropdown stops disagreeing with the site.
+            if ($remote_status !== '' && $remote_status !== (string)($article->publishedStatus ?? '')) {
+                PCM_DB::update_article((int)$article->id, $user_id, array('publishedStatus' => $remote_status));
+                $updated++;
+            }
             if ($remote_status === 'future') {
-                continue; // still scheduled on WordPress' side — leave as-is
+                continue; // still scheduled on WordPress' side — leave the rest as-is
             }
             if ($remote_status === 'publish') {
                 $link = (string)($remote['link'] ?? '');
