@@ -13272,3 +13272,205 @@ VERIFIED
   asserted at the call site, never executed. Creating a user on a client install is the highest-risk
   thing in this change; try it on one site before using it widely. It also needs the connection's
   application-password user to hold list_users/create_users, or the site returns 403 (surfaced verbatim).
+
+## 2026-08-12 — Templates → SEO: "Template not found." + edits reverting (two bugs, one root)
+Reported: edit a seeded SEO prompt (e.g. Meta Title — Generate), save, error appears, value sometimes
+sticks and sometimes reverts, and SEO generation ignores the change.
+
+PREMISE (verified, not assumed): every seeded SEO template is a SHARED row — PCM_SEO_AI::
+seed_seo_templates inserts userId=0, isDefault=1. Three write paths touch those rows and did NOT
+agree: update_item() forked them, delete_item() allowed userId=0, and set_default() used an
+owner-only WHERE. The row toggle calls set_default, and because every seeded row ships isDefault=1
+its toggle renders ON — so the first click on one produced exactly "Template not found."
+FIX 1: set_default now forks a shared row like update_item does, carrying the requested isDefault
+(so un-starring does not re-star). An unknown id still 404s.
+
+FIX 2 — the revert half, an IDENTITY MISMATCH. A template's section lives in formData.type, and
+clear_other_defaults() + seo_template_prompt() both key on it — but fork_shared_template() deduped
+on NAME. Renaming while editing therefore slipped past the dedupe and inserted a SECOND fork for the
+same section; both carried isDefault=1 until one was demoted, and generation resolved whichever won.
+That is "sometimes it saves, sometimes the old prompt comes back" and "generation ignores the
+update". The fork now matches on section (name kept as a fallback for rows with no type), the prior-
+update branch writes `name` (it never did — a rename was silently dropped), and list_items() hides
+a shared row by section as well as name so a renamed fork stops re-exposing the original. All four
+paths now key on the same thing. formData is decoded in PHP, not JSON_EXTRACT — that needs MySQL
+5.7+/MariaDB 10.2+ and WordPress supports older; clear_other_defaults() already scans this way.
+
+A NEAR-MISS WORTH RECORDING: a scratch script I used to thread $is_default through used \n anchors
+on a CRLF file, so it applied PARTIALLY — one branch started referencing $is_default inside a
+function that never declared it. `php -l` cannot see an undefined variable, so it passed clean. I
+caught it only by grepping the call sites afterwards. The test now asserts the PARAMETER exists and
+runs under error_reporting(E_ALL).
+
+VERIFIED
+- NEW tests/standalone/template_fork_test.php — 24 checks: set_default's shared path, the declared
+  parameter, no hardcoded isDefault, section-keyed fork with a name fallback, rename persistence,
+  list/fork/clear_other_defaults/seo_template_prompt all keying on section, and the premise itself
+  (seeded rows really are userId=0 + isDefault=1).
+- NEGATIVE CONTROL 9/9: re-introducing the 404, dropping the toggle state, removing the parameter
+  declaration, hardcoding isDefault, demoting siblings while un-starring, reverting to name-keyed
+  dedupe, dropping the rename write, un-hiding by section, hiding the user's own rows — all turn it
+  red. Restored -> 24/24.
+- THREE OF MY OWN TEST BUGS found by that control: a double-quoted PHP regex where "\$name" became
+  a "$" end-anchor (now strpos); a JSON_EXTRACT check matching its own explanatory COMMENT (now
+  strips comments — same trap as the 08-12 post-status guards); and two single-match checks that
+  passed while one of two branches had lost the code (name write, section map) — now counted.
+- php -l clean. FULL SUITE 30/30. tsc 58. Build clean. Zip 3.75 MB / 749 files; all seven behaviours
+  verified INSIDE the archive.
+- NOT REPRODUCED, and I want this on record: I could not make the save-time 404 happen from
+  update_item() itself — its shared-template fork is sound. The toggle is the path I can PROVE
+  produces that toast. If the error still appears on a plain save after this build, the next thing
+  to check is whether the two surfaces (wp-admin vs the shortcode page) are resolving to different
+  PCM users, which is this week's recurring cause and would also explain a fork being invisible.
+- ALSO FOUND: PCM_DB::get_user_templates() has an admin branch I added on 08-07 and ZERO callers —
+  dead code; the Templates UI uses the controller's own query. Left in place (removing it is
+  unrelated to this bug) but flagged so the next reader does not trust it as live.
+
+## 2026-08-12 — SEO template prompts WERE used; my own language law was overriding them
+Reported: edit the Meta Title template to ask for Chinese, generate from SEO → Table, output ignores
+it — "It seems like the prompt in templates are not used?"
+
+THE DIAGNOSIS IS THE OPPOSITE. Traced the chain and the template IS used:
+  generate_field() -> resolve_prompt($section,…) -> seo_template_prompt() -> the user's template,
+  short-circuiting the shipped default. Then, one line later:
+      $tpl .= self::language_law($vars);
+  and that law — which I added on 08-08 for "changes should be in the original language of the
+  website" — opened with "LANGUAGE (absolute, overrides everything above)" and said "Do NOT
+  translate, localise, or switch language for any reason." So the model followed MY law over the
+  operator's template, silently and with no way to tell why.
+
+This is a REQUIREMENT CHANGE, not a defect in the 08-08 work: that law fixed a real bug (foreign
+pages being rewritten into English) and must keep doing so. What was wrong is that it outranked a
+DELIBERATE instruction. It is now a strong DEFAULT with a scoped carve-out:
+  "LANGUAGE — default: …same language as the existing content… Do NOT translate, localise, or switch
+   language ON YOUR OWN INITIATIVE… OVERRIDE: if the instructions above EXPLICITLY name a language
+   to write in, obey that instruction instead of this default."
+Anything that does not name a language behaves exactly as before. One function, so all six call
+sites (generate/optimize/local/remote/optimizer teachers) change together; the teachers' prompts are
+system-authored and name no language, so they are unaffected.
+
+Deliberately NOT done: keyword-sniffing the template for language names. That is brittle, and the
+model is better placed to judge "did the instructions above name a language" than a regex is.
+
+VERIFIED
+- seo_language_law_test.php 35 -> 41. One assertion SUPERSEDED and rewritten with its reason
+  recorded: it required "overrides everything above" i.e. "a custom template cannot outrank it",
+  which is exactly the behaviour being removed. Replaced by: presents as a default, yields to an
+  EXPLICIT instruction, the carve-out is CONDITIONAL (a blanket "ignore this" would reopen 08-08),
+  and unprompted switching is still forbidden.
+  New section 6 guards the chain the user suspected: the generate path resolves a template, a
+  resolved template short-circuits the default, and the law is APPENDED — if it were ever prepended,
+  "the instructions above" would point at nothing and the override would silently stop working.
+- NEGATIVE CONTROL 9/9 in BOTH directions: restoring the absolute wording, deleting the carve-out,
+  widening it past "explicit", plus reopening 08-08 (model may switch freely, content no longer the
+  authority, English-neutraliser dropped), plus breaking the chain (template not consulted, law
+  prepended, default no longer short-circuited). Restored -> 41/41.
+- Two more of my own bugs found while writing it: the new section used the wrong function name
+  ('generate_field_value'), and strpos()==false became substr() offset 0 — silently slicing the top
+  of the file and failing for the wrong reason (now locates, asserts, then slices). And the archive
+  check matched the docblock that QUOTES the old wording as history — now strips comments first.
+- php -l clean. FULL SUITE 30/30. tsc 58. Zip 3.75 MB / 749 files; verified in the archive against
+  CODE with comments stripped.
+- UNVERIFIED: no live LLM call here. Whether a model actually honours the carve-out is a behavioural
+  question these string assertions cannot answer — worth one real generate with a Chinese-asking
+  template before trusting it.
+
+## 2026-08-12 — "Sometimes it works, sometimes not": a picked template was dropped whenever the cell was FILLED
+Reported: Chinese instruction ignored; Re-generate seemed to use a different prompt than the ✦ star;
+a new Meta Title template appeared unused; "make it fact check this properly… check ALL columns".
+
+ROOT CAUSE (this is the whole "randomness"). The column menu offers BOTH "<Field> — Generate" and
+"<Field> — Optimize", but the SERVER chose the mode from the cell alone:
+    $mode = (!empty($current) && optimize exists) ? 'optimize' : 'generate';
+    $tpl  = resolve_prompt($use.'_'.$mode, $default, $user_id, $template_id);
+and seo_template_prompt() only matches a template whose formData.type === "{$use}_{$mode}". So a
+picked GENERATE template on a row that ALREADY had a value resolved section "…_optimize", never
+matched the pick, and silently fell back to the optimize default.
+  EMPTY cell  -> mode generate -> pick matches   -> worked.
+  FILLED cell -> mode optimize -> pick discarded -> "not abiding by the template".
+That is exactly the empty/filled split in the screenshots: the two rows that produced Chinese were
+the ones whose Meta Title was blank. Nothing to do with which BUTTON was clicked — ✦, Re-generate
+and the bulk runner all share one path (they were unified earlier and all pass columnTemplate).
+
+FACT-CHECK, ALL SIX GENERATABLE COLUMNS (field_use_map × prompts.php):
+  title/page_title, metaTitle, metaDescription, primaryKeyword, slug -> generate+optimize -> AFFECTED
+  metaKeywords -> generate ONLY -> was immune (mode can never flip)
+So 5 of 6 columns had it, on both the local and the REMOTE (connected-site) path.
+
+FIX — an explicit pick decides the mode. New PCM_SEO_AI::template_mode() reads the picked template's
+formData.type; apply_template_mode() applies it over the emptiness heuristic, with two guards:
+  - 'optimize' is refused on an empty cell (those prompts are built around {{current_value}} — it
+    would ask the model to improve nothing);
+  - a template belonging to a DIFFERENT field, an unknown id, or a mode with no shipped prompt is
+    ignored, so the heuristic stands.
+Applied at BOTH call sites (ai.php local, service.php remote) before $default/$tpl are read.
+
+VERIFIED — behavioural, not just structural
+- NEW tests/standalone/seo_template_mode_test.php — 49 checks running the REAL methods (extracted
+  into a host class against a fake $wpdb, the technique seo_language_law_test.php established), over
+  EVERY column × both modes: the bug case per column, the picked prompt actually coming back,
+  optimize-on-empty refused, no-pick behaviour unchanged, foreign/unknown ids ignored, the
+  generate-only column still immune, and both call sites ordered before the prompt is chosen.
+- NEGATIVE CONTROL 7/7: removing either call site, dropping the empty-cell guard, letting a foreign
+  template hijack, forcing a mode with no prompt, ignoring the type, and reordering the override
+  after the prompt is chosen — all red. Restored -> 49/49.
+- FULL SUITE 31/31. tsc 58. Zip 3.75 MB / 750 files; verified in the archive against CODE with
+  comments stripped (the docblocks deliberately quote the old behaviour).
+
+STILL OPEN / HONEST LIMITS
+- The Chinese report ALSO depends on yesterday's language-law carve-out, which no test here can
+  prove — that needs one real LLM call. If Chinese still loses on a FILLED cell after this build,
+  the remaining suspect is the law's wording, not the plumbing.
+- An un-picked template is still resolved per SECTION: creating a "Meta Title — Generate" template
+  and pressing ✦ on a FILLED cell correctly runs the OPTIMIZE section, so that template is not used.
+  That is now correct-by-design rather than a bug, but it is not discoverable in the UI — the table
+  never says which mode/section ran. Worth surfacing next; not done here to keep the diff to the bug.
+
+## 2026-08-12 — "Why is it generating HTML": a revise ENVELOPE landing in the Meta Title column
+Reported with a screenshot: Meta Title cells staged
+  {"html":"<section> <h1>Welcome to Our Website</h1> …","changes":[{"what":…,"why":…,"quote":…}]}
+with "Accept all & save" one click away.
+
+WHAT IT IS. That is the section-REVISE contract (prompts.php `revise_envelope`, used only by
+editing.php's revise flow) — a different output shape from these single-value fields. The invented
+"Welcome to Our Website / Service 1-3 / info@ourwebsite.com" copy is a model handed a revise prompt
+with no real section to revise.
+
+TRACED, AND IT IS NOT A ROUTING BUG. Both generate paths derive $use from
+PCM_SEO_AI::field_use_map() ('metaTitle' => 'meta_title') and seo_template_prompt() only accepts a
+template whose formData.type === "{$use}_{$mode}". Seeding sets type from the section key. So no
+code path can point Meta Title at the envelope prompt — the prompt behind that column is a TEMPLATE
+whose type says Meta Title while its value still asks for the envelope. The Templates UI edits Type
+and Value independently, so a duplicated/retyped row produces exactly this. (I cannot read the
+user's rows from here; that is the only remaining explanation consistent with the code.)
+
+THE REAL DEFECT, AND WHAT I FIXED: nothing stopped a JSON blob from becoming a field value.
+sanitize_ai_output() picks the first plausible LINE, and an envelope is one long line, so the raw
+JSON passed straight through to the cell. That hole is cause-agnostic — a mis-typed template, a
+chatty model, or any future prompt mix-up all land a blob in a meta title. New
+PCM_SEO_AI::is_structured_envelope() refuses ANY JSON object/array (shape, not key names) AFTER code
+fences are stripped, so ```json envelopes are caught too; sanitize_ai_output() then returns '' and
+the caller errors instead of storing it. Both per-field paths (local ai.php, remote service.php) now
+raise a specific 422 naming the cause — "check the template selected for this column in
+Templates → SEO" — instead of the misleading 502 "the model returned no text".
+Deliberately NOT unwrapping the html into a title: that would produce a plausible-looking but wrong
+value and hide the misconfiguration. Failing loudly is the point.
+
+VERIFIED
+- NEW tests/standalone/seo_envelope_guard_test.php — 31 checks running the REAL sanitiser against
+  the two payloads from the screenshot verbatim, plus fenced variants, every JSON shape, and — the
+  half that matters most — 10 REAL titles that must still pass untouched, including Chinese, a
+  brace-leading non-JSON title, "JSON is great: a guide", and 'Prices from {$99}'.
+- NEGATIVE CONTROL 6/6, both directions: removing the guard, checking before unfencing, narrowing
+  detection to the html key, OVER-blocking any brace-leading text, and dropping either path's
+  specific error. Restored -> 31/31.
+- THREE harness bugs of my own, all in the method extractor: brace-counting swallowed the next
+  method because these methods contain braces inside STRING literals ('{' and the regex {1,6}); the
+  fallback then cut inside the FOLLOWING docblock because that docblock quotes JSON. Now anchors on
+  the closing brace at method indentation. Worth remembering — this file cannot be sliced by
+  counting braces.
+- php -l clean x2. FULL SUITE 32/32. tsc 58. Zip 3.76 MB / 751 files; verified in the archive
+  against CODE with comments stripped.
+- OPEN FOR THE OWNER: check Templates → SEO for a row whose Type is a Meta Title section but whose
+  Value asks for {"html":…,"changes":…}, and fix or delete it. After this build that row produces a
+  clear 422 instead of a JSON blob, but it will still fail until the template itself is corrected.

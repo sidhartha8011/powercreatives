@@ -54,8 +54,23 @@ check('neutralises the English instructions themselves',
     stripos($law, 'written in English') !== false && stripos($law, 'NOT the target language') !== false, $law);
 check('protects proper nouns / URLs from being localised',
     stripos($law, 'proper nouns') !== false, $law);
-check('declares itself overriding, so a custom template cannot outrank it',
-    stripos($law, 'overrides everything above') !== false, $law);
+// SUPERSEDED 2026-08-12. This used to require "overrides everything above", i.e.
+// "a custom template cannot outrank it". That stopped the drift into English but
+// also ignored an operator who deliberately asked their template for another
+// language (reported against SEO → Meta Title → Generate). The law is now a
+// strong DEFAULT that yields to an explicit instruction; it must still forbid
+// drifting of the model's own accord, which is what section 1 above covers.
+check('presents itself as the default, not an absolute',
+    stripos($law, 'LANGUAGE — default') !== false, $law);
+check('yields to an EXPLICIT language instruction in the template',
+    stripos($law, 'EXPLICITLY name a language') !== false
+    && stripos($law, 'obey that instruction instead') !== false, $law);
+check('still forbids the model switching language unprompted',
+    stripos($law, 'on your own initiative') !== false, $law);
+// The carve-out must be scoped to an explicit request — a blanket "ignore this"
+// would reopen the original bug.
+check('the override is conditional, not unconditional',
+    stripos($law, 'if the instructions above') !== false, $law);
 
 echo "\n2. It degrades safely when no language is configured\n";
 $bare = LawHost::language_law(array());
@@ -122,6 +137,31 @@ $aisrc = file_get_contents($SEO . 'ai.php');
 $b = strpos($aisrc, 'function build_field_vars');
 check('build_field_vars (local posts) still uses the hub locale — correct there',
     str_contains(substr($aisrc, $b, 2500), "'site.lang'"), 'local var missing');
+
+echo "\n6. The user's TEMPLATE really does reach the prompt\n";
+// Reported as "the prompt in templates are not used" (SEO → Meta Title → Generate).
+// It IS used — the law appended after it was overriding its language. Guard the
+// whole chain so that stays true, and so the diagnosis is not repeated.
+// strpos returning false becomes offset 0 when used as a substr() start, which
+// silently slices the TOP of the file and fails every check below for the wrong
+// reason. Locate first, assert, then slice.
+$gen_at = strpos($aisrc, 'function generate_field(');
+check('the generate path is locatable', $gen_at !== false, 'generate_field not found');
+$gen = $gen_at === false ? '' : substr($aisrc, $gen_at, 3000);
+check('the generate path resolves a prompt for the section',
+    preg_match('/\$tpl\s*=\s*self::resolve_prompt\(/', $gen) === 1, 'template never consulted');
+$rp = substr($aisrc, strpos($aisrc, 'function resolve_prompt'), 1400);
+check('resolve_prompt asks the Templates module first',
+    str_contains($rp, 'self::seo_template_prompt($user_id, $section, $template_id)'), 'templates bypassed');
+check('a resolved template short-circuits the shipped default',
+    preg_match('/if \(\$tpl !== null && \$tpl !== \'\'\) \{\s*\n\s*return \$tpl;/', $rp) === 1, 'default would win');
+check('the shipped default is only the last resort',
+    strrpos($rp, 'return $default;') > strpos($rp, 'seo_template_prompt'), 'default returned too early');
+// ORDERING: the law says "the instructions ABOVE". If it were ever prepended,
+// that sentence would point at nothing and the override would silently not work.
+check('the law is APPENDED after the template, so "above" is true',
+    preg_match('/\$tpl\s*=\s*self::resolve_prompt\([^;]*;\s*\n\s*\$tpl\s*\.=\s*self::language_law\(/', $gen) === 1,
+    'law prepended or reordered — "instructions above" would be meaningless');
 
 echo "\n" . str_repeat('-', 56) . "\n";
 echo "  passed: {$PASS}   failed: {$FAIL}\n";

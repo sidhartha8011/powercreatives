@@ -1711,6 +1711,11 @@ class PCM_SEO_Service
         $vars['current_value'] = $current;
 
         $mode    = (!empty($current) && !empty($prompts[$use]['optimize'])) ? 'optimize' : 'generate';
+        // An explicitly picked template decides the mode — same rule as the local
+        // path (PCM_SEO_AI::generate_field). Without it, picking a Generate
+        // template for a filled remote cell resolved the OPTIMIZE section and
+        // silently ignored the pick.
+        $mode    = PCM_SEO_AI::apply_template_mode($mode, (int) $user_id, $template_id, $use, (string) $current, $prompts[$use]);
         $default = $prompts[$use][$mode];
         $tpl     = PCM_SEO_AI::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
         $tpl    .= PCM_SEO_AI::language_law($vars);
@@ -1736,6 +1741,9 @@ class PCM_SEO_Service
                 $value = sanitize_title($value);
             }
             if ($value === '') {
+                if (PCM_SEO_AI::is_structured_envelope((string) ($result['content'] ?? ''))) {
+                    return new WP_Error('pcm_seo_envelope', __('The prompt behind this field returns a JSON envelope ({"html":…,"changes":…}) instead of a single value — check the template selected for this column in Templates → SEO.', 'power-creatives'), array('status' => 422));
+                }
                 return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
             }
             return array('field' => $field, 'value' => $value);

@@ -362,6 +362,13 @@ export function SEOModule() {
   const seoTemplates = useMemo(() => (Array.isArray(seoTemplatesRaw) ? seoTemplatesRaw : []), [seoTemplatesRaw]);
   /** Which column is currently bulk-generating (header ✦ → pick template → whole column). */
   const [columnGenerating, setColumnGenerating] = useState<string | null>(null);
+  // The template last chosen from a column's "Generate column with…" menu, per
+  // field. The column run passed its pick to generateField(); the per-cell
+  // Re-generate and the bulk runner did not, so those two silently fell back to
+  // whatever default resolve_prompt() picked — which is why the star icon
+  // honoured an edited template and Re-generate appeared to use a different one.
+  // Remembering the choice makes all three paths agree.
+  const [columnTemplate, setColumnTemplate] = useState<Record<string, number | undefined>>({});
   const templatesForCol = useCallback((col: string) => {
     const use = SEO_USE_BY_COL[col];
     if (!use) return [] as { id: number; name: string; sectionIsDefault?: boolean }[];
@@ -823,12 +830,15 @@ export function SEOModule() {
     const key = `${id}:${field}`;
     setGenKey(key);
     try {
-      const value = await generateField(id, field, genModelId || undefined, genProvider);
+      // Same template the column menu last used for this field (reported: the
+      // star icon obeyed the edited prompt, Re-generate did not — this argument
+      // was simply missing here).
+      const value = await generateField(id, field, genModelId || undefined, genProvider, columnTemplate[field]);
       setStaged((s) => ({ ...s, [key]: value }));
     } catch { /* toast in hook */ } finally {
       setGenKey(null);
     }
-  }, [generateField, genModelId, genProvider]);
+  }, [generateField, genModelId, genProvider, columnTemplate]);
 
   // Bulk AI: generate the given fields across every selected row (sequential —
   // gentle on the provider), staging each result for review. In 'empty' mode,
@@ -861,7 +871,9 @@ export function SEOModule() {
       const key = `${id}:${field}`;
       setGenKey(key);
       try {
-        const value = await generateField(id, field, genModelId || undefined, genProvider);
+        // Per-field template pick, same as the column run and the per-cell
+        // Re-generate — all three must resolve the same prompt.
+        const value = await generateField(id, field, genModelId || undefined, genProvider, columnTemplate[field]);
         setStaged((s) => ({ ...s, [key]: value }));
       } catch { /* toast in hook */ }
       done += 1;
@@ -870,7 +882,7 @@ export function SEOModule() {
     setGenKey(null);
     setProgress(null);
     setBusy(false);
-  }, [selected, rows, generateField, genModelId, genProvider]);
+  }, [selected, rows, generateField, genModelId, genProvider, columnTemplate]);
 
   // Accept / discard ALL staged AI suggestions (the source's bar).
   const acceptAllStaged = useCallback(() => {
@@ -1105,7 +1117,12 @@ export function SEOModule() {
           ? {
               templates: templatesForCol(key),
               busy: columnGenerating === key,
-              onGenerate: (tid?: number) => setPendingGen({ run: (mode) => handleColumnGenerate(key, tid, mode) }),
+              onGenerate: (tid?: number) => {
+                // Remember the pick so a later per-cell Re-generate uses the SAME
+                // template, instead of falling back to the resolved default.
+                setColumnTemplate((prev) => ({ ...prev, [key]: tid }));
+                setPendingGen({ run: (mode) => handleColumnGenerate(key, tid, mode) });
+              },
             }
           : undefined}
         draggable

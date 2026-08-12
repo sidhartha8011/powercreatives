@@ -210,6 +210,85 @@ class PCM_SEO_AI
         return $chosen ?? $user_default ?? $user_fork ?? $system_default ?? $any;
     }
 
+    /**
+     * The mode ('generate'|'optimize') an EXPLICITLY PICKED template belongs to.
+     *
+     * Why this exists. The column menu offers both "<Field> — Generate" and
+     * "<Field> — Optimize", but the mode was decided purely by whether the cell
+     * was empty, and seo_template_prompt() only matches a template whose
+     * formData.type equals "{$use}_{$mode}". So picking the Generate template on
+     * a row that ALREADY had a value resolved section "…_optimize", never matched
+     * the pick, and silently fell back to the optimize default — the reported
+     * "sometimes it works, sometimes it doesn't". It worked on EMPTY cells (mode
+     * happened to be generate) and failed on filled ones, which is exactly the
+     * pattern that made it look random.
+     *
+     * An explicit pick is intent, so the pick now chooses the mode. Returns null
+     * when nothing was picked or the template belongs to a DIFFERENT field, in
+     * which case the emptiness heuristic stands.
+     *
+     * @param int      $user_id     PCM user id.
+     * @param int|null $template_id The picked template, if any.
+     * @param string   $use         Field key, e.g. 'meta_title'.
+     * @return string|null 'generate' | 'optimize' | null
+     */
+    public static function template_mode(int $user_id, ?int $template_id, string $use): ?string
+    {
+        if (empty($template_id) || $template_id <= 0 || $use === '') {
+            return null;
+        }
+        global $wpdb;
+        $table = PCM_Schema::table('templates');
+        // Shared rows (userId=0) are pickable too. A shared row and the user's fork
+        // of it carry the SAME type, so reading either gives the right mode.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $form_data = $wpdb->get_var($wpdb->prepare(
+            "SELECT formData FROM {$table} WHERE id = %d AND (userId = %d OR userId = 0) AND module = 'seo' LIMIT 1",
+            $template_id,
+            $user_id
+        ));
+        if (empty($form_data)) {
+            return null;
+        }
+        $decoded = json_decode((string) $form_data, true);
+        $type    = is_array($decoded) ? (string) ($decoded['type'] ?? '') : '';
+        foreach (array('generate', 'optimize') as $mode) {
+            if ($type === $use . '_' . $mode) {
+                return $mode;
+            }
+        }
+        return null; // a template for another field — ignore the pick
+    }
+
+    /**
+     * Apply an explicit template pick to the mode the emptiness heuristic chose.
+     *
+     * 'optimize' is only viable when there IS something to optimize — the optimize
+     * prompts are built around {{current_value}}, so honouring that pick on an
+     * empty cell would ask the model to improve nothing. 'generate' is always
+     * viable, and picking it on a filled cell is a deliberate "rewrite from
+     * scratch", which is what the column menu's wording promises.
+     *
+     * @param string   $mode     Mode chosen by the emptiness heuristic.
+     * @param int      $user_id  PCM user id.
+     * @param int|null $template_id Picked template, if any.
+     * @param string   $use      Field key.
+     * @param string   $current  The cell's current value.
+     * @param array    $prompts  field_prompts()[$use] — the available modes.
+     * @return string The mode to actually run.
+     */
+    public static function apply_template_mode(string $mode, int $user_id, ?int $template_id, string $use, string $current, array $prompts): string
+    {
+        $picked = self::template_mode($user_id, $template_id, $use);
+        if ($picked === null || empty($prompts[$picked])) {
+            return $mode;
+        }
+        if ($picked === 'optimize' && trim($current) === '') {
+            return $mode; // nothing to optimize — keep generate
+        }
+        return $picked;
+    }
+
     /** Extract the prompt string from a SEO template's formData (entries[].value). */
     private static function seo_entry_prompt(array $fd): ?string
     {
@@ -257,18 +336,29 @@ class PCM_SEO_AI
      * every seeded and user-edited template predates this, and a wrong-language
      * rewrite is never what anyone wanted.
      *
+     * A STRONG DEFAULT, NOT AN ABSOLUTE (changed 2026-08-12). It first shipped
+     * saying "overrides everything above", which did its job — no more silent
+     * drift into English — but also meant an operator who deliberately wrote
+     * "write the meta title in Chinese" into their template was ignored, with
+     * no way to tell why. The law exists to prevent ACCIDENTAL language drift,
+     * not to outrank an explicit instruction, so it now yields to one. Anything
+     * that does not name a language behaves exactly as before.
+     *
      * @param array<string, string> $vars Prompt vars; 'site.lang' is the hint.
      * @return string Text to append to the template (never empty).
      */
     public static function language_law(array $vars = array()): string
     {
         $hint = trim((string) ($vars['site.lang'] ?? ''));
-        return "\n\nLANGUAGE (absolute, overrides everything above): write your ENTIRE answer in the"
+        return "\n\nLANGUAGE — default: write your ENTIRE answer in the"
             . ' SAME language as the existing content you were given'
             . ($hint !== '' ? " (the site's language is {$hint})" : '')
             . '. These instructions are written in English — that is NOT the target language and'
             . ' must never change the language you answer in. Do NOT translate, localise, or switch'
-            . ' language for any reason. Keep proper nouns, brand names and URLs exactly as they are.';
+            . ' language on your own initiative. Keep proper nouns, brand names and URLs exactly as'
+            . ' they are.'
+            . "\nOVERRIDE: if the instructions above EXPLICITLY name a language to write in, obey"
+            . ' that instruction instead of this default.';
     }
 
     /**
@@ -295,10 +385,46 @@ class PCM_SEO_AI
      * @param string $content Raw model output.
      * @return string
      */
+    /**
+     * Does this output look like a STRUCTURED envelope rather than a value?
+     *
+     * The section-revise flow asks for {"html":"…","changes":[…]} — a whole
+     * different contract from these single-value fields. If such a prompt ever
+     * ends up behind a scalar column (most easily by pointing a template's TYPE
+     * at "Meta Title" while its VALUE still asks for the envelope), the model
+     * obeys it and returns one long JSON line. sanitize_ai_output()'s
+     * first-plausible-line pass sees exactly one line and hands the raw JSON
+     * through, so `{"html":"<section>…` lands in the Meta Title cell and is one
+     * "Accept all & save" away from the live site.
+     *
+     * Detected on SHAPE, not on the key names alone: any JSON object/array is
+     * wrong for a field that must hold one short string.
+     */
+    public static function is_structured_envelope(string $raw): bool
+    {
+        $raw = trim($raw);
+        if ($raw === '' || ($raw[0] !== '{' && $raw[0] !== '[')) {
+            return false;
+        }
+        $decoded = json_decode($raw, true);
+        return is_array($decoded);
+    }
+
     public static function sanitize_ai_output(string $content): string
     {
         $content = trim($content);
         if ($content === '') {
+            return '';
+        }
+        // Strip a wrapping code fence FIRST so a fenced ```json {...}``` envelope
+        // is recognised too, then refuse the envelope outright. Returning '' makes
+        // the caller raise its "no usable text" error instead of storing the blob —
+        // failing loudly beats silently mangling JSON into a plausible-looking
+        // title that hides the misconfigured template.
+        $unfenced = str_starts_with($content, '```')
+            ? trim((string) preg_replace('/^```[a-zA-Z0-9]*\s*|\s*```$/', '', $content))
+            : $content;
+        if (self::is_structured_envelope($unfenced)) {
             return '';
         }
         // Strip a wrapping code fence (```lang ... ```), if any.
@@ -442,8 +568,12 @@ class PCM_SEO_AI
         }
         $vars['current_value'] = $current;
 
-        // Optimize an existing value when present and an optimize prompt exists.
+        // Optimize an existing value when present and an optimize prompt exists…
         $mode    = (!empty($current) && !empty($prompts[$use]['optimize'])) ? 'optimize' : 'generate';
+        // …but an EXPLICITLY PICKED template decides the mode: picking
+        // "<Field> — Generate" on a filled cell used to resolve the OPTIMIZE
+        // section, never match the pick, and silently run the optimize default.
+        $mode    = self::apply_template_mode($mode, (int) $user_id, $template_id, $use, (string) $current, $prompts[$use]);
         $default = $prompts[$use][$mode];
         // Honor the user's Settings → Prompts → SEO override (falls back to default).
         $tpl     = self::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
@@ -473,6 +603,9 @@ class PCM_SEO_AI
                 $value = sanitize_title($value);
             }
             if ($value === '') {
+                if (self::is_structured_envelope((string) ($result['content'] ?? ''))) {
+                    return new WP_Error('pcm_seo_envelope', __('The prompt behind this field returns a JSON envelope ({"html":…,"changes":…}) instead of a single value — check the template selected for this column in Templates → SEO.', 'power-creatives'), array('status' => 422));
+                }
                 return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
             }
             return array('field' => $field, 'value' => $value);

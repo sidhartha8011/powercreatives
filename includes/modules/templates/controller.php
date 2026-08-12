@@ -107,18 +107,39 @@ class PCM_REST_Templates extends PCM_REST_Base
             ));
         }
 
-        // Hide a shared (userId=0) template when the user has their own copy of it (same module+name)
-        // — e.g. after editing a seeded SEO template, which forks it into a user-owned override — so
-        // the list shows one row (their edited copy), not the original + the fork.
+        // Hide a shared (userId=0) template when the user has their own copy of it — e.g. after
+        // editing a seeded SEO template, which forks it into a user-owned override — so the list
+        // shows one row (their edited copy), not the original + the fork.
+        //
+        // Keyed on the SECTION (formData.type) first, name second. Name alone meant that RENAMING
+        // a fork un-hid the shared original, so the same section appeared twice and it was pot luck
+        // which one you then edited. Section is what fork_shared_template(), clear_other_defaults()
+        // and seo_template_prompt() all key on; this makes the list agree with them.
         $results = $results ?: array();
-        $owned = array();
+        $section_of = static function ($r) {
+            $fd = json_decode((string) $r->formData, true);
+            return (is_array($fd) && !empty($fd['type'])) ? (string) $fd['type'] : '';
+        };
+        $owned_sections = array();
+        $owned_names    = array();
         foreach ($results as $r) {
             if ((int) $r->userId === (int) $user->id) {
-                $owned[$r->module . '|' . $r->name] = true;
+                $owned_names[$r->module . '|' . $r->name] = true;
+                $s = $section_of($r);
+                if ($s !== '') {
+                    $owned_sections[$r->module . '|' . $s] = true;
+                }
             }
         }
-        $results = array_values(array_filter($results, static function ($r) use ($owned, $user) {
-            return (int) $r->userId !== 0 || empty($owned[$r->module . '|' . $r->name]);
+        $results = array_values(array_filter($results, static function ($r) use ($owned_sections, $owned_names, $section_of) {
+            if ((int) $r->userId !== 0) {
+                return true; // the user's own rows always show
+            }
+            $s = $section_of($r);
+            if ($s !== '' && !empty($owned_sections[$r->module . '|' . $s])) {
+                return false;
+            }
+            return empty($owned_names[$r->module . '|' . $r->name]);
         }));
 
         // Parse JSON formData and format for frontend
@@ -343,7 +364,7 @@ class PCM_REST_Templates extends PCM_REST_Base
      * @param int    $user_id Caller's PCM user id.
      * @return WP_REST_Response|WP_Error
      */
-    private function fork_shared_template(object $shared, array $params, int $user_id)
+    private function fork_shared_template(object $shared, array $params, int $user_id, int $is_default = 1)
     {
         global $wpdb;
         $table = PCM_Schema::table('templates');
@@ -374,19 +395,51 @@ class PCM_REST_Templates extends PCM_REST_Base
         $description = isset($params['description']) ? sanitize_textarea_field($params['description']) : (string) ($shared->description ?? '');
         $now         = current_time('mysql');
 
-        // If the user already forked this shared template (same module+name), update that copy rather
-        // than piling up duplicates (e.g. a stale dialog re-submitting the original shared id).
-        $prior = $wpdb->get_row($wpdb->prepare(
-            "SELECT id FROM $table WHERE userId = %d AND module = %s AND name = %s LIMIT 1",
-            $user_id,
-            $module,
-            $name
-        ));
+        // If the user already forked this shared template, update that copy rather than piling up
+        // duplicates (e.g. a stale dialog re-submitting the original shared id).
+        //
+        // Matched on the SECTION (formData.type), not the name. Everything else that identifies a
+        // template keys on type — clear_other_defaults() and seo_template_prompt() both do — so a
+        // name match was the odd one out, and RENAMING while editing slipped past it and inserted a
+        // SECOND fork for the same section. Two forks then both carried isDefault=1 until
+        // clear_other_defaults() demoted one, and generation resolved whichever won; that is the
+        // "sometimes it saves, sometimes the old prompt comes back" behaviour.
+        // Falls back to the name match for rows predating a type (older hand-made templates).
+        // formData is decoded in PHP rather than matched with JSON_EXTRACT: that needs
+        // MySQL 5.7+/MariaDB 10.2+, and WordPress supports older. clear_other_defaults()
+        // below already scans the same way.
+        $section = isset($form['type']) ? (string) $form['type'] : '';
+        $prior = null;
+        if ($section !== '') {
+            $mine = $wpdb->get_results($wpdb->prepare(
+                "SELECT id, formData FROM $table WHERE userId = %d AND module = %s ORDER BY id ASC",
+                $user_id,
+                $module
+            ));
+            foreach ($mine ?: array() as $row) {
+                $fd = json_decode((string) $row->formData, true);
+                if (is_array($fd) && (string) ($fd['type'] ?? '') === $section) {
+                    $prior = $row;
+                    break;
+                }
+            }
+        }
+        if (!$prior) {
+            $prior = $wpdb->get_row($wpdb->prepare(
+                "SELECT id FROM $table WHERE userId = %d AND module = %s AND name = %s LIMIT 1",
+                $user_id,
+                $module,
+                $name
+            ));
+        }
         if ($prior) {
             $wpdb->update($table, array(
+                // `name` included: the prior fork is now found by SECTION, so a rename
+                // lands on it — without this the new name would be silently dropped.
+                'name'        => $name,
                 'formData'    => wp_json_encode($form),
                 'description' => $description,
-                'isDefault'   => 1,
+                'isDefault'   => $is_default,
                 'updatedAt'   => $now,
             ), array('id' => (int) $prior->id, 'userId' => $user_id));
             $new_id = (int) $prior->id;
@@ -397,7 +450,7 @@ class PCM_REST_Templates extends PCM_REST_Base
                 'module'      => $module,
                 'formData'    => wp_json_encode($form),
                 'description' => $description,
-                'isDefault'   => 1, // the user's edited copy becomes their default for this module+type
+                'isDefault'   => $is_default, // an edited copy defaults to being the user's default
                 'createdAt'   => $now,
                 'updatedAt'   => $now,
             ));
@@ -406,7 +459,9 @@ class PCM_REST_Templates extends PCM_REST_Base
                 return $this->error('Failed to save template.', 500);
             }
         }
-        $this->clear_other_defaults($new_id, $user_id, $module, $form['type'] ?? null);
+        if ($is_default) {
+            $this->clear_other_defaults($new_id, $user_id, $module, $form['type'] ?? null);
+        }
 
         $row = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table WHERE id = %d", $new_id));
         return $this->success($this->format_template($row));
@@ -570,6 +625,20 @@ class PCM_REST_Templates extends PCM_REST_Base
         ));
 
         if (!$existing) {
+            // A SHARED system template (userId=0) — every seeded SEO prompt is one, and each
+            // ships isDefault=1, so its row toggle renders ON and the first click landed here.
+            // The owner-only WHERE matched nothing and this answered "Template not found.",
+            // which is the error reported against Templates → SEO templates.
+            // update_item() and delete_item() both already accommodate shared rows; this was
+            // the one write path that did not. Fork it, exactly like editing does, so starring
+            // a seeded template produces the user's own copy instead of an error.
+            $shared = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM $table WHERE id = %d AND userId = 0",
+                $id
+            ));
+            if ($shared) {
+                return $this->fork_shared_template($shared, array(), (int) $user->id, $is_default);
+            }
             return $this->not_found('Template');
         }
 
