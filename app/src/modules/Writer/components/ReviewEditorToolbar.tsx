@@ -212,14 +212,8 @@ export function ReviewEditorToolbar({
       <div className="flex items-center gap-2">
         {/* Model dropdown — pulls available models from Integrations, defaults from Settings */}
         <Select value={selectedModelId} onValueChange={setSelectedModelId}>
-          <SelectTrigger
-            style={{
-              height: 28,
-              fontSize: typography.xs,
-              borderColor: colors.borderLight,
-              width: 160,
-            }}
-          >
+          {/* Width only — height/font/border come from the shared trigger variant. */}
+          <SelectTrigger className="w-40">
             <SelectValue placeholder="Select Model" />
           </SelectTrigger>
           <SelectContent>

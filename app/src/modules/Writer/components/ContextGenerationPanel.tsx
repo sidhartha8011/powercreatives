@@ -222,7 +222,6 @@ export function ContextGenerationPanel({ onCollapse }: Props) {
                   value={doc.metaTitle}
                   onChange={(e) => updateDoc({ metaTitle: e.target.value })}
                   placeholder="Enter SEO title..."
-                  style={{ background: colors.bgSurface }}
                 />
               </div>
               <div>
@@ -234,7 +233,6 @@ export function ContextGenerationPanel({ onCollapse }: Props) {
                   onChange={(e) => updateDoc({ metaDescription: e.target.value })}
                   placeholder="Enter SEO description..."
                   className="resize-none"
-                  style={{ background: colors.bgSurface }}
                   rows={3}
                 />
               </div>
@@ -245,8 +243,7 @@ export function ContextGenerationPanel({ onCollapse }: Props) {
                 <Input
                   value={doc.slug}
                   onChange={(e) => updateDoc({ slug: e.target.value })}
-                  className="font-mono"
-                  style={{ background: colors.bgSurface, fontSize: typography.xs }}
+                  className="font-mono text-xs"
                 />
               </div>
               <div>
@@ -257,7 +254,7 @@ export function ContextGenerationPanel({ onCollapse }: Props) {
                   value={doc.schemaType}
                   onValueChange={(val: any) => updateDoc({ schemaType: val })}
                 >
-                  <SelectTrigger style={{ background: colors.bgSurface }}>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select schema..." />
                   </SelectTrigger>
                   <SelectContent>

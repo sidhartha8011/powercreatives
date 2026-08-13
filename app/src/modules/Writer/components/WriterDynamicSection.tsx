@@ -3,7 +3,11 @@ import type {
   WriterSectionConfig,
   WriterFieldConfig,
 } from "../types";
+// Shared controls only (20260715 card: same accordions + the same shared
+// dropdowns/inputs as Ads and Video — no bespoke grey-styled ones).
 import { colors } from "@/components/shared/design-tokens";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -55,17 +59,12 @@ function DynamicListInput({
     <div className="space-y-2">
       {items.map((item, idx) => (
         <div key={idx} className="flex items-center gap-2">
-          <input
+          <Input
             type="url"
             value={item}
             onChange={(e) => handleUpdate(idx, e.target.value)}
             placeholder={placeholder}
-            className="flex-1 rounded-md border px-3 py-2 text-sm outline-none"
-            style={{
-              borderColor: colors.border,
-              background: colors.bgSurface,
-              color: colors.text,
-            }}
+            className="flex-1"
           />
           <button
             type="button"
@@ -101,23 +100,15 @@ function FieldRenderer({
   value: any;
   onChange: (value: any) => void;
 }) {
-  const baseInputStyle: React.CSSProperties = {
-    borderColor: colors.border,
-    background: colors.bgSurface,
-    color: colors.text,
-  };
-
   switch (field.inputType) {
     case "text":
     case "url":
       return (
-        <input
+        <Input
           type={field.inputType === "url" ? "url" : "text"}
           value={(value as string) ?? ""}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
-          className="w-full rounded-md border px-3 py-2 text-sm outline-none"
-          style={baseInputStyle}
         />
       );
 
@@ -133,13 +124,12 @@ function FieldRenderer({
 
     case "textarea":
       return (
-        <textarea
+        <Textarea
           value={(value as string) ?? ""}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
           rows={3}
-          className="w-full rounded-md border px-3 py-2 text-sm outline-none resize-y"
-          style={baseInputStyle}
+          className="resize-y"
         />
       );
 

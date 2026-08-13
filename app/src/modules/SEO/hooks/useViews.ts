@@ -36,6 +36,10 @@ export interface UseViewsResult {
   setDefaultView: (id: number, isDefault: boolean) => Promise<void>;
   renameView: (id: number, name: string) => Promise<void>;
   setPinnedView: (id: number, isPinned: boolean) => Promise<void>;
+  /** Overwrite an EXISTING view's config with the table's current columns + filters. */
+  updateView: (id: number, config: ViewConfig) => Promise<void>;
+  /** Persist the drag-and-drop display order (full id list, first = leftmost). */
+  reorderViews: (ids: number[]) => Promise<void>;
 }
 
 export function useViews(): UseViewsResult {
@@ -47,6 +51,8 @@ export function useViews(): UseViewsResult {
   const setDefaultMutation = trpc.seo.setDefaultView.useMutation();
   const renameMutation = trpc.seo.renameView.useMutation();
   const pinMutation = trpc.seo.setPinnedView.useMutation();
+  const updateMutation = trpc.seo.updateView.useMutation();
+  const reorderMutation = trpc.seo.reorderViews.useMutation();
 
   const views = useMemo<SeoView[]>(() => {
     if (!Array.isArray(listQuery.data)) return [];
@@ -133,5 +139,43 @@ export function useViews(): UseViewsResult {
     [pinMutation, invalidate],
   );
 
-  return { views, isLoading: listQuery.isLoading, saveView, removeView, setDefaultView, renameView, setPinnedView };
+  const updateView = useCallback(
+    (id: number, config: ViewConfig): Promise<void> =>
+      updateMutation
+        .mutateAsync({ id, config })
+        .then(() => {
+          void invalidate();
+          toast.success('View updated with the current columns + filters');
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'Failed to update view');
+        }),
+    [updateMutation, invalidate],
+  );
+
+  const reorderViews = useCallback(
+    (ids: number[]): Promise<void> => {
+      // Optimistic: reorder the cached list immediately so the dropped tab stays where the
+      // user put it (a round trip before anything moves reads as "the drag didn't work").
+      queryClient.setQueryData(LIST_KEY, (old: unknown) => {
+        if (!Array.isArray(old)) return old;
+        const pos = new Map(ids.map((id, i) => [id, i]));
+        return [...(old as SeoView[])].sort((a, b) => {
+          const pa = pos.has(Number(a.id)) ? (pos.get(Number(a.id)) as number) : Number.MAX_SAFE_INTEGER;
+          const pb = pos.has(Number(b.id)) ? (pos.get(Number(b.id)) as number) : Number.MAX_SAFE_INTEGER;
+          return pa === pb ? Number(b.id) - Number(a.id) : pa - pb;
+        });
+      });
+      return reorderMutation
+        .mutateAsync({ ids })
+        .then(() => { void invalidate(); })   // settle on the server's ownership-filtered truth
+        .catch((err: unknown) => {
+          void invalidate();                  // roll back the optimistic order
+          toast.error(err instanceof Error ? err.message : 'Failed to save the tab order');
+        });
+    },
+    [reorderMutation, queryClient, invalidate],
+  );
+
+  return { views, isLoading: listQuery.isLoading, saveView, removeView, setDefaultView, renameView, setPinnedView, updateView, reorderViews };
 }

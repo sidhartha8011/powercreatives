@@ -133,9 +133,11 @@ class PCM_REST_SEO extends PCM_REST_Base
             // Saved views (per-user column/filter configs).
             array('GET',    '/seo/views',                'views_list'),
             array('POST',   '/seo/views',                'views_create'),
+            array('PATCH',  '/seo/views/order',          'views_reorder'),
             array('PATCH',  '/seo/views/(?P<id>\d+)/default', 'views_set_default'),
             array('PATCH',  '/seo/views/(?P<id>\d+)/name',    'views_rename'),
             array('PATCH',  '/seo/views/(?P<id>\d+)/pin',     'views_set_pinned'),
+            array('PATCH',  '/seo/views/(?P<id>\d+)/config',  'views_update_config'),
             array('DELETE', '/seo/views/(?P<id>\d+)',     'views_delete'),
             // AI Readiness (site-wide → admin only).
             array('GET',  '/seo/ai-readiness',           'air_status',   array(), 'manage_options'),
@@ -1614,6 +1616,37 @@ class PCM_REST_SEO extends PCM_REST_Base
  * PATCH /seo/views/{id}/name — rename a saved view. Input: { name }.
  * Ownership is enforced in PCM_SEO_Views::rename_view(); a view that isn't yours 404s.
  */
+    /** PATCH /seo/views/order — persist the drag-and-drop display order. Input: { ids: int[] }.
+     *  Ownership is enforced inside set_view_order (foreign/stale ids are dropped, not stored). */
+    public function views_reorder(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $params = $request->get_json_params() ?: array();
+        $ids    = $params['ids'] ?? null;
+        if (!is_array($ids)) {
+            return $this->error('ids must be an array of view ids.', 400, 'pcm_seo_view_bad_order');
+        }
+        $user = $this->get_current_pcm_user();
+        PCM_SEO_Views::set_view_order((int) $user->id, array_map('absint', $ids));
+        return $this->success(array('ids' => PCM_SEO_Views::view_order((int) $user->id)));
+    }
+
+    /** PATCH /seo/views/{id}/config — overwrite a saved view with the CURRENT columns +
+     *  filters, so a tweaked filter updates the existing view instead of forcing a new one. */
+    public function views_update_config(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $id     = absint($request->get_param('id'));
+        $params = $request->get_json_params() ?: array();
+        $config = $params['config'] ?? null;
+        if (!is_array($config)) {
+            return $this->error('Config must be an object.', 400, 'pcm_seo_view_bad_config');
+        }
+        $user = $this->get_current_pcm_user();
+        if (!PCM_SEO_Views::update_view_config($id, (int) $user->id, $config)) {
+            return $this->not_found('View');
+        }
+        return $this->success(array('id' => $id, 'config' => $config));
+    }
+
     /** PATCH /seo/views/{id}/pin — pin/unpin a view to the tab strip. Input: { isPinned }. */
     public function views_set_pinned(WP_REST_Request $request): WP_REST_Response|WP_Error
     {

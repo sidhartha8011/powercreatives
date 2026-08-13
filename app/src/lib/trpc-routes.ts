@@ -935,6 +935,16 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "PATCH",
         transform: (input: any) => ({ url: `seo/views/${input.id}/pin`, body: { isPinned: input.isPinned } }),
     },
+    "seo.reorderViews": {
+        endpoint: "seo/views",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `seo/views/order`, body: { ids: input.ids } }),
+    },
+    "seo.updateView": {
+        endpoint: "seo/views",
+        method: "PATCH",
+        transform: (input: any) => ({ url: `seo/views/${input.id}/config`, body: { config: input.config } }),
+    },
     "seo.renameView": {
         endpoint: "seo/views",
         method: "PATCH",

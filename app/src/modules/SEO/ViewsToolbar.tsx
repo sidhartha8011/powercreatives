@@ -35,6 +35,9 @@ interface ViewsToolbarProps {
   onApplyView: (view: SeoView) => void;
   onResetView: () => void;
   onSaveView: (name: string) => void;
+  /** Overwrite the APPLIED view with the current columns + filters (shown only
+   *  while a saved view is applied, so a filter tweak needn't become a new view). */
+  onUpdateView?: () => void;
   onDeleteView: (id: number) => void;
   onRenameView: (id: number, name: string) => void;
   onPinView: (id: number, isPinned: boolean) => void;
@@ -55,6 +58,7 @@ export function ViewsToolbar({
   onApplyView,
   onResetView,
   onSaveView,
+  onUpdateView,
   onDeleteView,
   onRenameView,
   onPinView,
@@ -205,6 +209,24 @@ export function ViewsToolbar({
             </DropdownMenuCheckboxItem>
           ))}
           <DropdownMenuSeparator />
+          {/* The APPLIED view surfaces here so a tweaked filter can overwrite it
+              in place — no more saving a new view for every modification. */}
+          {appliedName && onUpdateView && (
+            <div className="px-2 pt-1.5" onClick={(e) => e.stopPropagation()}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-full justify-start gap-1.5"
+                onClick={() => { onUpdateView(); setColsOpen(false); }}
+              >
+                <Check className="h-3.5 w-3.5 text-primary" />
+                <span className="truncate">Update “{appliedName}”</span>
+              </Button>
+              <p className="pb-0.5 pt-1 text-[10px] text-muted-foreground/70">
+                Overwrites the applied view with the current columns + filters.
+              </p>
+            </div>
+          )}
           <div className="flex items-center gap-1.5 px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
             <Input
               value={newName}

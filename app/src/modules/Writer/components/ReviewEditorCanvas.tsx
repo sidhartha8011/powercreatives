@@ -304,14 +304,8 @@ export function ReviewEditorCanvas() {
       >
         {/* Model dropdown */}
         <Select value={selectedModelId} onValueChange={setSelectedModelId}>
-          <SelectTrigger
-            style={{
-              height: 28,
-              fontSize: typography.xs,
-              borderColor: colors.borderLight,
-              width: 160,
-            }}
-          >
+          {/* Width only — height/font/border come from the shared trigger variant. */}
+          <SelectTrigger className="w-40">
             <SelectValue placeholder="Select Model" />
           </SelectTrigger>
           <SelectContent>

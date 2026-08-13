@@ -721,8 +721,11 @@ export function SEOModule() {
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   // Saved Views (per-user, persisted via the seo REST API).
-  const { views, saveView, removeView, setDefaultView, renameView, setPinnedView } = useViews();
+  const { views, saveView, removeView, setDefaultView, renameView, setPinnedView, updateView, reorderViews } = useViews();
   const [appliedViewId, setAppliedViewId] = useState<number | null>(null);
+  // Drag-and-drop reordering of the pinned-view TABS (persisted; the dropdown
+  // renders the same server-ordered list, so both places always agree).
+  const [dragViewId, setDragViewId] = useState<number | null>(null);
 
   const applyView = useCallback((view: SeoView) => {
     const allTrue = Object.fromEntries(TOGGLE_COLUMNS.map((c) => [c.key, true]));
@@ -740,6 +743,28 @@ export function SEOModule() {
   const handleSaveView = useCallback((name: string) => {
     void saveView(name, { columns: cols, filters: filterValues });
   }, [saveView, cols, filterValues]);
+
+  // Overwrite the APPLIED view with the current columns + filters — "update an
+  // existing instead of always needing to save a new one for every change".
+  const handleUpdateView = useCallback(() => {
+    if (appliedViewId === null) return;
+    void updateView(appliedViewId, { columns: cols, filters: filterValues });
+  }, [appliedViewId, updateView, cols, filterValues]);
+
+  // Drop a dragged tab onto another: rearrange within the pinned subsequence and
+  // persist the FULL view order (unpinned views keep their relative places).
+  const handleTabDrop = useCallback((targetId: number) => {
+    if (dragViewId === null || dragViewId === targetId) return;
+    const pinnedIds = views.filter((v) => v.isPinned).map((v) => v.id);
+    const from = pinnedIds.indexOf(dragViewId);
+    const to = pinnedIds.indexOf(targetId);
+    if (from === -1 || to === -1) return;
+    pinnedIds.splice(to, 0, ...pinnedIds.splice(from, 1));
+    const pinnedSet = new Set(pinnedIds);
+    let p = 0;
+    const full = views.map((v) => (pinnedSet.has(v.id) ? pinnedIds[p++] : v.id));
+    void reorderViews(full);
+  }, [dragViewId, views, reorderViews]);
 
   const handleDeleteView = useCallback((id: number) => {
     void removeView(id);
@@ -1665,6 +1690,7 @@ export function SEOModule() {
             onApplyView={applyView}
             onResetView={resetView}
             onSaveView={handleSaveView}
+            onUpdateView={handleUpdateView}
             onDeleteView={handleDeleteView}
             onRenameView={handleRenameView}
             onPinView={handlePinView}
@@ -1777,6 +1803,7 @@ export function SEOModule() {
             onApplyView={applyView}
             onResetView={resetView}
             onSaveView={handleSaveView}
+            onUpdateView={handleUpdateView}
             onDeleteView={handleDeleteView}
             onRenameView={handleRenameView}
             onPinView={handlePinView}
@@ -1805,12 +1832,21 @@ export function SEOModule() {
             All
           </button>
           {views.filter((v) => v.isPinned).map((v) => (
+            // Draggable (native DnD, no new dependency): drop on another tab to
+            // reorder; the order persists and the Views dropdown mirrors it.
             <button
               key={v.id}
               type="button"
+              draggable
+              onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDragViewId(v.id); }}
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+              onDrop={(e) => { e.preventDefault(); handleTabDrop(v.id); setDragViewId(null); }}
+              onDragEnd={() => setDragViewId(null)}
               onClick={() => applyView(v)}
-              title={`Apply “${v.name}”`}
-              className={`shrink-0 max-w-[12rem] truncate border-b-2 px-3 py-1.5 text-xs transition-colors ${
+              title={`Apply “${v.name}” — drag to reorder`}
+              className={`shrink-0 max-w-[12rem] cursor-grab truncate border-b-2 px-3 py-1.5 text-xs transition-colors active:cursor-grabbing ${
+                dragViewId === v.id ? 'opacity-40' : ''
+              } ${
                 appliedViewId === v.id
                   ? 'border-primary text-primary font-medium'
                   : 'border-transparent text-muted-foreground hover:text-foreground'

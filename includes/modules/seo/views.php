@@ -26,6 +26,46 @@ class PCM_SEO_Views
     /** Option holding pinned view ids: userId => int[]. */
     private const PINNED_OPTION = 'pcm_seo_pinned_views';
 
+    /** Option holding each user's view DISPLAY ORDER: userId => int[] (view ids, first = leftmost).
+     *  Same option-not-column rationale as pinning: order is a per-user display preference. */
+    private const ORDER_OPTION = 'pcm_seo_view_order';
+
+    /** The user's saved display order (view ids). Empty until they first drag a tab. */
+    public static function view_order(int $userId): array
+    {
+        $map = get_option(self::ORDER_OPTION);
+        $ids = (is_array($map) && isset($map[$userId]) && is_array($map[$userId])) ? $map[$userId] : array();
+        return array_values(array_unique(array_map('intval', $ids)));
+    }
+
+    /**
+     * Persist a user's view order (drag-and-drop on the tab strip). Ids are filtered to views
+     * the user actually OWNS — a forged id can't smuggle someone else's view into the order,
+     * and a stale id (deleted view) is silently dropped. The stored list may be partial:
+     * list_views() places ordered ids first and appends the rest, so new views still appear.
+     */
+    public static function set_view_order(int $userId, array $ids): bool
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_views');
+        $ids   = array_values(array_unique(array_map('intval', $ids)));
+        if (!empty($ids)) {
+            $ph = implode(',', array_fill(0, count($ids), '%d'));
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $owned = array_map('intval', (array) $wpdb->get_col($wpdb->prepare(
+                "SELECT id FROM {$table} WHERE userId = %d AND id IN ($ph)",
+                $userId,
+                ...$ids
+            )));
+            $ids = array_values(array_filter($ids, static fn($id) => in_array($id, $owned, true)));
+        }
+        $map = get_option(self::ORDER_OPTION);
+        if (!is_array($map)) { $map = array(); }
+        $map[$userId] = $ids;
+        update_option(self::ORDER_OPTION, $map, false);
+        return true;
+    }
+
     /**
      * Ids this user has pinned to the tab strip.
      *
@@ -90,7 +130,50 @@ class PCM_SEO_Views
                 'isPinned'  => in_array((int) $row->id, $pinned, true),
             );
         }
+
+        // Apply the user's saved display order: ordered ids first (in that order), any view
+        // not yet in the order list keeps its newest-first position AFTER them. This single
+        // sort is what makes the tab strip and the dropdown agree ("the order should be the
+        // same in both places") — both render this list as-is.
+        $order = self::view_order($userId);
+        if (!empty($order)) {
+            $pos = array_flip($order);
+            usort($views, static function ($a, $b) use ($pos) {
+                $pa = $pos[$a['id']] ?? PHP_INT_MAX;
+                $pb = $pos[$b['id']] ?? PHP_INT_MAX;
+                if ($pa === $pb) {
+                    return $b['id'] <=> $a['id'];   // both unordered → newest first (as before)
+                }
+                return $pa <=> $pb;
+            });
+        }
         return $views;
+    }
+
+    /**
+     * Overwrite a saved view's config with the table's CURRENT columns + filters ("update an
+     * existing instead of always needing to save a new one"). Ownership-checked like every
+     * other mutator; name/default/pin are untouched.
+     */
+    public static function update_view_config(int $id, int $userId, array $config): bool
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('seo_views');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+        $owned = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table} WHERE id = %d AND userId = %d",
+            $id,
+            $userId
+        ));
+        if ($owned === 0) {
+            return false;
+        }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        return $wpdb->update(
+            $table,
+            array('config' => wp_json_encode($config), 'updatedAt' => current_time('mysql')),
+            array('id' => $id, 'userId' => $userId)
+        ) !== false;
     }
 
     /**

@@ -14035,3 +14035,114 @@ excluded. Archive-verified: connector template carries walk_b64 + _id tracking
 sanitize_link_html + the /links/{idx}/html routes; the built bundle carries
 saveHtml ('Link HTML saved'). Connector build self-bumps → connected sites'
 self-update will offer the Brizy-capable build.
+
+## 2026-08-13 — Writer-Updates PDF: drawer split, honest buttons, greys removed
+
+1-Add-Writer-Updates.pdf, item by item:
+- Default-closed panels + independent open/close states: ALREADY SHIPPED
+  (defaultSize=0 everywhere + the desiredCollapsed drift-guard is exactly the
+  "settings opens again" bug) — now PINNED by tests, and extended to the new
+  4th side panel.
+- Revisions drawer: was one panel with a History/AI-Review tab toggle (the
+  screenshot's "AI REVIEW" header). SPLIT: RevisionsPanel.tsx = pure history
+  queue (header "Revisions", restore intact); AiReviewPanel.tsx = the review
+  pipeline in its OWN collapsible drawer with its own toolbar toggle
+  (Sparkles). AiRevisionsPanel.tsx deleted; no tab toggle anywhere.
+- Buttons: Publish stays the ONLY always-blue lit action. The approvals
+  button is variant="subtle" always (never the lit one; no approval-required
+  flag exists anywhere in the model, so lit-when-required has no data to read
+  — the nearest honest signal is state, not requirement). Sending now marks
+  the sent (non-published) articles status='review', and the button label
+  flips to "Sent to Approval".
+- "Same accordions as Ads/Video, remove the grey ones": AccordionSection was
+  already shared; the DIVERGENCE was the controls. WriterDynamicSection's raw
+  grey <input>/<textarea> → shared Input/Textarea; ContextGenerationPanel's
+  bgSurface style overrides (Input/Textarea/SelectTrigger) removed;
+  ReviewEditorCanvas + ReviewEditorToolbar model dropdowns lose their inline
+  height/font/border styles (className="w-40" only — the shared trigger
+  variant styles them). No inline no hardcoded, as ordered.
+
+Files: Writer/index.tsx, components/{RevisionsPanel,AiReviewPanel}.tsx (new),
+AiRevisionsPanel.tsx (deleted), WriterDynamicSection.tsx,
+ContextGenerationPanel.tsx, ReviewEditorCanvas.tsx, ReviewEditorToolbar.tsx.
+
+Verified: NEW tests/standalone/writer_updates_test.mjs 31/31 (defaults,
+drift-guard on all four panels, clean split, button contract, shared-control
+sweep incl. inline-styled SelectTrigger ban). Negative control 8/8 CAUGHT
+(incl. resurrecting the combined panel file). Suite 40/40. Build clean; tsc
+still baseline 58 (the one Writer TS error pre-exists on HEAD — verified by
+stashing). Zip NOT rebuilt.
+
+## 2026-08-14 — Zip rebuilt with the Writer-Updates round
+
+python scripts/build_zip.py → 658 files / 3.47 MB, root powerplatform/, tests/
+excluded, dated copy now power-creatives-2026-08-14.zip. Archive-verified in
+the minified bundle: 'Sent to Approval' state label, split drawers ('Show
+Revisions' + 'Run AI Review'), and the status:'review' mark-on-send.
+
+## 2026-08-14 — "Show Revisions" dead click: expand() is pivot-bound; setLayout now imposes intent
+
+Owner: "when i click on show revision it didn't open." Root cause EXECUTED and
+reproduced with the real library math (react-resizable-panels 3.0.6):
+expand() frees space only from panels AFTER the target. After the drawer
+split, Revisions' only follower is the AI Review panel — collapsed at 0 with
+nothing to give — so expand() computed an UNCHANGED layout and silently
+no-oped. The old combined panel was LAST (pulls from upstream), which is why
+this regressed only after the split; Queue/Context/Review all had solvent
+followers, hiding the asymmetry.
+
+Fix (Writer/index.tsx): per-panel refs + expand()/collapse() are GONE. One
+panelGroupRef + applyDesiredLayout() computes ALL five sizes from the
+desiredCollapsed ref (editor = 100 - drawers; open sizes 14/20/18/18 keep the
+editor at its min 30 even fully open) and imposes them via the group's
+setLayout — direction-free, order-free. Toggles, header collapses, AND the
+drift guards all route through it.
+
+Verified: NEW tests/standalone/writer_panel_expand_test.mjs 18/18 — extracts
+adjustLayoutByDelta + validatePanelGroupLayout from the INSTALLED dist (slice
+lesson: anchor the open paren, end on a bare `}` line — `}) {` fooled the
+first attempt) and EXECUTES them: §1 the no-op click reproduced, §2 the three
+working toggles explained, §3 every desired layout validates unchanged.
+writer_updates_test.mjs guards updated to the applyDesiredLayout shape
+(31/31). Negative control 6/6 CAUGHT (incl. resurrecting per-panel expand and
+overflowing the editor min). Suite 41/41. Build clean, tsc baseline 58. Zip
+rebuilt 658/3.47MB — bundle carries the whole-group setLayout, no per-panel
+expand remains.
+
+## 2026-08-14 — SEO Move-tabs PDF: drag-reorder tabs (one order, both places) + update-view-in-place
+
+2-SEO-Table-Move-tabs.pdf, both items built:
+
+1. Pinned view TABS are drag-and-drop reorderable (native DnD, no new dep).
+   Order persists per user in option pcm_seo_view_order (same option-not-column
+   rationale as pinning; ownership-filtered on write so a forged id can't
+   enter the order; stale ids drop silently). list_views() applies the order
+   server-side — ordered ids first, the rest newest-first after — and BOTH
+   surfaces (tab strip + Views dropdown) render that one list as-is, so "the
+   order should be the same in both places" holds by construction. New views
+   still appear (after the ordered ones). Reorder is optimistic client-side
+   (setQueryData) with invalidate-rollback on failure.
+
+2. Columns panel: while a saved view is APPLIED, an "Update <name>" button
+   overwrites that view's config with the CURRENT columns + filters
+   (PCM_SEO_Views::update_view_config, ownership-checked, touches updatedAt)
+   — no more saving a new view for every filter tweak. Save-as-new stays.
+
+Files: includes/modules/seo/views.php (+view_order/set_view_order/
+update_view_config, sorted list_views), controller.php (PATCH /seo/views/order
++ /seo/views/{id}/config), trpc-routes.ts (seo.reorderViews/seo.updateView),
+hooks/useViews.ts, SEO/index.tsx (draggable tabs + handleTabDrop +
+handleUpdateView), ViewsToolbar.tsx (gated Update button).
+
+Verified: NEW tests/standalone/seo_view_tabs_test.php 27/27 — the REAL
+PCM_SEO_Views is require'd and EXECUTED (order round-trip, foreign-id drop,
+per-user isolation, sorted list incl. new-view fallback + no-order regression,
+config overwrite + ownership refusal). Negative control 8/8 CAUGHT. Suite
+42/42. php -l clean, build clean, tsc baseline 58. Zip NOT rebuilt.
+
+## 2026-08-14 — Zip rebuilt with the Move-tabs round
+
+python scripts/build_zip.py → 658 files / 3.47 MB, root powerplatform/, tests/
+excluded. Archive-verified: hub carries set_view_order/update_view_config +
+the /seo/views/order and /{id}/config routes; the minified bundle carries the
+draggable tabs ('drag to reorder') and the Update-view helper copy.
