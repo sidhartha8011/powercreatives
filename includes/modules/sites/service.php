@@ -398,6 +398,49 @@ class PCM_Sites_Service
      * @param object $site Site DB row.
      * @return array{switched:bool,from:string,to:string,message:string}
      */
+    /**
+     * Connector state on a connected site, honestly classified:
+     *   active   — a connector copy is running (routes should answer)
+     *   inactive — installed but no copy active (one PUT away from working)
+     *   missing  — the plugins list is readable and holds NO connector
+     *   unknown  — the plugins list is unreadable (app-password user lacks
+     *              activate_plugins, or the site errored) — NOT the same as
+     *              missing, and the UI must not nag on it.
+     *
+     * Born from massagegoteborg.nu: the SEO table sat silently blank because
+     * the site had no connector at all, and nothing anywhere said so.
+     *
+     * @return array{status:string,version:string,copies:int}
+     */
+    public static function connector_status(object $site): array
+    {
+        $res = self::remote_rest($site, 'GET', '/wp/v2/plugins', array('_fields' => 'plugin,name,version,status'));
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return array('status' => 'unknown', 'version' => '', 'copies' => 0);
+        }
+        $copies = array();
+        foreach ($res['body'] as $plugin) {
+            if (stripos((string) ($plugin['name'] ?? ''), 'Power Creatives Connector') === false) {
+                continue;
+            }
+            $copies[] = array(
+                'version' => (string) ($plugin['version'] ?? ''),
+                'active'  => ($plugin['status'] ?? '') === 'active',
+            );
+        }
+        usort($copies, static fn($a, $b) => version_compare($b['version'], $a['version']));
+        foreach ($copies as $c) {
+            if ($c['active']) {
+                return array('status' => 'active', 'version' => $c['version'], 'copies' => count($copies));
+            }
+        }
+        return array(
+            'status'  => count($copies) > 0 ? 'inactive' : 'missing',
+            'version' => (string) ($copies[0]['version'] ?? ''),
+            'copies'  => count($copies),
+        );
+    }
+
     public static function activate_newest_connector(object $site): array
     {
         $out = array('switched' => false, 'from' => '', 'to' => '', 'message' => '');

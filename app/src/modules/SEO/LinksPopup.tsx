@@ -2,8 +2,8 @@
  * LinksPopup — inspect & edit a post/page's links (internal / external / dead).
  *
  * Opened by clicking a count in the Internal / External / Dead columns. Renders the links
- * in the SHARED SEO spreadsheet table (seo-table.tsx) with click-to-edit Anchor + To cells
- * (Enter/blur rewrites the <a> on the page; Esc cancels). Remove unwraps the <a> (keeps the
+ * in the SHARED SEO spreadsheet table (seo-table.tsx) with click-to-edit Anchor, To + HTML
+ * cells (Enter/blur rewrites the <a> on the page; Esc cancels). Remove unwraps the <a> (keeps the
  * text). For the Dead view, "Remove all dead links" unwraps every broken link in one click.
  * Works on the local site and (via the connector) on connected sites.
  */
@@ -97,6 +97,9 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
   const removeLocal = trpc.seo.removeLink.useMutation();
   const updateRemote = trpc.seo.remoteUpdateLink.useMutation();
   const removeRemote = trpc.seo.remoteRemoveLink.useMutation();
+  // Raw-HTML edit (the popup's HTML column) — replaces the whole <a> element on the page.
+  const updateHtmlLocal = trpc.seo.updateLinkHtml.useMutation();
+  const updateHtmlRemote = trpc.seo.remoteUpdateLinkHtml.useMutation();
   // Link optimization (card): rel toggle + whole-element delete with a restorable ledger.
   const relLocal = trpc.seo.setLinkRel.useMutation();
   const relRemote = trpc.seo.remoteSetLinkRel.useMutation();
@@ -212,6 +215,36 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
       );
     } catch (err: any) {
       toast.error(err?.message || 'Failed to save the link');
+    } finally {
+      setBusyIdx(null);
+    }
+  };
+
+  // Save user-edited raw HTML — the whole <a> element is replaced on the page (sanitized
+  // server-side; must stay a single <a …>…</a>). Body links only: a builder link's HTML is
+  // synthesized from builder data, so raw-markup replacement can't reach it.
+  const saveHtml = async (l: LinkRow, val: string) => {
+    if (val.trim() === l.html.trim()) return;
+    if (!/^<a\s/i.test(val.trim()) || !/<\/a>\s*$/i.test(val.trim())) {
+      toast.error('The HTML must be a single link element: <a href="…">text</a>.');
+      return;
+    }
+    setBusyIdx(l.id);
+    try {
+      const res = isLocal
+        ? await updateHtmlLocal.mutateAsync({ id: postId, index: l.id, html: val } as any)
+        : await updateHtmlRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, html: val } as any);
+      applyResult(res);
+      // Keep the edited link visible after the re-scan, even if its href (and thus its
+      // internal/external/broken bucket) changed with the new markup.
+      const href = /href=['"]([^'"]+)['"]/i.exec(val)?.[1];
+      setJustEditedTo(href ?? l.to);
+      toast.success(
+        'Link HTML saved. If the live page still shows the old link, clear the site/CDN cache (e.g. Cloudflare).'
+        + (kind === 'broken' ? ' If it’s no longer flagged broken it leaves this Dead-links list — re-scan or check the Internal/External counts.' : ''),
+      );
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to save the link HTML');
     } finally {
       setBusyIdx(null);
     }
@@ -355,8 +388,8 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
         <DialogHeader>
           <DialogTitle className="capitalize">{kind === 'broken' ? 'Dead' : kind} links · {title}</DialogTitle>
           <DialogDescription>
-            Click a link's text or target to edit it (Enter saves, Esc cancels) — the change is rewritten on
-            the page. Remove unwraps the link (keeps the text). Redirect opens the target in a new tab.
+            Click a link's text, target, or HTML to edit it (Enter saves, Esc cancels) — the change is
+            rewritten on the page. Remove unwraps the link (keeps the text). Redirect opens the target in a new tab.
           </DialogDescription>
         </DialogHeader>
 
@@ -473,7 +506,21 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
                           </a>
                         )}
                       </TableCell>
-                      <TableCell className="text-muted-foreground"><div className="truncate font-mono text-[10px]" title={l.html}>{l.html}</div></TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {editable && !l.elId ? (
+                          // Click-to-edit raw markup (card: "every column … edit manually and save").
+                          <div className="font-mono text-[10px]">
+                            <EditableTextCell value={l.html} onSave={(v) => saveHtml(l, v)} />
+                          </div>
+                        ) : (
+                          <div
+                            className="truncate font-mono text-[10px]"
+                            title={l.elId ? `${l.html} — builder link: its HTML is generated from builder data; edit its Anchor or To instead` : l.html}
+                          >
+                            {l.html}
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell className="text-center"><StatusCell link={l} /></TableCell>
                       <TableCell>
                         <div className="flex items-center justify-center gap-1">

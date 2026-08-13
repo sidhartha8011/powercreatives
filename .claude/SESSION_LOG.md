@@ -13779,3 +13779,259 @@ VERIFIED
   verified in the bundle.
 - UNVERIFIED VISUALLY — no dev server; this is a layout-heavy change, worth one open of the Create
   Strategy dialog across all three source tabs before calling it reviewed.
+
+## 2026-08-13 — SEO table: empty meta columns now read the RENDERED page tags (local + connected)
+Reported (massagegoteborg.nu): Meta Title / Meta Description columns blank while every live page has
+perfect tags (owner's Rank-Math-style inspector screenshot: 65-char title, 157-char description).
+
+ROOT CAUSE — the table only read the SEO plugin's STORED per-post meta (remote_row's $pick over
+_yoast_wpseo_title/rank_math_title/…, local's seo_get). Yoast/RankMath/SEOPress only STORE a value
+when someone typed a per-post override; template-generated titles/descriptions ("%title% – %site%")
+exist nowhere in the DB. A site can be perfectly optimized and render a fully blank table.
+
+FIX — empty cells fall back to what the page ACTUALLY renders; stored meta always wins:
+  - PCM_SEO_Local::parse_head_tags(): head-SCOPED (a <title> in an inline SVG in the body must
+    never win; no </head> → bounded 200KB prefix), attribute order/case/quote tolerant,
+    og:title/og:description fallbacks, entity decode, whitespace collapse.
+  - PCM_SEO_Local::fill_effective_meta(rows, fetcher, cap 20, budget 8s): fills ONLY empty fields,
+    never fetches fully-stored rows, tolerates fetcher failure. Editing a filled cell still writes
+    the plugin override, which then wins next load — coherent workflow.
+  - LOCAL: list_content wires it via cached_page_html() — loopback fetch, transient keyed on
+    post_modified (edits invalidate naturally), failure cached 1h, head-only stored, drafts skipped.
+  - REMOTE: new connector route GET /pcm-conn/v1/head-tags?post_ids= (in the TEMPLATE; version
+    self-bumps) — publish-only, 20-id cap, 8s budget, same cache scheme; the hub's
+    remote_list_content batches the empty rows through it and fails SILENTLY on an old connector.
+    First uncached load fills what fits the budget; later loads warm the rest.
+
+VERIFIED
+- NEW tests/standalone/seo_effective_meta_test.php — 32 checks, parser + filler EXECUTED: realistic
+  head, reversed attributes, single quotes, og-only themes, entity decode (&amp;/&#8211;), body-title
+  rejection, stored-meta-wins, fetch-count accounting, cap at 20/30, failure tolerance; wiring +
+  connector route asserted incl. the extracted-template lint.
+- NEGATIVE CONTROL 12/12: head-scoping dropped, og fallbacks dropped, stored meta shadowed,
+  full rows fetched, cap dropped, local unwired, drafts fetched (both sides), remote unwired,
+  unbounded batch, route renamed, budget dropped — all red. Restored -> 32/32.
+- php -l x3 + extracted connector template lint. FULL SUITE 38/38. Zip 3.46 MB / 658 files.
+- DEPLOY NOTES: the remote half needs the connector to SELF-UPDATE on the client site first (the
+  route ships in the new build; old connectors are skipped silently — columns stay blank there, not
+  broken). Values appear on the next table load; first load after deploy fills up to 20 rows, the
+  rest warm in on subsequent loads. Not verified against the live massagegoteborg.nu — no WP here.
+
+## 2026-08-13 — Meta-title fallback round 2: the connector was NEVER there, and Cloudflare nearly poisoned the cache
+Owner: "i guess the connector is self updated but the meta title isn't populated even if it's present."
+
+DIAGNOSED AGAINST THE LIVE SITE, not the code. Two probes settled it:
+  1. https://massagegoteborg.nu/wp-json/ lists namespaces [oembed, yoast/v1, elementor/v1, pcm/v1,
+     wp/v2 …] — NO pcm-conn/v1 AT ALL. Even /page-state (present for many connector versions) 404s.
+     The connector did NOT self-update because it is NOT INSTALLED/ACTIVE there — the site runs the
+     `pcm/v1` (hub-plugin) namespace instead. So yesterday's route could never answer, and Yoast's
+     stored meta can't reach wp/v2 either (the connector is what registers those keys in REST).
+  2. Fetching the article page from here returned a 5.8KB Cloudflare interstitial — and MY OWN
+     PARSER happily produced title "Just a moment...". Without a guard, that string would have been
+     CACHED FOR A WEEK as the post's Meta Title. The owner's report shipped me a data-corruption bug
+     I hadn't triggered yet.
+
+FIXES:
+  - PCM_SEO_Local::is_challenge_page(): marker-based (cf_chl/challenges.cloudflare.com/
+    cf-browser-verification/ddos-guard/Incapsula — markers are not localized, titles are) + known
+    interstitial titles ANCHORED to </title> (a real page may legitimately BEGIN with "Just a
+    moment…" — my own test caught the unanchored version refusing it). parse_head_tags() returns
+    empty for challenges: an empty cell is visibly missing; a wrong one is confidently wrong.
+  - CONNECTOR-LESS FALLBACK: remote_list_content now also hub-fetches PUBLIC permalinks for rows
+    still empty after the connector attempt — publish-only, cap 10, budget 6s, cached on the row's
+    `modified` (added to wp/v2 _fields + remote_row), challenge-guarded, failures cached 1h.
+    Works with NO connector at all; a bot-walled site stays visibly empty rather than wrong.
+  - The connector route got the same guard (its loopback can traverse a CDN edge on some hosts).
+
+VERIFIED
+- seo_effective_meta_test 32 -> 45: guard EXECUTED against the REAL downloaded Cloudflare page
+  (caught), localized-title variant via markers, anchored-title false-positive case (which FAILED
+  first and forced the anchor fix — the test caught my guard being too greedy), fallback wiring
+  (publish-only, cap, guard, modified plumbing) asserted.
+- NEGATIVE CONTROL 8/8 — after replacing ONE contrived mutation (dead-code wrapper leaves the
+  reference textually present; no static test can see that) with the realistic deletion.
+- php -l x3 + extracted connector template lint. FULL SUITE 38/38. Zip 3.46 MB / 658 files.
+- FOR THE OWNER, the actual unblock: massagegoteborg.nu has NO connector — install/activate the
+  current connector zip there (Sites module serves it). Until then this build's hub fallback may
+  fill some columns IF the hub's server isn't Cloudflare-challenged; if the columns stay empty,
+  that is Cloudflare challenging the hub too, and the connector install is the only reliable path
+  (its loopback fetch bypasses the bot wall).
+
+## 2026-08-13 — Connector-less sites stop failing silently: status classifier + SEO banner + one-click activate
+Owner: "then fix the issues" — the remaining blockers from the meta-title diagnosis were operational
+(massagegoteborg.nu has NO connector; nothing in the UI said so). Fixed what the hub CAN fix:
+
+- PCM_Sites_Service::connector_status($site): active / inactive / missing / UNKNOWN — unknown
+  (plugins list unreadable, usually the app-password user lacking activate_plugins) is deliberately
+  distinct from missing, and the UI never nags on it: don't accuse a site of missing a plugin we
+  simply cannot see.
+- Routes GET /sites/{id}/connector-status + POST /sites/{id}/connector-activate (ownership-scoped);
+  activation reuses the EXISTING activate_newest_connector self-heal (PUT /wp/v2/plugins/{plugin} —
+  the one plugin write core REST allows) and re-classifies in the same response.
+- SEO module banner when the SELECTED connected site is missing/inactive:
+  inactive → one-click "Activate connector" (refetches status on success);
+  missing → "Download connector" reusing the server-named-file flow (Content-Disposition,
+  owner-caught 2026-07-17). massagegoteborg.nu will now show exactly WHY its meta is blank and
+  hand the operator the fix.
+
+VERIFIED
+- NEW tests/standalone/connector_status_test.php — 22 checks; the classifier EXECUTED with stubbed
+  HTTP (WP_Error→unknown, 403→unknown, no-connector list→missing, inactive+version, active wins,
+  newest-version sort, copy counting); routes/ownership/tRPC; banner gating incl. unknown-stays-
+  quiet, both actions wired, refetch-after-activate, and the MESSAGES asserted (first negctl run
+  gutted the copy to "x" and passed — structure checks alone don't prove the user is told anything).
+- NEGATIVE CONTROL 6/6 after that fix: unknown conflated with missing, active stops winning,
+  ownership dropped, nag-on-unknown, banner copy gutted, stale-after-activate — all red.
+- tsc 58, FULL SUITE 39/39, build clean, zip 3.46 MB / 658 files, archive-verified.
+- REMAINING, not codeable from here: actually installing the connector ON massagegoteborg.nu
+  (core REST cannot upload a plugin zip — only install-by-wordpress.org-slug or activate what is
+  present). The banner now hands the operator the exact zip; if the plugins list turns out readable
+  and shows an inactive copy, it is one click. Cloudflare may still challenge the hub's public-page
+  fallback — the connector install is the reliable path.
+
+## 2026-08-13 — Bulk save ("Accept all"): the failure was honest, the DATA LOSS was not
+Owner: bulk-saving generated titles/descriptions/keywords "doesn't work… for almost everything."
+The toast in the screenshot is OUR OWN phantom-save guard doing its job: the site has no active
+connector, so WordPress core REST silently DROPS unregistered SEO meta and the hub refuses to fake
+success (Title & Slug are native and save fine). That part is correct behaviour.
+
+THE REAL BUG was in acceptAllStaged: it FIRE-AND-FORGOT every save (`void saveCell(...)`) and
+CLEARED THE ENTIRE STAGING MAP IMMEDIATELY — so on a connector-less site the user's generated
+content was DISCARDED while a wall of identical 422 toasts scrolled past. Failures did not survive
+anywhere. Rewritten:
+  - KNOWN-DOOMED fields (remote site with connector missing/inactive × the six meta-backed fields,
+    mirroring the hub's remote_meta_keys map) are never sent — they STAY STAGED, one summary toast
+    points at the connector banner;
+  - everything else saves SEQUENTIALLY and awaited (each remote save is a round trip — the
+    optimizer-502 lesson);
+  - saves that fail anyway are RE-STAGED (retryable, never lost);
+  - 'unknown' connector status never blocks — don't refuse work on a site we merely couldn't
+    inspect; the server's verdict decides.
+
+VERIFIED
+- connector_status_test 22 -> 32: the rewritten contract pinned (no void call, awaited sequential,
+  partition, blocked-stay-staged, failed-re-staged, unknown-never-blocks, single summary toast) and
+  a PARITY check that the frontend's REMOTE_META_FIELDS mirrors the hub's remote_meta_keys map
+  exactly — drift means either the toast wall returns or a native field gets silently withheld.
+  (First parity attempt anchored on exact whitespace and parsed NOTHING — sliced the function
+  instead; the recurring lesson.)
+- NEGATIVE CONTROL 11/11 (5 new): fire-and-forget restored, blocked discarded, failures dropped,
+  unknown blocking, frontend set drifting — all red. Restored -> 32/32.
+- tsc 58, FULL SUITE 39/39, build clean, zip 3.46 MB / 658 files, bundle carries the summary toast.
+- TRUTH UNCHANGED: on massagegoteborg.nu the meta will still not SAVE until the connector is
+  installed/active (see the banner + previous entry) — but generated content now waits safely in
+  the staging bar instead of evaporating, and saving becomes one clear sentence instead of six
+  identical errors.
+
+## 2026-08-13 — GSC stats: drafts wore the homepage's clicks (URL-key collision)
+
+Owner: "our gsc says that draft post have visits but the real gsc is saying that
+it does not." Real GSC was right. Both normalizers (PCM_GSC::norm_url and the
+SEO module's normGscUrl) kept only host+path — and a draft's permalink is a
+PREVIEW link (`/?page_id=9`) whose path is `/`, so every draft normalized to the
+homepage's key and displayed the homepage's clicks/impressions. (Same collision
+also let utm-tagged GSC rows overwrite the clean page's entry.)
+
+Fix: the query string is now part of the key on BOTH sides (decoded + lowercased
+like the rest). Drafts match nothing → blank cells; the homepage's stats stay on
+the actual front-page row; pretty permalinks and Swedish-slug decoding untouched.
+
+- includes/core/class-pcm-gsc.php — norm_url appends `?query`
+- app/src/modules/SEO/index.tsx — normGscUrl appends decoded u.search
+
+Verified: NEW tests/standalone/gsc_url_match_test.php 24/24 — executes the real
+sliced norm_url, extracts + executes the real normGscUrl under node, and asserts
+BYTE PARITY between them on 10 vectors (drafts, homepage variants, utm, encoded
+Swedish slugs/queries). Negative control 3/3 CAUGHT (either side dropping the
+query; frontend skipping query decode). Full suite 37/37. npm run build clean.
+
+## 2026-08-13 — Zip rebuilt with the GSC draft-stats fix
+
+python scripts/build_zip.py → 658 files / 3.46 MB, root powerplatform/, tests/
+excluded. Archive-verified: norm_url's query-append present in the zipped hub
+PHP, and the minified bundle carries normGscUrl's `+ search` (inspected the
+actual minified function, not a naive byte probe — first probe false-alarmed).
+
+## 2026-08-13 — Link optimization: the HTML column is now editable (the last read-only column)
+
+Card re-check ("every column the user should be able to edit manually and
+save. it should save it on that page"): scan button, clickable count columns,
+popup table, and Anchor/To editing all existed — the HTML column was the gap.
+
+Now: click the HTML cell, edit the raw <a …>…</a>, Enter saves — the ENTIRE
+element is replaced on the page. Server-side sanitize_link_html gates every
+write (wp_kses allowlist + must be a SINGLE <a> with an href — rejection over
+silent truncation, so pasted junk/scripts never reach content). If the href
+inside the markup changed, the old URL is also replaced across builder/custom-
+field meta (local: replace_url_in_meta; remote: the rewrite machinery's
+/replace-url needle) and caches purge. Builder (elId) links stay read-only for
+raw HTML — their markup is synthesized from builder data — with a tooltip
+pointing at Anchor/To editing instead. "From" remains the link's location (a
+link can't be moved between pages by editing a cell).
+
+- includes/modules/seo/local.php — sanitize_link_html + update_post_link_html
+- includes/modules/seo/service.php — remote_update_link_html (shared validator,
+  reuses remote_rewrite_link_content incl. honest-failure verification)
+- includes/modules/seo/controller.php — /links/{idx}/html local (edit_post) +
+  remote (manage_options, owner-scoped) routes
+- app/src/lib/trpc-routes.ts — seo.updateLinkHtml / seo.remoteUpdateLinkHtml
+- app/src/modules/SEO/LinksPopup.tsx — HTML cell click-to-edit + saveHtml
+
+Verified: NEW seo_link_html_edit_test.php 32/32 (sanitizer + updater EXECUTED:
+XSS strip, single-anchor law, in-place replace, meta propagation, stale-scan
+409, no-op skip). Negative control 7/7 CAUGHT (unsanitized writes both sides,
+single-anchor law dropped, meta propagation dropped, ownership scoping lost,
+builder links editable, cell display-only again). Suite 38/38, build clean.
+
+## 2026-08-13 — PDF re-audit (Link optimization): Brizy EDITS finally reach Brizy's data
+
+Owner PDF (Add-SEO-Link-optimization (1)-new.pdf) re-audited item by item. All
+prior items verified still shipped (wider dialog, clickable From/To, editable
+Anchor/To/HTML, false-404 GET-retry, source-scoped Brizy scan, unlink/delete+
+ledger/rel toggle). The one unresolved item was the dated addendum: "brizy -
+Links / edits are not working on Brizy sites."
+
+Root causes (all in the CONNECTOR template, all element-scoped paths):
+1. collect_links only tracked Elementor ids (id+elType). Brizy elements carry
+   value._id → every Brizy link scanned with elId='' → hub anchor edits fell
+   to the legacy path that rewrites Brizy's STALE COMPILED post_content copy —
+   false success, live page unchanged.
+2. replace_link_in_element / replace_anchor_in_element pre-filtered metas with
+   strpos(raw, el_id) — ids inside Brizy's base64 blob never match raw.
+3. Their tree walkers neither matched _id nor decoded base64 strings.
+4. Brizy button targets live under linkExternal (not url) — invisible to the
+   scan; node_has_url couldn't tie a label to its link either.
+
+Fixes (includes/modules/seohub/service.php, nowdoc template; build self-bumps):
+- collect_links: track value._id; capture linkExternal guarded by
+  linkType==='external' (stale leftovers from a previous link type stay out)
+- is_target_node(): id OR _id, used by both element walkers
+- walk_b64(): decode base64→JSON, run the element walker inside, re-encode
+  ONLY on a real change (untouched blobs stay byte-identical — pinned by a
+  JS-written sibling-blob fixture where a decode→encode round trip would
+  change bytes)
+- both meta pre-filters also check pcm_conn_meta_may_contain(raw, [el_id])
+- node_has_url: url OR linkExternal
+
+Verified: NEW tests/standalone/brizy_link_edit_test.php 28/28 — extracts the
+nowdoc, lints it, then EXECUTES the Manager against a realistic Brizy fixture
+(serialized meta → base64 → JSON, escaped slashes, Swedish chars): scan emits
+per-element ids + buttons, element-scoped URL/anchor edits change ONLY the
+target element, compiled + sibling blobs stay byte-identical, whole-page
+replace + Elementor regression green. Negative control 9/9 CAUGHT. Suite
+39/39. Hub php -l clean; extracted-template php -l clean.
+
+Still-standing (unchanged, known): rel-toggle/unlink/delete on BUILDER links
+go through the legacy content path (locked pending a connector op — offered
+before); connector must be updated on the Brizy site (self-update offers the
+new build). Live confirmation on brizy.profitmedia.pro needs the site login
+from "the resources" (not available here) — the machinery is exec-tested.
+
+## 2026-08-13 — Zip rebuilt with the HTML-column edit + Brizy edit fixes
+
+python scripts/build_zip.py → 658 files / 3.47 MB, root powerplatform/, tests/
+excluded. Archive-verified: connector template carries walk_b64 + _id tracking
++ linkExternal capture + both base64-aware pre-filters; hub carries
+sanitize_link_html + the /links/{idx}/html routes; the built bundle carries
+saveHtml ('Link HTML saved'). Connector build self-bumps → connected sites'
+self-update will offer the Brizy-capable build.

@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { trpc } from '@/lib/trpc';
+import { trpc, getConfig } from '@/lib/trpc';
 import { ModuleHeader } from '@/components/shared/ModuleHeader';
 import { PillButton } from '@/components/shared';
 import { Button } from '@/components/ui/button';
@@ -412,6 +412,50 @@ export function SEOModule() {
   const rows = isLocal ? localRows : remote.rows;
   const saveCell = isLocal ? localSaveCell : remote.saveCell;
 
+  // Fields stored as SEO-plugin META on a remote site (mirrors the hub's
+  // remote_meta_keys map). Without an active connector, WordPress core REST
+  // silently DROPS writes to these — the hub detects the phantom save and
+  // 422s — so bulk flows treat them as known-doomed rather than firing N
+  // requests that all fail identically.
+  const REMOTE_META_FIELDS = useMemo(() => new Set([
+    'metaTitle', 'metaDescription', 'metaKeywords', 'primaryKeyword', 'supportingKeyword', 'clusterLabel',
+  ]), []);
+
+  // Connector presence for the SELECTED connected site. Born from
+  // massagegoteborg.nu: its SEO table sat silently blank because the site has
+  // NO connector at all — stored SEO meta can't reach wp/v2 and the head-tags
+  // fallback route doesn't exist there — and nothing anywhere said so.
+  // 'unknown' (plugins list unreadable — usually a capability limit) stays
+  // QUIET: never nag on what we cannot verify.
+  const connectorStatusQuery = trpc.sites.connectorStatus.useQuery(
+    { id: siteId },
+    { enabled: !isLocal && typeof siteId === 'number', staleTime: 300_000, retry: false },
+  ) as any;
+  const connectorState: { status?: string; version?: string } = connectorStatusQuery.data ?? {};
+  const connectorActivate = trpc.sites.connectorActivate.useMutation({
+    onSuccess: (res: any) => {
+      if (res?.switched) toast.success(`Connector activated (v${res?.to || '?'}).`);
+      else toast.error(res?.message || 'Could not activate the connector.');
+      void connectorStatusQuery.refetch();
+    },
+    onError: (e: any) => toast.error(e.message ?? 'Could not activate the connector.'),
+  }) as any;
+  const downloadConnector = useCallback(async () => {
+    try {
+      const cfg = getConfig();
+      const res = await fetch(`${cfg.restUrl}seohub/connector-download`, { headers: { 'X-WP-Nonce': cfg.nonce } });
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      // Server names the versioned file via Content-Disposition (owner-caught 2026-07-17).
+      const match = (res.headers.get('Content-Disposition') ?? '').match(/filename="([^"]+)"/);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = match ? match[1] : 'pcm-connector.zip';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Download failed'); }
+  }, []);
+
   // ── New author ──
   // `options.authors` comes from the useSeoContent hook, which exposes no refetch handle, so a
   // freshly created author is appended locally instead. The id is the REAL one the server
@@ -496,13 +540,18 @@ export function SEOModule() {
   // Mirrors PCM_GSC::norm_url — strip protocol/www/trailing slash, PERCENT-DECODE the path, and
   // lowercase. Decoding + lowercasing is what lets non-ASCII slugs (Swedish å/ä/ö) match: GSC
   // returns `/tandv%C3%A5rd` while a permalink may be raw `/tandvård` with different hex case.
+  // The QUERY STRING is part of the key (as on the hub): a draft's permalink is a preview link
+  // (`/?page_id=9`) whose PATH is `/` — dropping the query made every draft collapse onto the
+  // homepage's key and wear the homepage's clicks. Google has never seen those rows.
   const normGscUrl = useCallback((url: string) => {
     try {
       const u = new URL(url);
       const host = u.hostname.replace(/^www\./, '');
       let path = u.pathname;
       try { path = decodeURIComponent(path); } catch { /* leave as-is on malformed % */ }
-      return (host + path.replace(/\/+$/, '')).toLowerCase();
+      let search = u.search;
+      try { search = decodeURIComponent(search); } catch { /* leave as-is on malformed % */ }
+      return (host + path.replace(/\/+$/, '') + search).toLowerCase();
     } catch { return ''; }
   }, []);
   const handlePullGsc = useCallback(async (days: number) => {
@@ -885,17 +934,63 @@ export function SEOModule() {
   }, [selected, rows, generateField, genModelId, genProvider, columnTemplate]);
 
   // Accept / discard ALL staged AI suggestions (the source's bar).
-  const acceptAllStaged = useCallback(() => {
-    setStaged((s) => {
-      for (const [key, value] of Object.entries(s)) {
+  //
+  // Rewritten 2026-08-13 (owner: "bulk save… doesn't work… for one title, two
+  // descriptions, three keywords"). The old version fire-and-forgot every save
+  // and cleared the staging map IMMEDIATELY — on a connector-less site every
+  // meta-field save 422s ("the remote site didn't store this SEO field"), so
+  // the generated content was DISCARDED while a wall of identical error toasts
+  // scrolled by. Now:
+  //   - fields that are KNOWN-DOOMED (remote site whose connector is missing/
+  //     inactive + a meta-backed field) are never sent — they STAY STAGED and
+  //     one summary toast points at the banner;
+  //   - everything else saves sequentially (each remote save is a synchronous
+  //     round trip to the client site — the optimizer-502 lesson);
+  //   - a save that fails anyway is RE-STAGED, so generated content survives.
+  //   'unknown' connector status does NOT block: never refuse work on a site
+  //   we merely could not inspect — the server's own verdict decides.
+  const acceptAllStaged = useCallback(async () => {
+    const entries = Object.entries(staged);
+    if (entries.length === 0) return;
+    const connectorBlocked = !isLocal
+      && (connectorState.status === 'missing' || connectorState.status === 'inactive');
+    const blocked: [string, string][] = [];
+    const sendable: [string, string][] = [];
+    for (const e of entries) {
+      const field = e[0].slice(e[0].indexOf(':') + 1);
+      (connectorBlocked && REMOTE_META_FIELDS.has(field) ? blocked : sendable).push(e);
+    }
+    setStaged(Object.fromEntries(blocked)); // doomed fields keep their suggestions
+    let ok = 0;
+    const failed: [string, string][] = [];
+    setBusy(true);
+    try {
+      for (const [key, value] of sendable) {
         const sep = key.indexOf(':');
         const id = Number(key.slice(0, sep));
         const field = key.slice(sep + 1);
-        if (id) void saveCell(id, field, value);
+        if (!id) continue;
+        try {
+          await saveCell(id, field, value);
+          ok++;
+        } catch {
+          failed.push([key, value]); // saveCell already toasted the reason once
+        }
       }
-      return {};
-    });
-  }, [saveCell]);
+    } finally {
+      setBusy(false);
+    }
+    if (failed.length > 0) {
+      setStaged((s) => ({ ...Object.fromEntries(failed), ...s })); // survive, retryable
+    }
+    const parts: string[] = [];
+    if (ok > 0) parts.push(`Saved ${ok} suggestion${ok === 1 ? '' : 's'}`);
+    if (blocked.length > 0) parts.push(`${blocked.length} kept pending — this site's connector is ${connectorState.status} (see the banner above), and WordPress drops SEO meta without it`);
+    if (failed.length > 0) parts.push(`${failed.length} failed and stay pending`);
+    if (parts.length > 0) {
+      (blocked.length > 0 || failed.length > 0 ? toast.error : toast.success)(parts.join('. ') + '.');
+    }
+  }, [staged, saveCell, isLocal, connectorState.status]);
   const discardAllStaged = useCallback(() => setStaged({}), []);
   const pendingCount = Object.keys(staged).length;
 
@@ -1817,6 +1912,29 @@ export function SEOModule() {
           <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" disabled={busy} onClick={() => setSelected(new Set())}>
             Clear
           </Button>
+        </div>
+      )}
+
+      {/* Connector missing/inactive on the selected site — the reason meta
+          columns can sit blank and edits are limited. 'unknown' stays quiet. */}
+      {!isLocal && (connectorState.status === 'missing' || connectorState.status === 'inactive') && (
+        <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2">
+          <span className="text-sm text-foreground">
+            {connectorState.status === 'inactive'
+              ? 'The Power Creatives Connector is installed on this site but not active — SEO meta reading and editing are limited until it runs.'
+              : 'This site has no Power Creatives Connector — stored SEO meta and reliable tag reading are unavailable without it.'}
+          </span>
+          <span className="flex-1" />
+          {connectorState.status === 'inactive' ? (
+            <Button size="sm" className="h-8" disabled={connectorActivate.isPending} onClick={() => connectorActivate.mutate({ id: siteId })}>
+              {connectorActivate.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              Activate connector
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" className="h-8" onClick={downloadConnector} title="Download the connector zip, then install + activate it on the site (Plugins → Add New → Upload)">
+              Download connector
+            </Button>
+          )}
         </div>
       )}
 

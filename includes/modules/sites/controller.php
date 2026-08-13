@@ -42,6 +42,11 @@ class PCM_REST_Sites extends PCM_REST_Base
             array('POST',   '/sites/(?P<id>\d+)/gsc-verify',   'gsc_verify_site'),
             array('POST',   '/sites/(?P<id>\d+)/gsc-preview',  'gsc_preview'),
             array('POST',   '/sites/update-connectors',        'update_connectors'),
+            // Connector presence, honestly classified (active/inactive/missing/unknown)
+            // + one-click activation of an installed-but-inactive copy. Surfaced in
+            // the SEO module so a connector-less site stops failing silently.
+            array('GET',    '/sites/(?P<id>\d+)/connector-status',   'connector_status'),
+            array('POST',   '/sites/(?P<id>\d+)/connector-activate', 'connector_activate'),
             array('GET',    '/sites/(?P<id>\d+)/schedule',     'get_schedule'),
             array('POST',   '/sites/(?P<id>\d+)/schedule',     'set_schedule'),
             array('GET',    '/sites/(?P<id>\d+)/connector-version', 'connector_version'),
@@ -510,6 +515,33 @@ class PCM_REST_Sites extends PCM_REST_Base
                 );
         }
         return $this->success(array('health' => $health));
+    }
+
+    /** GET /sites/{id}/connector-status — active | inactive | missing | unknown. */
+    public function connector_status(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site((int)$request->get_param('id'), (int)$pcm_user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        require_once __DIR__ . '/service.php';
+        return $this->success(PCM_Sites_Service::connector_status($site));
+    }
+
+    /** POST /sites/{id}/connector-activate — switch on the newest installed copy. */
+    public function connector_activate(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $pcm_user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site((int)$request->get_param('id'), (int)$pcm_user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        require_once __DIR__ . '/service.php';
+        $result = PCM_Sites_Service::activate_newest_connector($site);
+        // Re-classify after the attempt so the UI can trust one response.
+        $result['status'] = PCM_Sites_Service::connector_status($site);
+        return $this->success($result);
     }
 
     public function test_connection(WP_REST_Request $request): WP_REST_Response|WP_Error

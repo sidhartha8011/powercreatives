@@ -399,6 +399,16 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         transform: (input: any) => ({ url: `sites/${input.id}/update-connector` }),
     },
     "sites.health": { endpoint: "sites/health", method: "GET" },
+    "sites.connectorStatus": {
+        endpoint: "sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `sites/${input.id}/connector-status` }),
+    },
+    "sites.connectorActivate": {
+        endpoint: "sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `sites/${input.id}/connector-activate` }),
+    },
     "sites.test": {
         endpoint: "sites",
         method: "POST",
@@ -489,6 +499,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "seo/content",
         method: "POST",
         transform: (input: any) => ({ url: `seo/content/${input.id}/links/${input.index}`, body: { anchor: input.anchor, href: input.href } }),
+    },
+    "seo.updateLinkHtml": {
+        endpoint: "seo/content",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/content/${input.id}/links/${input.index}/html`, body: { html: input.html } }),
     },
     "seo.removeLink": {
         endpoint: "seo/content",
@@ -693,6 +708,11 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         endpoint: "seo/sites",
         method: "POST",
         transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}`, body: { type: input.type, anchor: input.anchor, href: input.href, oldHref: input.oldHref, elId: input.elId, oldAnchor: input.oldAnchor } }),
+    },
+    "seo.remoteUpdateLinkHtml": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/html`, body: { type: input.type, html: input.html } }),
     },
     "seo.remoteRemoveLink": {
         endpoint: "seo/sites",

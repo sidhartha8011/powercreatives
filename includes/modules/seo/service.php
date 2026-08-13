@@ -108,6 +108,7 @@ class PCM_SEO_Service
             'slug'              => (string) ($item['slug'] ?? ''),
             'status'            => (string) ($item['status'] ?? ''),
             'date'              => (string) ($item['date'] ?? ''),
+            'modified'          => (string) ($item['modified'] ?? ''),
             'authorId'          => (int) ($item['author'] ?? 0),
             'author'            => (string) ($item['_embedded']['author'][0]['name'] ?? ''),
             'permalink'         => (string) ($item['link'] ?? ''),
@@ -142,7 +143,7 @@ class PCM_SEO_Service
     {
         self::ensure_sites_service();
         $rows   = array();
-        $fields = 'id,title,slug,status,date,link,author,featured_media,excerpt,meta,_embedded.author,_embedded.wp:featuredmedia';
+        $fields = 'id,title,slug,status,date,modified,link,author,featured_media,excerpt,meta,_embedded.author,_embedded.wp:featuredmedia';
         foreach (array('post' => '/wp/v2/posts', 'page' => '/wp/v2/pages') as $type => $route) {
             $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array(
                 'per_page' => 100,
@@ -158,7 +159,79 @@ class PCM_SEO_Service
                 if (is_array($item)) {
                     $rows[] = self::remote_row($item, $type, $site);
                 }
+                // (effective-meta fallback applied once, after both types — below)
             }
+        }
+        // Empty meta cells fall back to the tags each page ACTUALLY renders,
+        // served batch-wise by the connector's /head-tags route (loopback fetch
+        // + head-only parse, cached on the site). SEO plugins generate most
+        // titles/descriptions from templates and store NOTHING per post — the
+        // reported massagegoteborg.nu columns were empty while every live page
+        // had perfect tags. Old connector without the route → skip silently.
+        $need = array();
+        foreach ($rows as $r) {
+            if ((($r['metaTitle'] ?? '') === '' || ($r['metaDescription'] ?? '') === '') && !empty($r['id'])) {
+                $need[] = (int) $r['id'];
+            }
+        }
+        if (!empty($need)) {
+            $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/head-tags', array(
+                'post_ids' => implode(',', array_slice($need, 0, 20)),
+            ));
+            $tags = (!is_wp_error($res) && (int) ($res['status'] ?? 0) < 300 && is_array($res['body']['tags'] ?? null))
+                ? $res['body']['tags'] : array();
+            if (!empty($tags)) {
+                foreach ($rows as $i => $r) {
+                    $t = $tags[(string) ($r['id'] ?? '')] ?? null;
+                    if (!is_array($t)) {
+                        continue;
+                    }
+                    if (($r['metaTitle'] ?? '') === '' && !empty($t['title'])) {
+                        $rows[$i]['metaTitle'] = (string) $t['title'];
+                    }
+                    if (($r['metaDescription'] ?? '') === '' && !empty($t['description'])) {
+                        $rows[$i]['metaDescription'] = (string) $t['description'];
+                    }
+                }
+            }
+            // CONNECTOR-LESS FALLBACK. massagegoteborg.nu turned out to run no
+            // connector AT ALL (its REST namespaces have no pcm-conn/v1 — even
+            // page-state 404s), so the route above can never answer there. The
+            // published permalinks are public pages, so the HUB fetches them
+            // directly: publish-only, small cap, cached on the row's modified
+            // time, and the parser's challenge guard refuses a Cloudflare
+            // interstitial rather than caching "Just a moment..." as a title.
+            // A bot-walled site stays visibly empty — honest, not wrong.
+            $rows = PCM_SEO_Local::fill_effective_meta(
+                $rows,
+                static function (array $row) {
+                    if (($row['status'] ?? '') !== 'publish' || empty($row['permalink'])) {
+                        return null;
+                    }
+                    $key    = 'pcm_seo_rhead_' . md5((string) $row['permalink'] . '|' . (string) ($row['modified'] ?? $row['date'] ?? ''));
+                    $cached = get_transient($key);
+                    if (is_string($cached)) {
+                        return $cached === '' ? null : $cached;
+                    }
+                    $resp = wp_remote_get((string) $row['permalink'], array(
+                        'timeout'    => 5,
+                        'sslverify'  => false,
+                        'user-agent' => 'Mozilla/5.0 (compatible; PowerCreatives meta reader)',
+                    ));
+                    $html = (!is_wp_error($resp) && (int) wp_remote_retrieve_response_code($resp) < 300)
+                        ? (string) wp_remote_retrieve_body($resp)
+                        : '';
+                    if ($html !== '' && PCM_SEO_Local::is_challenge_page($html)) {
+                        $html = ''; // challenged — treat as unavailable, retry after the short TTL
+                    }
+                    $end  = stripos($html, '</head>');
+                    $html = $end !== false ? substr($html, 0, $end + 7) : substr($html, 0, 200000);
+                    set_transient($key, $html, $html === '' ? HOUR_IN_SECONDS : WEEK_IN_SECONDS);
+                    return $html === '' ? null : $html;
+                },
+                10,  // smaller cap than the connector path — these cross the internet
+                6.0
+            );
         }
         return $rows;
     }
@@ -872,6 +945,24 @@ class PCM_SEO_Service
             $h = preg_replace_callback('/href=[\'"][^\'"]*[\'"]/i', static fn() => 'href="' . $new_href . '"', $old_html, 1);
             return preg_replace_callback('/(<a\s[^>]*>)(.*)(<\/a>)/is', static fn($m) => $m[1] . $new_text . $m[3], $h, 1);
         }, $needle);
+    }
+
+    /**
+     * Replace a connected post's link with user-edited raw HTML (the popup's editable HTML
+     * column). Body links only — a builder-stored link's HTML is synthesized from meta, so
+     * raw-markup replacement can't reach it (the UI keeps those cells read-only; edit their
+     * Anchor/To instead). Sanitized by the same validator as the local path.
+     */
+    public static function remote_update_link_html(object $site, int $post_id, string $type, int $index, string $html)
+    {
+        $new_html = PCM_SEO_Local::sanitize_link_html($html);
+        if ($new_html instanceof WP_Error) {
+            return $new_html;
+        }
+        preg_match('/href=[\'"]([^\'"]+)[\'"]/i', $new_html, $hm);
+        $needle = esc_url_raw((string) ($hm[1] ?? ''));
+        return self::remote_rewrite_link_content($site, $post_id, $type, $index,
+            static fn() => $new_html, $needle !== '' ? $needle : null);
     }
 
     /** Builder-aware remote URL edit: replace $old_url → $new_url across the post's content + ALL

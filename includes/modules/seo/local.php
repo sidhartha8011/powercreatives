@@ -29,6 +29,167 @@ class PCM_SEO_Local
      *
      * @return array<string, array<string, string>>
      */
+    /**
+     * The title/description a page ACTUALLY renders, parsed from its HTML head.
+     *
+     * The table's meta columns read the SEO plugin's stored per-post meta — but
+     * Yoast/RankMath/SEOPress only STORE a value when someone typed an override;
+     * the tags on the live page are usually GENERATED from templates
+     * ("%title% – %sitename%"). So a site can have perfect meta tags on every
+     * page while the table shows nothing (the reported massagegoteborg.nu case).
+     * This is the fallback's parser: head-scoped, attribute-order/case tolerant.
+     *
+     * @param string $html Page HTML (any size; only the head is considered).
+     * @return array{title:string,description:string}
+     */
+    public static function parse_head_tags(string $html): array
+    {
+        // A bot-challenge interstitial is NOT the page. Fetching
+        // massagegoteborg.nu from outside produced a 5.8KB Cloudflare
+        // "Just a moment..." page — and without this guard that string would
+        // have been cached and shown as the post's Meta Title. Better an empty
+        // cell (visibly missing) than a confidently wrong one.
+        if (self::is_challenge_page($html)) {
+            return array('title' => '', 'description' => '');
+        }
+        // Head-scoped: a <title> inside an inline SVG or a description-shaped
+        // string in the body must never win. No </head> (fragment/mangled page)
+        // → a bounded prefix beats scanning megabytes of body.
+        $end  = stripos($html, '</head>');
+        $head = $end !== false ? substr($html, 0, $end) : substr($html, 0, 200000);
+
+        $title = '';
+        if (preg_match('#<title[^>]*>(.*?)</title>#is', $head, $m)) {
+            $title = trim(html_entity_decode(wp_strip_all_tags($m[1]), ENT_QUOTES | ENT_HTML5));
+        }
+        $description = self::head_meta_content($head, 'name', 'description');
+
+        // Open Graph fallbacks — some themes emit only og: tags.
+        if ($title === '') {
+            $title = self::head_meta_content($head, 'property', 'og:title');
+        }
+        if ($description === '') {
+            $description = self::head_meta_content($head, 'property', 'og:description');
+        }
+        return array(
+            'title'       => preg_replace('/\s+/u', ' ', $title),
+            'description' => preg_replace('/\s+/u', ' ', $description),
+        );
+    }
+
+    /**
+     * Bot-challenge / interstitial detector (Cloudflare et al.). Detected on
+     * MARKERS in the markup, not just the title text — titles are localized,
+     * markers are not. Public so the connector-less remote fallback can refuse
+     * a challenged fetch instead of caching it.
+     */
+    public static function is_challenge_page(string $html): bool
+    {
+        $probe = substr($html, 0, 60000);
+        if (preg_match('/__cf_chl_|challenges\.cloudflare\.com|cf-browser-verification|cf_chl_opt|ddos-guard|_Incapsula_/i', $probe)) {
+            return true;
+        }
+        // Title match is ANCHORED to the closing tag: interstitial titles are
+        // exactly these strings, while a real page may legitimately BEGIN with
+        // one ("Just a moment of calm — massage…") and must not be refused.
+        return (bool) preg_match('#<title[^>]*>\s*(Just a moment|Attention Required!|Access denied|Please Wait)(\.{3}|…)?\s*</title>#i', $probe);
+    }
+
+    /** One <meta $attr="$key" content="…"> value, tolerant of attribute order/case/quotes. */
+    private static function head_meta_content(string $head, string $attr, string $key): string
+    {
+        $k = preg_quote($key, '#');
+        $a = preg_quote($attr, '#');
+        // content BEFORE the name/property attribute…
+        if (preg_match('#<meta\b[^>]*\bcontent=(["\'])(.*?)\1[^>]*\b' . $a . '=(["\'])' . $k . '\3[^>]*>#is', $head, $m)) {
+            return trim(html_entity_decode($m[2], ENT_QUOTES | ENT_HTML5));
+        }
+        // …or after it (the common order).
+        if (preg_match('#<meta\b[^>]*\b' . $a . '=(["\'])' . $k . '\1[^>]*\bcontent=(["\'])(.*?)\2[^>]*>#is', $head, $m)) {
+            return trim(html_entity_decode($m[3], ENT_QUOTES | ENT_HTML5));
+        }
+        return '';
+    }
+
+    /**
+     * Fill EMPTY metaTitle/metaDescription cells with the page's effective tags.
+     *
+     * Stored plugin meta always wins — only empty fields are filled, so an
+     * explicit per-post override is never shadowed by the rendered fallback
+     * (and editing a filled cell still writes the override, which then wins).
+     * $html_for_row fetches a row's page HTML (null = unavailable); $cap and
+     * $budget bound the work so a 100-row list cannot stall the request —
+     * unfetched rows simply stay empty until a later, cache-warmed load.
+     *
+     * @param array    $rows         SeoRow arrays.
+     * @param callable $html_for_row fn(array $row): ?string
+     * @param int      $cap          Max rows to fetch per call.
+     * @param float    $budget       Seconds allowed across all fetches.
+     * @return array Rows with empty meta fields filled where possible.
+     */
+    public static function fill_effective_meta(array $rows, callable $html_for_row, int $cap = 20, float $budget = 8.0): array
+    {
+        $fetched = 0;
+        $started = microtime(true);
+        foreach ($rows as $i => $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $needs_title = ($row['metaTitle'] ?? '') === '';
+            $needs_desc  = ($row['metaDescription'] ?? '') === '';
+            if ((!$needs_title && !$needs_desc) || empty($row['permalink'])) {
+                continue;
+            }
+            if ($fetched >= $cap || (microtime(true) - $started) > $budget) {
+                break;
+            }
+            $fetched++;
+            $html = $html_for_row($row);
+            if (!is_string($html) || $html === '') {
+                continue;
+            }
+            $tags = self::parse_head_tags($html);
+            if ($needs_title && $tags['title'] !== '') {
+                $rows[$i]['metaTitle'] = $tags['title'];
+            }
+            if ($needs_desc && $tags['description'] !== '') {
+                $rows[$i]['metaDescription'] = $tags['description'];
+            }
+        }
+        return $rows;
+    }
+
+    /**
+     * Cached page-HTML fetcher for THIS site's own posts (loopback request).
+     * Cache keys on the post's modified time, so an edit invalidates naturally;
+     * failures cache briefly so one dead permalink can't re-block every load.
+     */
+    public static function cached_page_html(int $post_id): ?string
+    {
+        $post = get_post($post_id);
+        if (!$post || $post->post_status !== 'publish') {
+            return null; // drafts have no public rendered page to read
+        }
+        $key    = 'pcm_seo_head_' . $post_id . '_' . md5((string) $post->post_modified_gmt);
+        $cached = get_transient($key);
+        if (is_string($cached)) {
+            return $cached === '' ? null : $cached;
+        }
+        $resp = wp_remote_get(get_permalink($post_id), array(
+            'timeout'    => 5,
+            'sslverify'  => false,
+            'user-agent' => 'Mozilla/5.0 (compatible; PowerCreatives meta reader)',
+        ));
+        $html = (!is_wp_error($resp) && (int) wp_remote_retrieve_response_code($resp) < 300)
+            ? (string) wp_remote_retrieve_body($resp)
+            : '';
+        // Keep only the head — the transient stores kilobytes, not page bodies.
+        $end = stripos($html, '</head>');
+        $html = $end !== false ? substr($html, 0, $end + 7) : substr($html, 0, 200000);
+        set_transient($key, $html, $html === '' ? HOUR_IN_SECONDS : WEEK_IN_SECONDS);
+        return $html === '' ? null : $html;
+    }
+
     public static function seo_key_map(): array
     {
         return [
@@ -159,7 +320,13 @@ class PCM_SEO_Local
                 $rows[] = self::build_row($post);
             }
         }
-        return $rows;
+        // Empty meta cells fall back to the tags the page ACTUALLY renders
+        // (plugin-template titles/descriptions are generated, not stored — the
+        // table looked blank on sites whose SEO was in fact fine). Stored meta
+        // always wins; cap+budget keep the first uncached load bounded.
+        return self::fill_effective_meta($rows, static function (array $row) {
+            return self::cached_page_html((int) ($row['id'] ?? 0));
+        });
     }
 
     /**
@@ -444,6 +611,75 @@ class PCM_SEO_Local
         }
         self::purge_post_caches($post_id);
 
+        self::scan_links($post_id, false); // fast refresh — skip per-link HTTP checks (avoid timeout)
+        return self::get_post_links($post_id);
+    }
+
+    /**
+     * Validate + sanitize a user-supplied replacement for a link's raw HTML (the popup's
+     * editable HTML column). The value must be a single <a …>…</a> element; it is run
+     * through wp_kses so event handlers / scripts can never reach post content. Returns
+     * the sanitized HTML, or a WP_Error explaining what's wrong.
+     */
+    public static function sanitize_link_html(string $html)
+    {
+        $html = trim($html);
+        $allowed = array(
+            'a'      => array('href' => true, 'rel' => true, 'target' => true, 'title' => true, 'class' => true, 'id' => true),
+            'strong' => array(), 'em' => array(), 'b' => array(), 'i' => array(), 'u' => array(),
+            'span'   => array('class' => true), 'code' => array(), 'br' => array(),
+            'img'    => array('src' => true, 'alt' => true, 'class' => true, 'width' => true, 'height' => true),
+        );
+        $clean = trim((string) wp_kses($html, $allowed));
+        // Exactly ONE anchor element, spanning the whole value — not text around it, not two links.
+        if (!preg_match('/^<a\s[^>]*>.*<\/a>$/is', $clean) || substr_count(strtolower($clean), '<a ') !== 1) {
+            return new WP_Error('pcm_seo_link_html', __('The HTML must be a single link element: <a href="…">text</a>.', 'power-creatives'), array('status' => 422));
+        }
+        if (!preg_match('/href=[\'"][^\'"]+[\'"]/i', $clean)) {
+            return new WP_Error('pcm_seo_link_html', __('The link HTML needs an href="…" attribute.', 'power-creatives'), array('status' => 422));
+        }
+        return $clean;
+    }
+
+    /**
+     * Replace a link's ENTIRE HTML in a local post's content with user-edited markup
+     * (the popup's HTML column), save, re-scan. If the href changed, the old URL is also
+     * replaced across custom fields (page builders render from meta, not post_content).
+     */
+    public static function update_post_link_html(int $post_id, int $index, string $html)
+    {
+        $links = self::get_post_links($post_id);
+        if (!isset($links[$index])) {
+            return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
+        }
+        $post = get_post($post_id);
+        if (!$post) {
+            return new WP_Error('pcm_seo_not_found', __('Content not found.', 'power-creatives'), array('status' => 404));
+        }
+        $new_html = self::sanitize_link_html($html);
+        if ($new_html instanceof WP_Error) {
+            return $new_html;
+        }
+        $old_html = (string) $links[$index]['html'];
+        if ($new_html === $old_html) {
+            return self::get_post_links($post_id); // nothing to do
+        }
+        $content = (string) $post->post_content;
+        $pos = self::nth_link_pos($content, $links, $index);
+        if ($pos === null) {
+            return new WP_Error('pcm_seo_link_stale', __('The page changed — re-scan and try again.', 'power-creatives'), array('status' => 409));
+        }
+        $content = substr_replace($content, $new_html, $pos, strlen($old_html));
+        wp_update_post(array('ID' => $post_id, 'post_content' => $content));
+
+        // href changed inside the pasted HTML → propagate across builder/custom-field data too.
+        $old_url = (string) $links[$index]['to'];
+        preg_match('/href=[\'"]([^\'"]+)[\'"]/i', $new_html, $hm);
+        $new_url = esc_url_raw((string) ($hm[1] ?? ''));
+        if ($new_url !== '' && $old_url !== '' && $new_url !== $old_url) {
+            self::replace_url_in_meta($post_id, $old_url, $new_url);
+        }
+        self::purge_post_caches($post_id);
         self::scan_links($post_id, false); // fast refresh — skip per-link HTTP checks (avoid timeout)
         return self::get_post_links($post_id);
     }

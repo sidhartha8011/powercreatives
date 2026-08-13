@@ -1082,7 +1082,9 @@ class PCM_Conn_Builder_Manager {
         $rows = $wpdb->get_results($wpdb->prepare("SELECT meta_id, meta_key, meta_value FROM {$wpdb->postmeta} WHERE post_id = %d", $post_id));
         foreach ((array) $rows as $row) {
             $raw = (string) $row->meta_value;
-            if (strpos($raw, $el_id) === false) { continue; }                       // element not in this meta
+            // Element not in this meta — checked in the raw value AND inside any base64-encoded blob
+            // (Brizy stores its editor data that way; a raw strpos alone skipped its meta outright).
+            if (strpos($raw, $el_id) === false && !pcm_conn_meta_may_contain($raw, array($el_id))) { continue; }
             // NB: do NOT pre-filter on $old being present in the RAW meta. Builder data JSON-escapes the
             // stored form (quotes as \", slashes as \/, non-ASCII as \uXXXX), so a heading like
             // <h2 class="x">Så här…</h2> never strpos-matches the raw string and the edit would be silently
@@ -1128,8 +1130,9 @@ class PCM_Conn_Builder_Manager {
             // Guard on the element id only. Do NOT pre-filter on $old_anchor: the raw JSON escapes
             // non-ASCII (\uXXXX) + slashes (\/), so a decoded anchor like "Learn More →" or "24/7"
             // would never strpos-match the raw string and the edit would falsely report "not found".
-            // The decoded label match in set_anchor_in_element does the real matching.
-            if (strpos($raw, $el_id) === false) { continue; }
+            // The decoded label match in set_anchor_in_element does the real matching. The id may
+            // also sit inside a base64-encoded blob (Brizy), so check those too.
+            if (strpos($raw, $el_id) === false && !pcm_conn_meta_may_contain($raw, array($el_id))) { continue; }
             $val = maybe_unserialize($raw); $is_json = false;
             if (is_string($val) && $val !== '' && ($val[0] === '[' || $val[0] === '{')) {
                 $j = json_decode($val, true);
@@ -1161,7 +1164,7 @@ class PCM_Conn_Builder_Manager {
         // guarded by the element id + the link's URL — rather than an exact key list.
         $skip_keys = array('url', 'id', 'elType', 'widgetType', 'html_tag', 'css_classes');
         if (is_array($node)) {
-            $here = $inside || (isset($node['id']) && (string) $node['id'] === (string) $target);
+            $here = $inside || self::is_target_node($node, $target);
             foreach ($node as $k => $v) {
                 if ($here && is_string($v)) {
                     // Only rename a label whose OWN item carries this link's URL — so two same-text
@@ -1176,17 +1179,27 @@ class PCM_Conn_Builder_Manager {
                     }
                 } elseif (is_array($v) || is_object($v)) {
                     $node[$k] = self::set_anchor_in_element($v, $target, $url, $old_anchor, $new_anchor, $here, $count);
+                } elseif (is_string($v)) {
+                    // Brizy: the element tree may sit inside a base64 JSON blob — recurse into it.
+                    $node[$k] = self::walk_b64($v, function ($tree, &$c) use ($target, $url, $old_anchor, $new_anchor, $here) {
+                        return self::set_anchor_in_element($tree, $target, $url, $old_anchor, $new_anchor, $here, $c);
+                    }, $count);
                 }
             }
             return $node;
         }
         if (is_object($node)) {
-            $here = $inside || (isset($node->id) && (string) $node->id === (string) $target);
+            $here = $inside || self::is_target_node($node, $target);
             foreach (get_object_vars($node) as $k => $v) {
                 if ($here && is_string($v)) {
                     if (!in_array($k, $skip_keys, true) && strpos((string) $k, '_') !== 0 && trim(wp_strip_all_tags($v)) === $old_anchor && ($url === '' || self::node_has_url($node, $url))) { $node->$k = $new_anchor; $count++; continue; }
                     if (strpos($v, '<a ') !== false && strpos($v, $old_anchor) !== false) { $rep = self::replace_inline_anchor_text($v, $url, $old_anchor, $new_anchor, $count); if ($rep !== $v) { $node->$k = $rep; continue; } }
                 } elseif (is_array($v) || is_object($v)) { $node->$k = self::set_anchor_in_element($v, $target, $url, $old_anchor, $new_anchor, $here, $count); }
+                elseif (is_string($v)) {
+                    $node->$k = self::walk_b64($v, function ($tree, &$c) use ($target, $url, $old_anchor, $new_anchor, $here) {
+                        return self::set_anchor_in_element($tree, $target, $url, $old_anchor, $new_anchor, $here, $c);
+                    }, $count);
+                }
             }
             return $node;
         }
@@ -1199,20 +1212,20 @@ class PCM_Conn_Builder_Manager {
         $out = preg_replace_callback($pattern, function ($m) use ($new_anchor, &$count) { $count++; return $m[1] . $new_anchor . $m[3]; }, $html);
         return ($out === null) ? $html : $out;
     }
-    /** True if $node's subtree carries a link 'url' equal to $url — used to tie a label to its own
-     *  link when disambiguating same-text siblings (icon-list rows etc.). */
+    /** True if $node's subtree carries a link 'url' (or Brizy's 'linkExternal') equal to $url —
+     *  used to tie a label to its own link when disambiguating same-text siblings. */
     private static function node_has_url($node, $url) {
         if ($url === '') { return true; }
         if (is_array($node)) {
             foreach ($node as $k => $v) {
-                if ($k === 'url' && is_string($v) && $v === $url) { return true; }
+                if (($k === 'url' || $k === 'linkExternal') && is_string($v) && $v === $url) { return true; }
                 if ((is_array($v) || is_object($v)) && self::node_has_url($v, $url)) { return true; }
             }
             return false;
         }
         if (is_object($node)) {
             foreach (get_object_vars($node) as $k => $v) {
-                if ($k === 'url' && is_string($v) && $v === $url) { return true; }
+                if (($k === 'url' || $k === 'linkExternal') && is_string($v) && $v === $url) { return true; }
                 if ((is_array($v) || is_object($v)) && self::node_has_url($v, $url)) { return true; }
             }
             return false;
@@ -1300,6 +1313,11 @@ class PCM_Conn_Builder_Manager {
             // so each captured link can be edited in isolation — rewriting just that one element, not
             // every link that happens to share the URL.
             if (isset($val['id'], $val['elType']) && is_string($val['id'])) { $el_id = $val['id']; }
+            // Brizy elements carry their id as value._id (no elType key). Without this, every Brizy
+            // link scanned with elId='' and the hub's anchor edits fell back to rewriting the STALE
+            // compiled post_content copy — reporting success while the live page never changed
+            // ("Links / edits are not working on Brizy sites").
+            if (isset($val['_id']) && is_string($val['_id']) && $val['_id'] !== '') { $el_id = $val['_id']; }
             // RENDER CACHES are not sources. Brizy keeps a compiled-HTML copy of the page inside
             // the same meta as its editor data; other builders stash cached fragments too. A cache
             // lags its source after edits, so scanning it reports links that are no longer on the
@@ -1323,6 +1341,13 @@ class PCM_Conn_Builder_Manager {
             }
             if (isset($val['url']) && is_string($val['url']) && preg_match('#^https?://#i', $val['url'])) {
                 $out[] = array('anchor' => $lbl, 'to' => $val['url'], 'html' => '', 'source' => 'builder', 'elId' => $el_id);
+            }
+            // Brizy stores a button/link target under linkExternal, not url — guarded by its own
+            // linkType so a stale value left over from a previous link type isn't reported as live.
+            if ((string) (isset($val['linkType']) ? $val['linkType'] : '') === 'external'
+                && isset($val['linkExternal']) && is_string($val['linkExternal'])
+                && preg_match('#^https?://#i', $val['linkExternal'])) {
+                $out[] = array('anchor' => $lbl, 'to' => $val['linkExternal'], 'html' => '', 'source' => 'builder', 'elId' => $el_id);
             }
             foreach ($val as $k => $v) {
                 if ($k === 'url') { continue; }
@@ -1369,27 +1394,69 @@ class PCM_Conn_Builder_Manager {
         usort($pool, static function ($a, $b) { return strlen($a) <=> strlen($b); });
         return $pool[0];
     }
+    /** True when this node IS the target element. Elementor/Bricks ids live under 'id'; Brizy
+     *  puts the element id under '_id' — matching only 'id' made every element-scoped edit on a
+     *  Brizy page a silent no-op. */
+    private static function is_target_node($node, $target) {
+        if (is_array($node)) {
+            return (isset($node['id']) && (string) $node['id'] === (string) $target)
+                || (isset($node['_id']) && (string) $node['_id'] === (string) $target);
+        }
+        if (is_object($node)) {
+            return (isset($node->id) && (string) $node->id === (string) $target)
+                || (isset($node->_id) && (string) $node->_id === (string) $target);
+        }
+        return false;
+    }
+    /** Run an element-scoped walker INSIDE a base64-encoded JSON blob (Brizy nests its editor data
+     *  that way — the element ids and labels are invisible to a plain tree walk). Decode → walk →
+     *  re-encode ONLY when the walker changed something; anything that isn't cleanly base64→UTF-8→
+     *  JSON is returned byte-identical (never corrupts). $walk = function (array $tree, &$c): array. */
+    private static function walk_b64($val, $walk, &$count) {
+        if (!is_string($val) || strlen($val) < 24 || !preg_match('/^[A-Za-z0-9+\/]+={0,2}$/', $val)) { return $val; }
+        $dec = base64_decode($val, true);
+        if ($dec === false || $dec === '' || !preg_match('//u', $dec)) { return $val; }
+        $t = ltrim($dec);
+        if ($t === '' || ($t[0] !== '{' && $t[0] !== '[')) { return $val; }
+        $j = json_decode($dec, true);
+        if (!is_array($j)) { return $val; }
+        $before = $count;
+        $j = $walk($j, $count);
+        // json_encode's default escaping (\/ and \uXXXX) matches Brizy's stored convention; an
+        // untouched blob must stay byte-identical, so only re-encode on a real change.
+        return ($count > $before) ? base64_encode((string) json_encode($j)) : $val;
+    }
     /** Replace $old→$new only inside the builder element whose id is $target (and its descendants),
      *  leaving identical links in OTHER elements untouched. Returns the decoded structure + count. */
     private static function replace_in_element($node, $target, $old, $new, $inside, &$count) {
         if (is_array($node)) {
-            $here = $inside || (isset($node['id']) && (string) $node['id'] === (string) $target);
+            $here = $inside || self::is_target_node($node, $target);
             $r = array();
             foreach ($node as $k => $v) {
                 if ($here && is_string($v) && strpos($v, $old) !== false) {
                     $c = 0; $v = str_replace($old, $new, $v, $c); $count += $c;
                 } elseif (is_array($v) || is_object($v)) {
                     $v = self::replace_in_element($v, $target, $old, $new, $here, $count);
+                } elseif (is_string($v)) {
+                    // Brizy: the element tree may sit inside a base64 JSON blob — recurse into it.
+                    $v = self::walk_b64($v, function ($tree, &$c) use ($target, $old, $new, $here) {
+                        return self::replace_in_element($tree, $target, $old, $new, $here, $c);
+                    }, $count);
                 }
                 $r[$k] = $v;
             }
             return $r;
         }
         if (is_object($node)) {
-            $here = $inside || (isset($node->id) && (string) $node->id === (string) $target);
+            $here = $inside || self::is_target_node($node, $target);
             foreach (get_object_vars($node) as $k => $v) {
                 if ($here && is_string($v) && strpos($v, $old) !== false) { $c = 0; $node->$k = str_replace($old, $new, $v, $c); $count += $c; }
                 elseif (is_array($v) || is_object($v)) { $node->$k = self::replace_in_element($v, $target, $old, $new, $here, $count); }
+                elseif (is_string($v)) {
+                    $node->$k = self::walk_b64($v, function ($tree, &$c) use ($target, $old, $new, $here) {
+                        return self::replace_in_element($tree, $target, $old, $new, $here, $c);
+                    }, $count);
+                }
             }
             return $node;
         }
@@ -1477,6 +1544,60 @@ add_action('rest_api_init', function () {
     // Featherweight page-state (3.0.7, gap e48b1ff): version+fingerprint ONLY —
     // no page render, no rule application. version 0 / '' = never pushed under
     // versioning (the true baseline, never an invention).
+    // Effective head tags — the title/description each PUBLISHED post actually renders,
+    // fetched via a loopback request and parsed head-only. Serves the hub's SEO-table
+    // fallback: SEO plugins GENERATE most titles/descriptions from templates and store
+    // nothing per-post, so the stored-meta columns look empty while the live pages are
+    // fine. Cached per post keyed on modified time; failures cache 1h so one dead
+    // permalink cannot re-block every call. Capped ids + a time budget keep any single
+    // call bounded — the hub simply fills what it got and asks again next load.
+    register_rest_route('pcm-conn/v1', '/head-tags', array(
+        'methods' => 'GET', 'permission_callback' => $perm,
+        'callback' => function ($req) {
+            $ids = array_slice(array_filter(array_map('absint', explode(',', (string) $req->get_param('post_ids')))), 0, 20);
+            $out = array();
+            $started = microtime(true);
+            foreach ($ids as $pid) {
+                if ((microtime(true) - $started) > 8.0) { break; }
+                $post = get_post($pid);
+                if (!$post || $post->post_status !== 'publish') { continue; }
+                $key = 'pcm_conn_head_' . $pid . '_' . md5((string) $post->post_modified_gmt);
+                $head = get_transient($key);
+                if (!is_string($head)) {
+                    $resp = wp_remote_get(get_permalink($pid), array('timeout' => 5, 'sslverify' => false));
+                    $html = (!is_wp_error($resp) && (int) wp_remote_retrieve_response_code($resp) < 300)
+                        ? (string) wp_remote_retrieve_body($resp) : '';
+                    // A challenge interstitial is not the page — never cache it as tags.
+                    if ($html !== '' && preg_match('/__cf_chl_|challenges\.cloudflare\.com|cf-browser-verification|<title[^>]*>\s*Just a moment/i', substr($html, 0, 60000))) {
+                        $html = '';
+                    }
+                    $end  = stripos($html, '</head>');
+                    $head = $end !== false ? substr($html, 0, $end) : substr($html, 0, 200000);
+                    set_transient($key, $head, $head === '' ? HOUR_IN_SECONDS : WEEK_IN_SECONDS);
+                }
+                if ($head === '') { continue; }
+                $title = '';
+                if (preg_match('#<title[^>]*>(.*?)</title>#is', $head, $m)) {
+                    $title = trim(html_entity_decode(wp_strip_all_tags($m[1]), ENT_QUOTES | ENT_HTML5));
+                }
+                $desc = '';
+                foreach (array(array('name', 'description'), array('property', 'og:description')) as $probe) {
+                    if ($desc !== '') { break; }
+                    $a = preg_quote($probe[0], '#'); $k = preg_quote($probe[1], '#');
+                    if (preg_match('#<meta\b[^>]*\bcontent=(["\'])(.*?)\1[^>]*\b' . $a . '=(["\'])' . $k . '\3[^>]*>#is', $head, $m)) { $desc = trim(html_entity_decode($m[2], ENT_QUOTES | ENT_HTML5)); }
+                    elseif (preg_match('#<meta\b[^>]*\b' . $a . '=(["\'])' . $k . '\1[^>]*\bcontent=(["\'])(.*?)\2[^>]*>#is', $head, $m)) { $desc = trim(html_entity_decode($m[3], ENT_QUOTES | ENT_HTML5)); }
+                }
+                if ($title === '' && preg_match('#<meta\b[^>]*\bproperty=(["\'])og:title\1[^>]*\bcontent=(["\'])(.*?)\2[^>]*>#is', $head, $m)) {
+                    $title = trim(html_entity_decode($m[3], ENT_QUOTES | ENT_HTML5));
+                }
+                $out[(string) $pid] = array(
+                    'title'       => preg_replace('/\s+/u', ' ', $title),
+                    'description' => preg_replace('/\s+/u', ' ', $desc),
+                );
+            }
+            return new WP_REST_Response(array('tags' => $out), 200);
+        },
+    ));
     register_rest_route('pcm-conn/v1', '/page-state', array(
         'methods' => 'GET', 'permission_callback' => $perm,
         'callback' => function ($req) {

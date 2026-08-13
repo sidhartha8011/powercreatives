@@ -354,12 +354,18 @@ class PCM_GSC
      * AND percent-encoding. The last one matters for non-ASCII slugs (Swedish å/ä/ö etc.): GSC
      * returns `/tandv%C3%A5rd`, a permalink may be raw `/tandvård`, with mixed hex case — all must
      * match. Host lowercased; path percent-decoded then Unicode-lowercased; trailing slash dropped.
+     *
+     * The QUERY STRING is part of the key. Dropping it made every draft collapse onto the
+     * homepage: a draft's permalink is a preview link (`/?page_id=9`) whose path is `/`, so
+     * after normalization it equaled the front page's key and the whole SEO table showed the
+     * homepage's clicks on rows Google has never seen ("our gsc says draft posts have visits").
      */
     public static function norm_url(string $url): string
     {
-        $host = preg_replace('/^www\./', '', strtolower((string) (wp_parse_url($url, PHP_URL_HOST) ?: '')));
-        $path = rtrim((string) (wp_parse_url($url, PHP_URL_PATH) ?? '/'), '/');
-        $key  = rawurldecode($host . $path);
+        $host  = preg_replace('/^www\./', '', strtolower((string) (wp_parse_url($url, PHP_URL_HOST) ?: '')));
+        $path  = rtrim((string) (wp_parse_url($url, PHP_URL_PATH) ?? '/'), '/');
+        $query = (string) (wp_parse_url($url, PHP_URL_QUERY) ?? '');
+        $key   = rawurldecode($host . $path . ($query !== '' ? '?' . $query : ''));
         return function_exists('mb_strtolower') ? mb_strtolower($key, 'UTF-8') : strtolower($key);
     }
 
