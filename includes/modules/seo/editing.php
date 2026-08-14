@@ -2153,7 +2153,8 @@ class PCM_SEO_Editing
         return array(
             'authors'    => $authors,
             'statuses'   => PCM_SEO_Service::VALID_STATUSES,
-            'types'      => PCM_SEO_Service::VALID_TYPES,
+            // Every public content type, so the Type filter offers the custom ones too.
+            'types'      => PCM_SEO_Local::content_types(),
             'seoPlugin'  => PCM_SEO_Local::detect_seo_plugin(),
         );
     }

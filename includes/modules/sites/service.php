@@ -412,11 +412,48 @@ class PCM_Sites_Service
      *
      * @return array{status:string,version:string,copies:int}
      */
+    /** Transient recording that a site's connector answered 404 for a route we need. */
+    private static function missing_route_key(int $site_id, string $route): string
+    {
+        return 'pcm_conn_no_' . preg_replace('/[^a-z0-9]/', '', strtolower($route)) . '_' . $site_id;
+    }
+
+    /**
+     * Record whether this site's connector serves a route the hub depends on.
+     *
+     * An OLD connector is not "missing" and not broken — it answers everything it
+     * knows and 404s the rest — so nothing in the UI could ever say why a feature
+     * was degraded. brizy.profitmedia.pro proved the cost: its connector predates
+     * /head-tags, so the SEO table fell back to the slow public-permalink reader
+     * and the meta columns looked broken, with no hint that a one-click connector
+     * update was the actual fix.
+     *
+     * @param bool $served True clears the flag, false records the 404 (12h).
+     */
+    public static function mark_connector_route(int $site_id, string $route, bool $served): void
+    {
+        $key = self::missing_route_key($site_id, $route);
+        if ($served) {
+            delete_transient($key);
+            return;
+        }
+        set_transient($key, 1, 12 * HOUR_IN_SECONDS);
+    }
+
+    /** True when this site's connector is known NOT to serve $route. */
+    public static function connector_lacks_route(int $site_id, string $route): bool
+    {
+        return (bool) get_transient(self::missing_route_key($site_id, $route));
+    }
+
     public static function connector_status(object $site): array
     {
+        // An active-but-OLD connector degrades features silently; surface it so the
+        // banner can offer the self-update that already exists.
+        $outdated = self::connector_lacks_route((int) ($site->id ?? 0), 'head-tags');
         $res = self::remote_rest($site, 'GET', '/wp/v2/plugins', array('_fields' => 'plugin,name,version,status'));
         if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
-            return array('status' => 'unknown', 'version' => '', 'copies' => 0);
+            return array('status' => 'unknown', 'version' => '', 'copies' => 0, 'outdated' => $outdated);
         }
         $copies = array();
         foreach ($res['body'] as $plugin) {
@@ -431,13 +468,14 @@ class PCM_Sites_Service
         usort($copies, static fn($a, $b) => version_compare($b['version'], $a['version']));
         foreach ($copies as $c) {
             if ($c['active']) {
-                return array('status' => 'active', 'version' => $c['version'], 'copies' => count($copies));
+                return array('status' => 'active', 'version' => $c['version'], 'copies' => count($copies), 'outdated' => $outdated);
             }
         }
         return array(
-            'status'  => count($copies) > 0 ? 'inactive' : 'missing',
-            'version' => (string) ($copies[0]['version'] ?? ''),
-            'copies'  => count($copies),
+            'status'   => count($copies) > 0 ? 'inactive' : 'missing',
+            'version'  => (string) ($copies[0]['version'] ?? ''),
+            'copies'   => count($copies),
+            'outdated' => $outdated,
         );
     }
 

@@ -46,7 +46,9 @@ check('it renders a Select', cell.includes('<Select'), 'no dropdown');
 check('options come from the scope-aware list', cell.includes('authorOptions'), 'still reads options.authors directly');
 check('it still degrades to read-only text when there is no list',
   /if \(authors\.length === 0\)[\s\S]{0,220}?TableCell/.test(cell), 'would render an empty dropdown');
-check('choosing an author saves the cell', /saveCell\(row\.id, 'author', v\)/.test(cell), 'not wired');
+check('choosing an author saves the cell WITH its display name',
+  cell.includes("saveCell(row.id, 'author', v, authors.find((a) => String(a.id) === v)?.name)"),
+  'name not passed - the cell would show the raw id');
 
 console.log('\n2. The plus button to create a new author');
 check('the cell has a "New author" action', /New author/.test(cell), 'no create affordance');
@@ -77,7 +79,8 @@ const submit = idx.slice(idx.indexOf('const submitNewAuthor'), idx.indexOf('cons
 check('local rows create on the hub', /if \(isLocal\) \{[\s\S]{0,160}?createAuthorMutation\.mutate/.test(submit), 'local path lost');
 check('remote rows create on the connected site',
   /createRemoteAuthorMutation\.mutate\(\{ siteId, name, email \}/.test(submit), 'creates on the hub instead');
-check('both paths assign the returned id to the row', /saveCell\(rowId, 'author', String\(a\.id\)\)/.test(submit), 'not assigned');
+check('both paths assign the returned id to the row, with the name',
+  submit.includes("saveCell(rowId, 'author', String(a.id), a.name)"), 'not assigned');
 check('the dialog says WHICH site it creates on',
   /isLocal \? 'this site' : \(activeSite\?\.name/.test(idx), 'ambiguous on a client install');
 check('the submit button reflects EITHER mutation being in flight',
@@ -117,6 +120,29 @@ check('both remote author routes target the site path',
   (routes.match(/url: `seo\/sites\/\$\{input\.siteId\}\/authors`/g) ?? []).length === 2,
   (routes.match(/url: `seo\/sites\/\$\{input\.siteId\}\/authors`/g) ?? []).length);
 
+
+console.log('\n7. "Ones and threes" + lag — the save patch law (Filip, 2026-08-15)');
+// The cache wrote the picked VALUE (a user id) into the `author` NAME field, so
+// the cell displayed "3"; and nothing painted until the round trip came back, so
+// the dropdown felt dead. Both hooks now patch {authorId, author:name}, apply it
+// OPTIMISTICALLY, and roll back on failure.
+const localHook = readFileSync(join(ROOT, 'app/src/modules/SEO/hooks/useSeoContent.ts'), 'utf8');
+const remoteHook = readFileSync(join(ROOT, 'app/src/modules/SEO/hooks/useRemoteSeoContent.ts'), 'utf8');
+for (const [label, src] of [['local', localHook], ['remote', remoteHook]]) {
+  check(`${label}: author saves patch authorId + display name, never author=id`,
+    src.includes('? { authorId: Number(value), ...(display ? { author: display } : {}) }'), label);
+  const optAt = src.indexOf('OPTIMISTIC');
+  const reqAt = src.indexOf('mutateAsync', optAt);
+  const paintAt = src.indexOf('setQueriesData', optAt);
+  check(`${label}: the patch is applied BEFORE the request (optimistic)`,
+    optAt !== -1 && paintAt !== -1 && reqAt !== -1 && paintAt < reqAt, { optAt, paintAt, reqAt });
+  const catchAt = src.indexOf('.catch', reqAt);
+  const rollback = src.indexOf('nvalidate', catchAt);
+  check(`${label}: a failed save rolls the paint back`,
+    catchAt !== -1 && rollback !== -1 && rollback - catchAt < 400, { catchAt, rollback });
+  check(`${label}: non-author fields keep the plain field patch`,
+    src.includes(': { [field]: value } as Partial<SeoRow>'), label);
+}
 console.log('\n' + '-'.repeat(60));
 console.log(`  passed: ${pass}   failed: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);

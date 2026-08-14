@@ -33,7 +33,8 @@ export interface UseAiReviewArgs {
   busy: boolean;
   siteId: number | 'local';
   postId: number;
-  type: 'post' | 'page';
+  /** Content type slug — post, page, or any public custom type. */
+  type: string;
   model?: string;
   provider?: string;
   aiPick: { id: string; provider?: string } | null;

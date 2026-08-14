@@ -55,6 +55,8 @@ require_once PCM_PLUGIN_DIR . 'includes/class-pcm-activator.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-template-seeds.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-prompt-seeds.php';
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-prompt-placeholders.php';
+// The shared site + business {{ variable }} vocabulary (SEO and Writer compose it).
+require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-content-vars.php';
 
 // ── Core: Provider metadata & image utilities ──
 require_once PCM_PLUGIN_DIR . 'includes/core/class-pcm-providers.php';

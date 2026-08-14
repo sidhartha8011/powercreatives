@@ -49,7 +49,13 @@ $src = file_get_contents($vars_ts);
 function ts_list(string $s, string $name): array {
     if (!preg_match('/const\s+' . preg_quote($name, '/') . '\s*(?::[^=]*)?=\s*\{(.*?)\n\};/s', $s, $m)) return array();
     preg_match_all("/'([^']+)'\s*:/", $m[1], $i);
-    return $i[1];
+    $out = $i[1];
+    // Follow the shared-map spread, exactly like ts_map — otherwise the substitution
+    // check below silently skips every composed token (16 per composing module).
+    if ($name !== 'SITE_BUSINESS_VARS' && strpos($m[1], '...SITE_BUSINESS_VARS,') !== false) {
+        $out = array_values(array_unique(array_merge($out, ts_list($s, 'SITE_BUSINESS_VARS'))));
+    }
+    return $out;
 }
 
 /** Token => description for a module's map, so the prose can be checked too. */
@@ -58,6 +64,12 @@ function ts_map(string $s, string $name): array {
     preg_match_all("/'([^']+)'\s*:\s*'((?:[^'\\\\]|\\\\.)*)'/", $m[1], $i, PREG_SET_ORDER);
     $out = array();
     foreach ($i as $pair) { $out[$pair[1]] = $pair[2]; }
+    // Blocks may COMPOSE the shared site+business map instead of re-declaring it
+    // (PCM_Content_Vars). Resolve the spread, or those tokens would look unoffered
+    // and every check below would skip them.
+    if ($name !== 'SITE_BUSINESS_VARS' && strpos($m[1], '...SITE_BUSINESS_VARS,') !== false) {
+        $out += ts_map($s, 'SITE_BUSINESS_VARS');
+    }
     return $out;
 }
 /** `{{ x }}` → `x`. */
@@ -67,6 +79,10 @@ function key_of(string $token): string { return trim(str_replace(array('{{', '}}
 function module_php(string $dir): string {
     if (!is_dir($dir)) return '';
     $out = '';
+    // The shared site+business map is defined in core and composed by modules —
+    // include it so its keys count as substituted for whoever composes it.
+    $shared = dirname(__DIR__, 2) . '/includes/core/class-pcm-content-vars.php';
+    if (is_file($shared)) { $out .= file_get_contents($shared) . "\n"; }
     $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir));
     foreach ($it as $f) {
         if ($f->isFile() && strtolower($f->getExtension()) === 'php') {
@@ -182,7 +198,10 @@ foreach ($MODULES as $mod => $cfg) {
     }
 }
 check('every token has a real description', $desc_problems === array(), $desc_problems);
-check('description count matches token count', $total_desc === 97, $total_desc);
+// 97 → 112: the phantom {{site_name}} was removed (−1, nothing ever substituted it)
+// and Writer gained the 16 shared site+business tokens it was missing (+16) — the
+// Templates/Writer-Templates card. Counted through the ...SITE_BUSINESS_VARS spread.
+check('description count matches token count', $total_desc === 112, $total_desc);
 
 echo "\n4c. The menu renders the description and can scroll sideways\n";
 $menu = file_get_contents($ROOT . '/app/src/modules/Templates/SlashVariableMenu.tsx');

@@ -76,6 +76,13 @@ export function SourceVarsHint({ module, category, className }: SourceVarsHintPr
         automatically when the brand sets one — this variable just lets you word the instruction yourself.
         It resolves to nothing when no language is set.
       </p>
+      <p>
+        The site and business variables SEO templates use resolve here too —{" "}
+        {code("{{business.name}}")}, {code("{{business.phone}}")}, {code("{{business.address}}")},{" "}
+        {code("{{business.category}}")}, {code("{{site.lang}}")}, {code("{{today}}")} and the rest of the{" "}
+        {code("{{business.*}}")} set (from the brand’s Google Business Profile). Type “/” in the value
+        editor for the full list. Any of them resolves to nothing when that detail isn’t set.
+      </p>
     </div>
   );
 }

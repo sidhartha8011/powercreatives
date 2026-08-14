@@ -114,21 +114,95 @@ check('a fenced PLAIN title still unwraps normally',
     Host::sanitize_ai_output("```\nBest Massage in Town\n```") === 'Best Massage in Town',
     Host::sanitize_ai_output("```\nBest Massage in Town\n```"));
 
-echo "\n4. Both per-field generate paths report the REAL cause\n";
+echo "\n4. ONE shared invoke reports the real cause — and SELF-HEALS first\n";
+// 2026-08-15 (Filip: "individual lines do not work. It complains about HTML
+// missing"): the guard moved from two duplicated copies into
+// PCM_SEO_AI::invoke_scalar_field, which both paths call. It now retries ONCE
+// with the SHIPPED default when a CUSTOMIZED prompt yields the envelope, so a
+// mispointed template heals instead of dead-ending; the 422 remains only when
+// the default itself envelopes.
 $svc = file_get_contents($SEO . 'service.php');
-foreach (array('local ai.php' => $src, 'remote service.php' => $svc) as $label => $code) {
-    check("{$label}: checks for an envelope before the generic empty error",
-        preg_match('/is_structured_envelope\(\(string\) \(\$result\[.content.\] \?\? .{2}\)\)/', $code) === 1, $label);
-    check("{$label}: names Templates → SEO in the message",
-        strpos($code, 'check the template selected for this column in Templates') !== false, $label);
-    check("{$label}: 422 (bad configuration), not 502 (provider fault)",
-        preg_match("/pcm_seo_envelope[\s\S]{0,400}?'status' => 422/", $code) === 1, $label);
-    // Order matters: the specific check must precede the generic one.
-    $env = strpos($code, "pcm_seo_envelope");
-    $emp = strpos($code, "pcm_seo_empty", $env ?: 0);
-    check("{$label}: the specific error comes first", $env !== false && $emp !== false && $env < $emp,
-        array('envelope' => $env, 'empty' => $emp));
+$inv_at = strpos($src, 'function invoke_scalar_field');
+check('the shared invoke exists', $inv_at !== false);
+$inv = substr($src, (int) $inv_at, 2600);
+check('envelope is checked on the RAW output', strpos($inv, 'self::is_structured_envelope($raw)') !== false, 'raw not checked');
+check('a customized prompt retries with the shipped default',
+    preg_match('/is_structured_envelope\(\$raw\) && \$customized[\s\S]{0,400}?substitute_vars\(\$default_tpl/', $inv) === 1, 'no self-heal');
+check('the retry keeps the language law', strpos($inv, '$default_tpl . self::language_law($vars)') !== false, 'law dropped on retry');
+check('names Templates → SEO in the message',
+    strpos($inv, 'check the template selected for this column in Templates') !== false);
+check('422 (bad configuration), not 502 (provider fault)',
+    preg_match("/pcm_seo_envelope[\s\S]{0,400}?'status' => 422/", $inv) === 1);
+// Order matters: the specific check must precede the generic one.
+$env = strpos($inv, 'pcm_seo_envelope');
+$emp = strpos($inv, 'pcm_seo_empty', (int) $env);
+check('the specific error comes first', $env !== false && $emp !== false && $env < $emp,
+    array('envelope' => $env, 'empty' => $emp));
+check('the slug field is slugified on BOTH attempts', substr_count($inv, 'sanitize_title($value)') === 2, $inv);
+// Both per-field paths route through it, with customization = resolved ≠ default.
+check('local ai.php routes through the shared invoke',
+    preg_match('/return self::invoke_scalar_field\(\$prompt, \$default, \$vars, \$field, \$opts, \$tpl !== \$default\);/', $src) === 1, 'local bespoke');
+check('remote service.php routes through the shared invoke',
+    preg_match('/return PCM_SEO_AI::invoke_scalar_field\(\$prompt, \$default, \$vars, \$field, \$opts, \$tpl !== \$default\);/', $svc) === 1, 'remote bespoke');
+check('no duplicated envelope guard remains outside the shared invoke',
+    substr_count($src . $svc, 'pcm_seo_envelope') === 1, substr_count($src . $svc, 'pcm_seo_envelope'));
+
+echo "\n5. The shared invoke — EXECUTED with a scripted model\n";
+// Filip: "Test every generation, both bulk and singular, before you return the
+// card." The full invoke runs here: good answers, the envelope-then-heal retry,
+// and the two cases that must still refuse.
+if (!class_exists('WP_Error')) {
+    class WP_Error { public $code; public $msg; public $data;
+        public function __construct($c = '', $m = '', $d = null) { $this->code = $c; $this->msg = $m; $this->data = $d; } }
 }
+if (!function_exists('__')) { function __($s, $d = null) { return $s; } }
+if (!function_exists('sanitize_title')) { function sanitize_title($s) { return trim(preg_replace('/[^a-z0-9]+/', '-', strtolower((string) $s)), '-'); } }
+class PCM_LLM {
+    public static $script = array();   // successive responses
+    public static $prompts = array();  // what each invoke was asked
+    public static function invoke($messages, $opts = array()) {
+        self::$prompts[] = (string) ($messages[0]['content'] ?? '');
+        return array('content' => (string) array_shift(self::$script));
+    }
+}
+$inv_fn = $grab('invoke_scalar_field');
+eval('class InvokeHost { '
+    . $inv_fn . "\n" . $grab('sanitize_ai_output') . "\n" . $grab('is_structured_envelope') . "\n"
+    . ' public static function substitute_vars($tpl, $vars) { foreach ($vars as $k => $v) { $tpl = str_replace(\'{{\' . $k . \'}}\', (string) $v, $tpl); } return $tpl; }'
+    . ' public static function language_law($vars) { return " LAW"; } }');
+$ENVELOPE = '{"html":"<section><h1>Welcome</h1></section>","changes":[{"what":"x"}]}';
+$vars = array('title' => 'Massage');
+
+PCM_LLM::$script = array('Massage i Göteborg — boka idag'); PCM_LLM::$prompts = array();
+$r = InvokeHost::invoke_scalar_field('CUSTOM {{title}}', 'DEFAULT {{title}}', $vars, 'metaTitle', array(), true);
+check('a good answer passes through, ONE invoke', ($r['value'] ?? '') === 'Massage i Göteborg — boka idag' && count(PCM_LLM::$prompts) === 1, $r);
+
+PCM_LLM::$script = array($ENVELOPE, 'Massage i Göteborg | Klinik'); PCM_LLM::$prompts = array();
+$r = InvokeHost::invoke_scalar_field('CUSTOM {{title}}', 'DEFAULT {{title}}', $vars, 'metaTitle', array(), true);
+check('SELF-HEAL: customized prompt envelopes → default retried → real title',
+    ($r['value'] ?? '') === 'Massage i Göteborg | Klinik', $r);
+check('…the retry used the SHIPPED default (with the law, substituted)',
+    (PCM_LLM::$prompts[1] ?? '') === 'DEFAULT Massage LAW', PCM_LLM::$prompts);
+check('…and the envelope never became the value', strpos((string) ($r['value'] ?? ''), '{') === false, $r);
+
+PCM_LLM::$script = array($ENVELOPE, $ENVELOPE); PCM_LLM::$prompts = array();
+$r = InvokeHost::invoke_scalar_field('CUSTOM', 'DEFAULT', $vars, 'metaTitle', array(), true);
+check('default ALSO envelopes → the honest 422 remains (nothing left to heal with)',
+    $r instanceof WP_Error && $r->code === 'pcm_seo_envelope', $r);
+
+PCM_LLM::$script = array($ENVELOPE); PCM_LLM::$prompts = array();
+$r = InvokeHost::invoke_scalar_field('DEFAULT', 'DEFAULT', $vars, 'metaTitle', array(), false);
+check('an UNCUSTOMIZED prompt never retries (nothing to heal with) → 422, one invoke',
+    $r instanceof WP_Error && $r->code === 'pcm_seo_envelope' && count(PCM_LLM::$prompts) === 1, $r);
+
+PCM_LLM::$script = array(''); PCM_LLM::$prompts = array();
+$r = InvokeHost::invoke_scalar_field('CUSTOM', 'DEFAULT', $vars, 'metaTitle', array(), true);
+check('an empty answer is the generic error, NOT the envelope one — and no wasted retry',
+    $r instanceof WP_Error && $r->code === 'pcm_seo_empty' && count(PCM_LLM::$prompts) === 1, $r);
+
+PCM_LLM::$script = array($ENVELOPE, 'My Great Page — Best One!'); PCM_LLM::$prompts = array();
+$r = InvokeHost::invoke_scalar_field('CUSTOM', 'DEFAULT', $vars, 'slug', array(), true);
+check('the slug is slugified on the HEALED attempt too', ($r['value'] ?? '') === 'my-great-page-best-one', $r);
 
 echo "\n" . str_repeat('-', 60) . "\n";
 echo "  passed: {$PASS}   failed: {$FAIL}\n";

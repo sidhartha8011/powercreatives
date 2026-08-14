@@ -111,30 +111,42 @@ check('a REAL page with a similar-ish title is NOT refused',
 check('normal pages pass the guard', MetaHost::is_challenge_page('<head><title>Massage</title></head>') === false);
 
 echo "\n3. Both list paths are wired\n";
-check('local list_content applies the fallback', strpos($loc, 'return self::fill_effective_meta($rows, static function (array $row)') !== false, 'local not wired');
+check('local list_content applies the fallback',
+    preg_match('/return self::fill_effective_meta\(\s*\n\s*\$rows,/', $loc) === 1, 'local not wired');
+check('…and passes the FREE cache pass, so a big site converges',
+    strpos($loc, 'self::cached_page_html_only((int) ($row[\'id\'] ?? 0))') !== false, 'cache hits billed again');
 check('local fetcher is the cached loopback', strpos($loc, 'self::cached_page_html((int) ($row[\'id\'] ?? 0))') !== false, 'wrong fetcher');
 check('local cache keys on post_modified (edits invalidate naturally)',
     strpos($loc, "md5((string) \$post->post_modified_gmt)") !== false, 'stale cache on edit');
 check('drafts are skipped locally (no public page to read)', strpos($loc, "post_status !== 'publish'") !== false, 'drafts fetched');
 $svc = file_get_contents($ROOT . '/includes/modules/seo/service.php');
-$rlc = substr($svc, strpos($svc, 'function remote_list_content'), 4500);
+// Window widened: remote_list_content grew (featured-image resolution, post-type
+// discovery, hub-side tag caching). A too-small window would make these pass or
+// fail on truncation rather than on the code.
+$rlc = substr($svc, strpos($svc, 'function remote_list_content'), 9000);
 check('remote list calls the connector /head-tags route', strpos($rlc, "'/pcm-conn/v1/head-tags'") !== false, 'remote not wired');
 check('remote fill touches EMPTY fields only',
     preg_match('/\(\$r\[.metaTitle.\] \?\? .{2}\) === .{2} && !empty\(\$t\[.title.\]\)/', $rlc) === 1, 'stored meta shadowed');
-check('remote batch is capped at 20 ids', strpos($rlc, 'array_slice($need, 0, 20)') !== false, 'unbounded batch');
+check('remote batch is still capped at 20 ids (what the connector answers)',
+    strpos($rlc, 'array_slice($unseen, 0, 20)') !== false, 'unbounded batch');
+check('…and it asks for ids NOT yet learned, so the table converges',
+    strpos($rlc, '$unseen[] = $pid;') !== false, 'same first 20 re-requested every load');
 check('an old connector (no route) fails silently', strpos($rlc, 'is_wp_error($res)') !== false, 'hard failure on old connector');
 // The connector-LESS fallback (massagegoteborg.nu has NO pcm-conn namespace at
 // all): the hub fetches public permalinks itself — publish-only, small cap,
 // challenge-guarded, cached on the row's modified time.
-$rlc2 = substr($svc, strpos($svc, 'function remote_list_content'), 8000);
+$rlc2 = substr($svc, strpos($svc, 'function remote_list_content'), 12000);
 check('hub-side public fallback exists for connector-less sites',
     strpos($rlc2, 'PCM_SEO_Local::fill_effective_meta(') !== false, 'no connector-less fallback');
 check('it only fetches PUBLISHED rows',
     strpos($rlc2, "(\$row['status'] ?? '') !== 'publish'") !== false, 'drafts fetched cross-internet');
 check('it refuses challenge pages instead of caching them',
     strpos($rlc2, 'PCM_SEO_Local::is_challenge_page($html)') !== false, 'interstitial cached as tags');
-check('its cap is smaller than the connector path (10, cross-internet)',
-    strpos($rlc2, '10,  // smaller cap') !== false, 'no cap');
+// Raised 10 -> 25 (2026-08-15): on a site whose connector predates /head-tags this
+// reader is the ONLY way meta appears. The point is that it stays BOUNDED — a cap
+// AND a wall-clock budget — not the exact number.
+check('the cross-internet reader stays bounded (cap + time budget)',
+    preg_match('/\s25,\s*6\.0,/', $rlc2) === 1, 'no cap');
 check('cache key includes the modified time', strpos($rlc2, "\$row['modified']") !== false, 'stale cache on edit');
 check('wp/v2 fields request modified', strpos($svc, "'id,title,slug,status,date,modified,link,author") !== false, 'modified not fetched');
 check('remote_row passes modified through', strpos($svc, "(string) (\$item['modified'] ?? '')") !== false, 'row lacks modified');

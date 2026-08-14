@@ -42,7 +42,8 @@ export interface EditorHeaderProps {
   reviewOpen: boolean;
   siteId: number | 'local';
   postId: number;
-  type: 'post' | 'page';
+  /** Content type slug — post, page, or any public custom type. */
+  type: string;
   page?: {
     title: string; editUrl?: string; date?: string; permalink?: string; onPreview?: () => void;
     primaryKeyword?: string; supportingKeyword?: string; status?: string;

@@ -50,11 +50,33 @@ class PCM_SEO_Service
     /** Content types this module operates on. */
     public const VALID_TYPES = ['post', 'page'];
 
+    /**
+     * Post types that are never public CONTENT: WordPress internals, plus page-builder
+     * template libraries (an Elementor/Divi/Brizy template is not a URL anyone visits).
+     * Everything else a site registers publicly — services, doctors, products, portfolio —
+     * IS content the SEO table must show.
+     */
+    public const NON_CONTENT_TYPES = [
+        'attachment', 'nav_menu_item', 'revision', 'custom_css', 'customize_changeset',
+        'oembed_cache', 'user_request', 'wp_block', 'wp_template', 'wp_template_part',
+        'wp_global_styles', 'wp_navigation', 'wp_font_family', 'wp_font_face',
+        'elementor_library', 'e-floating-buttons', 'et_pb_layout', 'brizy_template',
+        'fl-builder-template', 'fl-theme-layout', 'ct_template', 'bricks_template',
+        'product_variation', 'shop_order', 'shop_order_refund', 'shop_coupon',
+        'scheduled-action', 'acf-field', 'acf-field-group', 'wpcf7_contact_form',
+    ];
+
     /** Editable WP post statuses (dropdown source + save validation). */
     public const VALID_STATUSES = ['publish', 'draft', 'pending', 'private', 'future'];
 
     /** Max rows fetched per content type. */
-    public const PER_TYPE = 100;
+    // 100 → 500: the cap was silently DROPPING everything past 100 per type, and on a
+    // page-heavy site the dropped rows are precisely the subpages. 500 bounds the
+    // local WP_Query; the remote list paginates to the same total (5 × 100).
+    public const PER_TYPE = 500;
+
+    /** Remote pagination: how many 100-row pages to fetch per content type. */
+    public const PER_TYPE_PAGES = 5;
 
 
     // ── Remote-site SEO (connected sites via the connector proxy; Phase 1: read + edit) ──
@@ -113,11 +135,16 @@ class PCM_SEO_Service
             'author'            => (string) ($item['_embedded']['author'][0]['name'] ?? ''),
             'permalink'         => (string) ($item['link'] ?? ''),
             'editUrl'           => rtrim((string) $site->url, '/') . '/wp-admin/post.php?post=' . $id . '&action=edit',
+            // Featured image. The embed is the free path, but it is NOT reliable: `_embed` is
+            // dropped by older cores when `_fields` is used, and security plugins / CDNs strip
+            // it outright — leaving the table unable to DISCOVER an image that is really set.
+            // So keep the id too; remote_list_content resolves any missing URL from it.
             'featuredImage'     => (string) (
                 $item['_embedded']['wp:featuredmedia'][0]['media_details']['sizes']['thumbnail']['source_url']
                     ?? $item['_embedded']['wp:featuredmedia'][0]['source_url']
                     ?? ''
             ),
+            'featuredImageId'   => (int) ($item['featured_media'] ?? 0),
             'excerpt'           => isset($item['excerpt']['rendered'])
                 ? wp_trim_words(wp_strip_all_tags((string) $item['excerpt']['rendered']), 20, '…')
                 : '',
@@ -136,6 +163,141 @@ class PCM_SEO_Service
     }
 
     /**
+     * REST post types that hold real, indexable CONTENT on a connected site — keyed
+     * slug => rest_base.
+     *
+     * Owner: "SEO table - not pulling pages in a subfolder or what we call it
+     * /sub-subpage". Proven on massagegoteborg.nu: /services/lymphatic-drainage/ (its
+     * best-performing URL in Search Console) is not a page at all — the site registers a
+     * `services` custom post type, plus `cmsms_doctor`. A post+page-only list can never
+     * show them, and from the outside they look exactly like pages in a subfolder.
+     *
+     * Discovered from CORE's /wp/v2/types, so it works with no connector at all. System
+     * and page-builder template types are excluded — they are never public URLs.
+     * Cached per site (12h); post/page are always present, so a failed lookup degrades
+     * to exactly the old behaviour rather than an empty table.
+     *
+     * @return array<string,string> slug => rest_base.
+     */
+    public static function remote_content_types(object $site): array
+    {
+        $builtin = array('post' => 'posts', 'page' => 'pages');
+        $key     = 'pcm_seo_types_' . (int) ($site->id ?? 0);
+        $cached  = get_transient($key);
+        if (is_array($cached) && !empty($cached)) {
+            return $cached;
+        }
+        self::ensure_sites_service();
+        // context=edit exposes `viewable`; fall back to the public view context when the
+        // app-password user can't use it.
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/wp/v2/types', array('context' => 'edit'));
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            $res = PCM_Sites_Service::remote_rest($site, 'GET', '/wp/v2/types');
+        }
+        if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+            return $builtin;   // unreadable → behave exactly as before, never an empty table
+        }
+        $types = $builtin;
+        foreach ($res['body'] as $slug => $def) {
+            $slug = sanitize_key((string) $slug);
+            if ($slug === '' || isset($types[$slug]) || !is_array($def)) {
+                continue;
+            }
+            if (in_array($slug, self::NON_CONTENT_TYPES, true)) {
+                continue;
+            }
+            // When the site tells us whether a type is publicly viewable, believe it.
+            if (array_key_exists('viewable', $def) && !$def['viewable']) {
+                continue;
+            }
+            $base = (string) ($def['rest_base'] ?? '');
+            // Empty base = not exposed; a base with a regex placeholder (wp_font_face) is
+            // a nested route we can neither list nor edit as content.
+            if ($base === '' || strpos($base, '(') !== false) {
+                continue;
+            }
+            $types[$slug] = $base;
+        }
+        set_transient($key, $types, 12 * HOUR_IN_SECONDS);
+        return $types;
+    }
+
+    /** Forget a site's cached post-type map (call after connecting/updating a site). */
+    public static function flush_remote_content_types(int $site_id): void
+    {
+        delete_transient('pcm_seo_types_' . $site_id);
+    }
+
+    /**
+     * REST route for a content type on a connected site — the ONE place a type becomes a
+     * URL. Unknown types fall back to the built-in post/page mapping, so a stale row can
+     * never produce a nonsense route.
+     *
+     * @param int $post_id Append this id when non-zero (single-item route).
+     */
+    public static function remote_route(object $site, string $type, int $post_id = 0): string
+    {
+        $types = self::remote_content_types($site);
+        $base  = $types[$type] ?? ($type === 'page' ? 'pages' : 'posts');
+        return '/wp/v2/' . $base . ($post_id > 0 ? '/' . $post_id : '');
+    }
+
+    /**
+     * Fill in featuredImage URLs for rows that carry a featured-media ID but no URL (the
+     * embed was missing or unusable). Batched by id via /wp/v2/media, so the whole table
+     * costs at most a couple of extra requests.
+     *
+     * Best-effort by contract: a failed/blocked media call leaves those cells empty exactly
+     * as before — never an error, never a fabricated URL. Rows are passed by reference.
+     *
+     * @param object  $site
+     * @param array[] $rows  Rows from remote_row(), modified in place.
+     * @param int     $cap   Max ids to resolve per list (bounds a huge table's first load).
+     * @return void
+     */
+    private static function fill_remote_featured_images(object $site, array &$rows, int $cap = 200): void
+    {
+        $need = array();               // media id => [row indexes]
+        foreach ($rows as $i => $r) {
+            $mid = (int) ($r['featuredImageId'] ?? 0);
+            if ($mid > 0 && (string) ($r['featuredImage'] ?? '') === '') {
+                $need[$mid][] = $i;
+            }
+        }
+        if (empty($need)) {
+            return;                    // every image already arrived via the embed
+        }
+        $ids = array_slice(array_keys($need), 0, $cap);
+        foreach (array_chunk($ids, 100) as $chunk) {
+            $res = PCM_Sites_Service::remote_rest($site, 'GET', '/wp/v2/media', array(
+                'include'  => implode(',', $chunk),
+                'per_page' => count($chunk),
+                '_fields'  => 'id,source_url,media_details',
+            ));
+            if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+                continue;              // blocked/erroring media route → leave those cells empty
+            }
+            foreach ($res['body'] as $media) {
+                if (!is_array($media)) {
+                    continue;
+                }
+                $mid = (int) ($media['id'] ?? 0);
+                $url = (string) (
+                    $media['media_details']['sizes']['thumbnail']['source_url']
+                        ?? $media['source_url']
+                        ?? ''
+                );
+                if ($mid === 0 || $url === '' || empty($need[$mid])) {
+                    continue;
+                }
+                foreach ($need[$mid] as $i) {
+                    $rows[$i]['featuredImage'] = $url;
+                }
+            }
+        }
+    }
+
+    /**
      * List a connected site's posts + pages as SeoRows, via the connector proxy.
      * Best-effort: skips a post type on a proxy error rather than failing the whole list.
      */
@@ -144,42 +306,118 @@ class PCM_SEO_Service
         self::ensure_sites_service();
         $rows   = array();
         $fields = 'id,title,slug,status,date,modified,link,author,featured_media,excerpt,meta,_embedded.author,_embedded.wp:featuredmedia';
-        foreach (array('post' => '/wp/v2/posts', 'page' => '/wp/v2/pages') as $type => $route) {
-            $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array(
-                'per_page' => 100,
-                'status'   => 'publish,future,draft,pending,private',
-                '_embed'   => '1',
-                '_fields'  => $fields,
-                'orderby'  => 'modified',
-            ));
-            if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
-                continue;
-            }
-            foreach ($res['body'] as $item) {
-                if (is_array($item)) {
-                    $rows[] = self::remote_row($item, $type, $site);
+        // EVERY public content type, not just post+page — a site's `services` /
+        // `cmsms_doctor` items are real URLs and were invisible here (see
+        // remote_content_types). Discovery degrades to post+page when unreadable.
+        $routes = array();
+        foreach (self::remote_content_types($site) as $type => $base) {
+            $routes[$type] = '/wp/v2/' . $base;
+        }
+        foreach ($routes as $type => $route) {
+            // PAGINATED: one 100-row request per page, up to PER_TYPE_PAGES. The old
+            // single request silently DROPPED everything past 100 — on a site with
+            // many pages the missing rows are precisely the subpages ("the table…
+            // needs to pull in and show the subpages"). WordPress answers a page
+            // past the end with 400 rest_post_invalid_page_number — that is the
+            // normal end-of-list signal here, not a failure.
+            for ($page = 1; $page <= self::PER_TYPE_PAGES; $page++) {
+                $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array(
+                    'per_page' => 100,
+                    'page'     => $page,
+                    'status'   => 'publish,future,draft,pending,private',
+                    '_embed'   => '1',
+                    '_fields'  => $fields,
+                    'orderby'  => 'modified',
+                ));
+                if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+                    break;   // error on page 1 = type unavailable; later = end of list
                 }
-                // (effective-meta fallback applied once, after both types — below)
+                $got = 0;
+                foreach ($res['body'] as $item) {
+                    if (is_array($item)) {
+                        $rows[] = self::remote_row($item, $type, $site);
+                        $got++;
+                    }
+                    // (effective-meta fallback applied once, after all types — below)
+                }
+                if ($got < 100) {
+                    break;   // short page = last page; no need to provoke the 400
+                }
             }
         }
+        // Featured images the embed didn't deliver: resolve them from the ids we DO have.
+        // Owner: "when a page has a featured image, the table does not show it… it can only
+        // Set an image, not discover if there is one." A post carries featured_media (an id)
+        // unconditionally, while `_embedded` is optional and routinely absent (older cores
+        // drop it when `_fields` is set; security plugins and CDNs strip it). One batched
+        // /wp/v2/media call turns those ids into thumbnails, so discovery no longer depends
+        // on the embed arriving.
+        self::fill_remote_featured_images($site, $rows);
+
         // Empty meta cells fall back to the tags each page ACTUALLY renders,
         // served batch-wise by the connector's /head-tags route (loopback fetch
         // + head-only parse, cached on the site). SEO plugins generate most
         // titles/descriptions from templates and store NOTHING per post — the
         // reported massagegoteborg.nu columns were empty while every live page
         // had perfect tags. Old connector without the route → skip silently.
+        // The connector answers at most 20 ids per request. Asking for "the first 20
+        // that need meta" EVERY time meant rows 21+ were never requested at all — on
+        // brizy.profitmedia.pro (63 rows) most of the table could never fill, no matter
+        // how often it was reloaded ("the meta tags is not shown in the table"). So:
+        // remember what we learn per (site, post, modified) and ask only for ids we do
+        // NOT know yet. Each load fills every known row for free and learns up to 20
+        // more, so successive loads converge and a warm table costs zero requests.
         $need = array();
-        foreach ($rows as $r) {
+        foreach ($rows as $i => $r) {
             if ((($r['metaTitle'] ?? '') === '' || ($r['metaDescription'] ?? '') === '') && !empty($r['id'])) {
-                $need[] = (int) $r['id'];
+                $need[(int) $r['id']] = $i;
             }
         }
         if (!empty($need)) {
-            $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/head-tags', array(
-                'post_ids' => implode(',', array_slice($need, 0, 20)),
-            ));
-            $tags = (!is_wp_error($res) && (int) ($res['status'] ?? 0) < 300 && is_array($res['body']['tags'] ?? null))
-                ? $res['body']['tags'] : array();
+            $tag_key = static function (int $post_id) use ($site, $rows, $need) {
+                $row = $rows[$need[$post_id]] ?? array();
+                return 'pcm_seo_rtags_' . (int) ($site->id ?? 0) . '_' . $post_id . '_'
+                    . md5((string) ($row['modified'] ?? $row['date'] ?? ''));
+            };
+            // 1. Free pass: everything already learned.
+            $tags   = array();
+            $unseen = array();
+            foreach (array_keys($need) as $pid) {
+                $hit = get_transient($tag_key($pid));
+                if (is_array($hit)) {
+                    $tags[(string) $pid] = $hit;
+                } else {
+                    $unseen[] = $pid;
+                }
+            }
+            // 2. Learn up to one connector batch of the ids we have never resolved.
+            if (!empty($unseen)) {
+                $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/head-tags', array(
+                    'post_ids' => implode(',', array_slice($unseen, 0, 20)),
+                ));
+                $served = !is_wp_error($res) && (int) ($res['status'] ?? 0) < 300;
+                // A 404 here means the connector predates /head-tags — it is ACTIVE and
+                // healthy, just old. Record that so the SEO banner can offer the
+                // one-click self-update instead of leaving the columns mysteriously
+                // slow to fill (proven on brizy.profitmedia.pro, whose connector has no
+                // such route). 5xx/transport errors are NOT a capability verdict.
+                if ($served || (int) ($res['status'] ?? 0) === 404) {
+                    PCM_Sites_Service::mark_connector_route((int) ($site->id ?? 0), 'head-tags', $served);
+                }
+                $fresh = ($served && is_array($res['body']['tags'] ?? null))
+                    ? $res['body']['tags'] : array();
+                foreach ($fresh as $pid => $t) {
+                    if (!is_array($t)) {
+                        continue;
+                    }
+                    $tags[(string) $pid] = $t;
+                    // Cache the ANSWER, including an empty one: a page that genuinely
+                    // renders no meta must not be re-fetched on every load. Short TTL
+                    // for empties so a fixed page recovers on its own.
+                    $has = (!empty($t['title']) || !empty($t['description']));
+                    set_transient($tag_key((int) $pid), $t, $has ? WEEK_IN_SECONDS : HOUR_IN_SECONDS);
+                }
+            }
             if (!empty($tags)) {
                 foreach ($rows as $i => $r) {
                     $t = $tags[(string) ($r['id'] ?? '')] ?? null;
@@ -229,8 +467,21 @@ class PCM_SEO_Service
                     set_transient($key, $html, $html === '' ? HOUR_IN_SECONDS : WEEK_IN_SECONDS);
                     return $html === '' ? null : $html;
                 },
-                10,  // smaller cap than the connector path — these cross the internet
-                6.0
+                // Cap raised 10 → 25: on a site whose connector predates /head-tags this
+                // reader is the ONLY way meta ever appears, and 10-per-load made a 63-row
+                // table take seven visits. Each page is cached for a week, and the 6s
+                // budget still bounds a single load's wall clock.
+                25,
+                6.0,
+                // Free cache-only pass (same transient the fetcher writes), so pages
+                // already read don't burn the budget and later rows still get a turn.
+                static function (array $row) {
+                    if (($row['status'] ?? '') !== 'publish' || empty($row['permalink'])) {
+                        return null;
+                    }
+                    $cached = get_transient('pcm_seo_rhead_' . md5((string) $row['permalink'] . '|' . (string) ($row['modified'] ?? $row['date'] ?? '')));
+                    return (is_string($cached) && $cached !== '') ? $cached : null;
+                }
             );
         }
         return $rows;
@@ -297,7 +548,7 @@ class PCM_SEO_Service
     public static function remote_save_cell(object $site, int $post_id, string $type, string $field, string $value)
     {
         self::ensure_sites_service();
-        $route   = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $route   = self::remote_route($site, $type, (int) $post_id);
         $payload = array();
         if ($field === 'title') {
             $payload['title'] = $value;
@@ -351,6 +602,23 @@ class PCM_SEO_Service
                 return new WP_Error(
                     'pcm_seo_remote_meta_unsupported',
                     __('The remote site didn’t store this SEO field — its REST API doesn’t expose SEO meta. Install the Power Creatives connector plugin on that site to edit its meta (Title & Slug work without it).', 'power-creatives'),
+                    array('status' => 422)
+                );
+            }
+        }
+        // AUTHOR verification — from the POST's own response body, no extra round trip.
+        // A cap failure (user can't edit_others_posts) 403s and is surfaced above, but
+        // core REST silently IGNORES the author param when the post type doesn't expose
+        // author support — 200, author unchanged. The table then looked like the pick
+        // simply "didn't select" (owner, knallenstandvard.se). The updated-post body
+        // carries the stored author: absent = the field isn't in this type's schema;
+        // different = the write was refused. Either way, say so instead of faking success.
+        if ($field === 'author' && is_array($res['body'] ?? null)) {
+            $stored_author = array_key_exists('author', $res['body']) ? (int) $res['body']['author'] : null;
+            if ($stored_author === null || $stored_author !== absint($value)) {
+                return new WP_Error(
+                    'pcm_seo_author_not_saved',
+                    __('The remote site accepted the request but kept the previous author. Usually the connected user lacks the "edit others\' posts" capability on that site (its app-password user needs an Editor/Administrator role), or this content type does not support authors.', 'power-creatives'),
                     array('status' => 422)
                 );
             }
@@ -473,7 +741,7 @@ class PCM_SEO_Service
     public static function remote_create_content(object $site, string $type)
     {
         self::ensure_sites_service();
-        $route = ($type === 'page') ? '/wp/v2/pages' : '/wp/v2/posts';
+        $route = self::remote_route($site, $type);
         $res = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), array(
             'title'  => __('Untitled', 'power-creatives'),
             'status' => 'draft',
@@ -500,7 +768,7 @@ class PCM_SEO_Service
     public static function remote_duplicate_content(object $site, int $post_id, string $type)
     {
         self::ensure_sites_service();
-        $base = ($type === 'page') ? '/wp/v2/pages' : '/wp/v2/posts';
+        $base = self::remote_route($site, $type);
 
         // Read the source with edit context so we get raw title/content + meta.
         $get = PCM_Sites_Service::remote_rest($site, 'GET', $base . '/' . $post_id, array(
@@ -551,7 +819,7 @@ class PCM_SEO_Service
     public static function remote_delete_content(object $site, int $post_id, string $type)
     {
         self::ensure_sites_service();
-        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $route = self::remote_route($site, $type, (int) $post_id);
         $res   = PCM_Sites_Service::remote_rest($site, 'DELETE', $route, array('force' => 'false'));
         if (is_wp_error($res)) {
             return new WP_Error('pcm_seo_remote_delete', $res->get_error_message(), array('status' => 502));
@@ -578,7 +846,7 @@ class PCM_SEO_Service
         if ($media instanceof WP_Error) {
             return $media;
         }
-        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $route = self::remote_route($site, $type, (int) $post_id);
         $res   = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), array('featured_media' => (int) $media['id']));
         if (is_wp_error($res)) {
             return new WP_Error('pcm_seo_remote_featured', $res->get_error_message(), array('status' => 502));
@@ -674,7 +942,7 @@ class PCM_SEO_Service
             $perma = PCM_Sites_Service::remote_rest(
                 $site,
                 'GET',
-                ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id,
+                self::remote_route($site, $type, (int) $post_id),
                 array('_fields' => 'link')
             );
             if (!is_wp_error($perma) && !empty($perma['body']['link']) && is_string($perma['body']['link'])) {
@@ -740,7 +1008,7 @@ class PCM_SEO_Service
         }
 
         // Fallback (older connector / no connector): scan the post body only.
-        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $route = self::remote_route($site, $type, (int) $post_id);
         $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content,link'));
         if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
             return array();
@@ -765,10 +1033,52 @@ class PCM_SEO_Service
      *  $rendered_needle (a URL): if set and it does NOT appear in the page's rendered output
      *  after saving, the live page is produced by a page builder / template that ignores
      *  post_content — surfaced as an honest error instead of a misleading "saved". */
-    private static function remote_rewrite_link_content(object $site, int $post_id, string $type, int $index, callable $build, ?string $rendered_needle = null)
+    /**
+     * Find a link in a scanned list by IDENTITY (exact html, else to+anchor, else a
+     * unique to). The popup's row indexes come from the CONNECTOR's builder-aware
+     * scan; this method's list comes from content.raw — two DIFFERENT lists, so an
+     * index from one is meaningless in the other. On bokatandlakartid.se that
+     * mismatch made "Remove all dead links" fail on every row while the UI toasted
+     * success. Null = the link is not in the editable content at all.
+     */
+    private static function locate_link_index(array $links, array $locate): ?int
+    {
+        $html   = (string) ($locate['html'] ?? '');
+        $to     = (string) ($locate['to'] ?? '');
+        $anchor = (string) ($locate['anchor'] ?? '');
+        if ($html !== '') {
+            foreach ($links as $i => $l) {
+                if ((string) ($l['html'] ?? '') === $html) {
+                    return (int) $i;
+                }
+            }
+        }
+        if ($to !== '') {
+            $by_pair = array();
+            $by_to   = array();
+            foreach ($links as $i => $l) {
+                if ((string) ($l['to'] ?? '') !== $to) {
+                    continue;
+                }
+                $by_to[] = (int) $i;
+                if ((string) ($l['anchor'] ?? '') === $anchor) {
+                    $by_pair[] = (int) $i;
+                }
+            }
+            if (count($by_pair) >= 1) {
+                return $by_pair[0];
+            }
+            if (count($by_to) === 1) {
+                return $by_to[0];
+            }
+        }
+        return null;
+    }
+
+    private static function remote_rewrite_link_content(object $site, int $post_id, string $type, int $index, callable $build, ?string $rendered_needle = null, ?array $locate = null)
     {
         self::ensure_sites_service();
-        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $route = self::remote_route($site, $type, (int) $post_id);
         // context=edit returns content.raw — required to rewrite the post's stored content
         // (and needs an app password whose user can edit posts on the remote).
         $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content,link'));
@@ -783,7 +1093,22 @@ class PCM_SEO_Service
         if ($raw === '') {
             return new WP_Error('pcm_seo_no_raw', __('This page’s content isn’t editable through the API (e.g. a page-builder layout), so its links can’t be edited here.', 'power-creatives'), array('status' => 422));
         }
-        $links = PCM_SEO_Local::scan_link_details($raw, $from, (string) $site->url, false); // find by index; no HTTP checks
+        $links = PCM_SEO_Local::scan_link_details($raw, $from, (string) $site->url, false); // no HTTP checks
+        // IDENTITY beats index: the caller's index numbers the CONNECTOR's scan, which
+        // includes builder/meta links this content.raw list doesn't — using it here
+        // edited the wrong link or missed. When the caller sends the link's identity,
+        // resolve against THIS list; not found = it lives outside the editable content.
+        if ($locate !== null) {
+            $resolved = self::locate_link_index($links, $locate);
+            if ($resolved === null) {
+                return new WP_Error(
+                    'pcm_seo_link_outside',
+                    __('This link isn’t part of the editable post content — it lives in plugin or builder data (e.g. an image/gallery plugin’s stored markup), so it can’t be changed from here. Fix or regenerate it in that plugin on the site.', 'power-creatives'),
+                    array('status' => 422)
+                );
+            }
+            $index = $resolved;
+        }
         if (!isset($links[$index])) {
             return new WP_Error('pcm_seo_link_not_found', __('Link not found — re-scan and try again.', 'power-creatives'), array('status' => 404));
         }
@@ -1026,19 +1351,19 @@ class PCM_SEO_Service
     }
 
     /** Remove a connected post's link (unwrap the <a>, keep text), via the connector. */
-    public static function remote_remove_link(object $site, int $post_id, string $type, int $index)
+    public static function remote_remove_link(object $site, int $post_id, string $type, int $index, ?array $locate = null)
     {
         return self::remote_rewrite_link_content($site, $post_id, $type, $index, static function ($old_html) {
             return preg_replace('/^<a\s[^>]*>(.*)<\/a>$/is', '$1', $old_html);
-        });
+        }, null, $locate);
     }
 
     /** Toggle rel="nofollow" on a connected post's link — same rewrite seam as remove. */
-    public static function remote_set_link_rel(object $site, int $post_id, string $type, int $index, bool $nofollow)
+    public static function remote_set_link_rel(object $site, int $post_id, string $type, int $index, bool $nofollow, ?array $locate = null)
     {
         return self::remote_rewrite_link_content($site, $post_id, $type, $index, static function ($old_html) use ($nofollow) {
             return PCM_SEO_Local::toggle_nofollow_html((string) $old_html, $nofollow);
-        });
+        }, null, $locate);
     }
 
     /**
@@ -1047,7 +1372,7 @@ class PCM_SEO_Service
      * contract as the local delete. The ledger context is the raw content
      * before the element, captured by the $build callback via reference.
      */
-    public static function remote_delete_link(object $site, int $post_id, string $type, int $index, int $user_id)
+    public static function remote_delete_link(object $site, int $post_id, string $type, int $index, int $user_id, ?array $locate = null)
     {
         global $wpdb;
         $captured = array('html' => '', 'anchor' => '', 'to' => '');
@@ -1061,7 +1386,9 @@ class PCM_SEO_Service
                 $captured['anchor'] = is_array($link) ? (string) ($link['anchor'] ?? '') : '';
                 $captured['to']     = is_array($link) ? (string) ($link['to'] ?? '') : '';
                 return ''; // cut the whole element
-            }
+            },
+            null,
+            $locate
         );
         if ($result instanceof WP_Error) {
             return $result;
@@ -1105,7 +1432,7 @@ class PCM_SEO_Service
         }
         self::ensure_sites_service();
         $type  = (string) $row->postType === 'page' ? 'page' : 'post';
-        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . (int) $row->postId;
+        $route = self::remote_route($site, $type, (int) $row->postId);
         $res   = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content'));
         if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
             return new WP_Error('pcm_seo_remote_fetch', __('Could not read the remote post.', 'power-creatives'), array('status' => 502));
@@ -1433,7 +1760,7 @@ class PCM_SEO_Service
         self::ensure_sites_service();
         $allowed = class_exists('PCM_SEO_Schema') ? PCM_SEO_Schema::TYPES : array();
         $clean   = array_values(array_intersect($allowed, array_map('strval', $types)));
-        $route   = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $route   = self::remote_route($site, $type, (int) $post_id);
         $payload = array('meta' => array('pcm_seo_schema' => wp_json_encode($clean)));
         $res     = PCM_Sites_Service::remote_rest($site, 'POST', $route, array(), $payload);
         if (is_wp_error($res)) {
@@ -1887,7 +2214,7 @@ class PCM_SEO_Service
         self::ensure_sites_service();
 
         // Fetch the remote post so the prompt has its title + current SEO meta.
-        $route = ($type === 'page' ? '/wp/v2/pages/' : '/wp/v2/posts/') . $post_id;
+        $route = self::remote_route($site, $type, (int) $post_id);
         $res   = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('_fields' => 'id,title,slug,link,author,meta'));
         if (is_wp_error($res)) {
             return new WP_Error('pcm_seo_remote_fetch', $res->get_error_message(), array('status' => 502));
@@ -1915,38 +2242,23 @@ class PCM_SEO_Service
         $mode    = PCM_SEO_AI::apply_template_mode($mode, (int) $user_id, $template_id, $use, (string) $current, $prompts[$use]);
         $default = $prompts[$use][$mode];
         $tpl     = PCM_SEO_AI::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
-        $tpl    .= PCM_SEO_AI::language_law($vars);
-        $prompt  = PCM_SEO_AI::substitute_vars($tpl, $vars);
+        $prompt  = PCM_SEO_AI::substitute_vars($tpl . PCM_SEO_AI::language_law($vars), $vars);
         $max     = (int) ($prompts[$use]['max'] ?? 200);
 
         if (!class_exists('PCM_LLM')) {
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
         }
-        try {
-            $opts = array('max_tokens' => $max);
-            if (!empty($model)) {
-                $opts['model'] = $model;
-            }
-            if (!empty($provider)) {
-                $opts['provider'] = $provider;
-            }
-            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
-            $value  = PCM_SEO_AI::sanitize_ai_output((string) ($result['content'] ?? ''));
-            // The slug field must be a valid URL slug — slugify whatever the model
-            // returned (handles chatty output / spaces / casing reliably).
-            if ($field === 'slug') {
-                $value = sanitize_title($value);
-            }
-            if ($value === '') {
-                if (PCM_SEO_AI::is_structured_envelope((string) ($result['content'] ?? ''))) {
-                    return new WP_Error('pcm_seo_envelope', __('The prompt behind this field returns a JSON envelope ({"html":…,"changes":…}) instead of a single value — check the template selected for this column in Templates → SEO.', 'power-creatives'), array('status' => 422));
-                }
-                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
-            }
-            return array('field' => $field, 'value' => $value);
-        } catch (\Throwable $e) {
-            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        $opts = array('max_tokens' => $max);
+        if (!empty($model)) {
+            $opts['model'] = $model;
         }
+        if (!empty($provider)) {
+            $opts['provider'] = $provider;
+        }
+        // Shared invoke (same as the local path): sanitizes, slugifies, and
+        // SELF-HEALS an envelope answer by retrying once with the shipped default
+        // when the prompt was customized.
+        return PCM_SEO_AI::invoke_scalar_field($prompt, $default, $vars, $field, $opts, $tpl !== $default);
     }
 
     // =====================================================================

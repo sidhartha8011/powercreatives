@@ -20,7 +20,7 @@ export interface UseRemoteSeoContentResult {
   rows: SeoRow[];
   isLoading: boolean;
   /** Persist one cell to the remote; patches the cache to the server's value. */
-  saveCell: (id: number, field: string, value: string | number) => Promise<void>;
+  saveCell: (id: number, field: string, value: string | number, display?: string) => Promise<void>;
   /** AI-suggest a field value on the remote (NOT saved — caller stages it). */
   generateField: (id: number, field: string, model?: string, provider?: string, templateId?: number) => Promise<string>;
   /** Create a draft post/page on the remote and refresh. */
@@ -64,19 +64,34 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
 
   const saveMutation = trpc.seo.remoteSaveCell.useMutation();
 
+  /** Cache patch for a saved cell — same author special-case as the local hook:
+   *  `author` VALUE is a user id, but the row shows `author` (name) and selects by
+   *  `authorId`. Writing the raw id into `author` rendered "3" in the cell. */
+  const cellPatch = (field: string, value: string | number, display?: string): Partial<SeoRow> =>
+    field === 'author'
+      ? { authorId: Number(value), ...(display ? { author: display } : {}) }
+      : { [field]: value } as Partial<SeoRow>;
+
   const saveCell = useCallback(
-    (id: number, field: string, value: string | number): Promise<void> => {
-      const type = rows.find((r) => Number(r.id) === id)?.type === 'page' ? 'page' : 'post';
+    (id: number, field: string, value: string | number, display?: string): Promise<void> => {
+      const type = rows.find((r) => Number(r.id) === id)?.type || 'post';
+      // OPTIMISTIC: remote saves are a hub→client-site round trip (seconds) — paint
+      // now, roll back via invalidate if the site refuses.
+      queryClient.setQueriesData<SeoRow[]>({ queryKey: REMOTE_PREFIX }, (prev) =>
+        Array.isArray(prev) ? prev.map((r) => (Number(r.id) === id ? { ...r, ...cellPatch(field, value, display) } : r)) : prev,
+      );
       return saveMutation
         .mutateAsync({ siteId: siteId ?? 0, postId: id, field, value, type })
         .then((res: any) => {
           const stored = res?.value ?? value;
           queryClient.setQueriesData<SeoRow[]>({ queryKey: REMOTE_PREFIX }, (prev) =>
-            Array.isArray(prev) ? prev.map((r) => (Number(r.id) === id ? { ...r, [field]: stored } : r)) : prev,
+            Array.isArray(prev) ? prev.map((r) => (Number(r.id) === id ? { ...r, ...cellPatch(field, stored, display) } : r)) : prev,
           );
         })
         .catch((err: unknown) => {
           toast.error(err instanceof Error ? err.message : 'Failed to save to the remote site');
+          // Roll the optimistic paint back to the server's truth.
+          void queryClient.invalidateQueries({ queryKey: REMOTE_PREFIX });
           throw err;
         });
     },
@@ -87,7 +102,7 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
 
   const generateField = useCallback(
     (id: number, field: string, model?: string, provider?: string, templateId?: number): Promise<string> => {
-      const type = rows.find((r) => Number(r.id) === id)?.type === 'page' ? 'page' : 'post';
+      const type = rows.find((r) => Number(r.id) === id)?.type || 'post';
       return generateMutation
         .mutateAsync({ siteId: siteId ?? 0, postId: id, field, type, model, provider, templateId })
         .then((res: any) => String(res?.value ?? ''));

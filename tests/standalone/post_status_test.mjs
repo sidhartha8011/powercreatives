@@ -92,10 +92,12 @@ check('unticked live items are never touched', !planBulkPostStatus(ITEMS, [1]).t
 
 console.log('\n5. Both UI surfaces are wired to the shared list');
 const idx = readFileSync(join(SRC, 'index.tsx'), 'utf8');
-const bar = idx.slice(idx.indexOf('Item bulk bar'), idx.indexOf('{strategy.items.map('));
-check('the bulk bar has a status dropdown', bar.includes('handleBulkPostStatus(strategy, ids, value)'), 'not wired');
+// The bar is now the ITEM MODE of the floating bottom bar (inline strip removed).
+const bar = idx.slice(idx.indexOf('Item bulk bar'), idx.indexOf('Interlink configuration'));
+check('the bulk bar has a status dropdown, run per owning strategy',
+  bar.includes('await handleBulkPostStatus(g.strategy, g.ids, value)'), 'not wired');
 check('the bulk dropdown renders the shared list', /POST_STATUSES\.map/.test(bar), 'hardcoded options');
-check('it is disabled during a bulk run', /disabled=\{itemBulkBusy \|\| bulkStrategyId === strategy\.id\}/.test(bar), 'double-fireable');
+check('it is disabled during a bulk run', /disabled=\{itemBulkBusy \|\| bulkStrategyId !== null\}/.test(bar), 'double-fireable');
 // WHERE the per-item control renders, not merely THAT it exists.
 // This section exists because the original version of this test only asserted
 // existence — and passed while the dropdown sat inside the per-item overrides
@@ -105,16 +107,20 @@ const itemsStart = idx.indexOf('{strategy.items.map(');
 const overridesGate = idx.indexOf('{openOverridesItemId === item.id && (', itemsStart);
 check('the item row and the overrides sub-panel are both locatable',
   itemsStart !== -1 && overridesGate > itemsStart, { itemsStart, overridesGate });
+// Regions end at the floating bulk bar: it lives AFTER the item list now and
+// legitimately carries the BULK status dropdown (asserted in §5) — sweeping to
+// EOF would misread it as "buried in the overrides panel".
+const floatingBarAt = idx.indexOf('Item bulk bar');
 const rowRegion = idx.slice(itemsStart, overridesGate);          // always visible
-const overridesRegion = idx.slice(overridesGate);                // behind a toggle
+const overridesRegion = idx.slice(overridesGate, floatingBarAt); // behind a toggle
 
 check('the status dropdown is ON THE ROW (always visible)',
   /POST_STATUSES\.map/.test(rowRegion), 'not on the row');
 check('it is NOT buried in the collapsed overrides sub-panel',
   !/POST_STATUSES\.map/.test(overridesRegion), 'still hidden behind the overrides toggle');
 check('exactly ONE per-item status dropdown exists (no duplicate left behind)',
-  (idx.slice(itemsStart).match(/POST_STATUSES\.map/g) ?? []).length === 1,
-  (idx.slice(itemsStart).match(/POST_STATUSES\.map/g) ?? []).length);
+  (idx.slice(itemsStart, floatingBarAt).match(/POST_STATUSES\.map/g) ?? []).length === 1,
+  (idx.slice(itemsStart, floatingBarAt).match(/POST_STATUSES\.map/g) ?? []).length);
 // Look BACKWARDS from the dropdown. A forward regex anchors on the FIRST
 // `livePostOf(item) && (` in the region — which is the Edit/Preview block far
 // above — and then fails on distance rather than on the actual condition.

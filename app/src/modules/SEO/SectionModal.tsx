@@ -83,7 +83,8 @@ import { keywordUses } from './optimizer/keywordStats';
 export interface SectionModalProps {
   siteId: number | 'local';
   postId: number;
-  type: 'post' | 'page';
+  /** Content type slug — post, page, or any public custom type. */
+  type: string;
   model?: string;
   provider?: string;
   /** Local tab: read-only formatted view. */

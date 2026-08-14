@@ -410,6 +410,60 @@ class PCM_SEO_AI
         return is_array($decoded);
     }
 
+    /**
+     * Invoke the model for a SCALAR SEO field and sanitize the answer — with
+     * SELF-HEALING when a customized prompt yields the section-revise envelope.
+     *
+     * Filip (2026-08-15): "It now works to generate for bulk, but individual
+     * lines do not work. It complains about HTML missing." Bulk fills EMPTY
+     * cells (generate mode → shipped prompt); a single filled cell resolves
+     * OPTIMIZE mode, and on that install the customized optimize template asks
+     * for the {"html":…,"changes":…} envelope. The old guard refused with a
+     * dead-end error; now, when the prompt in play is CUSTOMIZED (an override
+     * or a picked template), we retry ONCE with the shipped default for the
+     * same section — generation succeeds instead of dead-ending. The envelope
+     * error remains for the case the default itself envelopes (nothing left to
+     * heal with), so garbage still never lands in a cell.
+     *
+     * @param string $prompt      Fully substituted prompt (customized or default).
+     * @param string $default_tpl The SHIPPED default template for this section+mode.
+     * @param array  $vars        Substitution vars (for the retry).
+     * @param string $field       Cell field ('slug' gets slugified).
+     * @param array  $opts        PCM_LLM options (max_tokens/model/provider).
+     * @param bool   $customized  True when $prompt came from an override/template.
+     * @return array{field:string,value:string}|\WP_Error
+     */
+    public static function invoke_scalar_field(string $prompt, string $default_tpl, array $vars, string $field, array $opts, bool $customized)
+    {
+        try {
+            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            $raw    = (string) ($result['content'] ?? '');
+            $value  = self::sanitize_ai_output($raw);
+            if ($field === 'slug') {
+                $value = sanitize_title($value);
+            }
+            if ($value === '' && self::is_structured_envelope($raw) && $customized) {
+                // Retry with the shipped default — same section, same vars.
+                $retry  = self::substitute_vars($default_tpl . self::language_law($vars), $vars);
+                $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $retry)), $opts);
+                $raw    = (string) ($result['content'] ?? '');
+                $value  = self::sanitize_ai_output($raw);
+                if ($field === 'slug') {
+                    $value = sanitize_title($value);
+                }
+            }
+            if ($value === '') {
+                if (self::is_structured_envelope($raw)) {
+                    return new WP_Error('pcm_seo_envelope', __('The prompt behind this field returns a JSON envelope ({"html":…,"changes":…}) instead of a single value — check the template selected for this column in Templates → SEO.', 'power-creatives'), array('status' => 422));
+                }
+                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
+            }
+            return array('field' => $field, 'value' => $value);
+        } catch (\Throwable $e) {
+            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        }
+    }
+
     public static function sanitize_ai_output(string $content): string
     {
         $content = trim($content);
@@ -476,30 +530,12 @@ class PCM_SEO_AI
     public static function build_field_vars(int $post_id, ?int $brand_id = null): array
     {
         $post = get_post($post_id);
-        $home = home_url('/');
-        $host = (string) wp_parse_url($home, PHP_URL_HOST);
 
-        $business_name = (string) get_bloginfo('name');
-        $business_tag  = (string) get_bloginfo('description');
-        // GBP business context for the brand (resolved = snapshot + overrides).
-        $gbp = array();
-        if ($brand_id && $brand_id > 0) {
-            global $wpdb;
-            $brands = PCM_Schema::table('brands');
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-            $brand = $wpdb->get_row($wpdb->prepare("SELECT name FROM {$brands} WHERE id = %d", $brand_id));
-            if ($brand && !empty($brand->name)) {
-                $business_name = (string) $brand->name;
-            }
-            if (class_exists('PCM_SEO_GBP')) {
-                $gbp = PCM_SEO_GBP::get_for_brand($brand_id)['resolved'];
-                if (!empty($gbp['name'])) {
-                    $business_name = (string) $gbp['name'];
-                }
-            }
-        }
-
-        $locale = get_locale();
+        // POST-specific tokens here; the site + business half comes from the shared
+        // vocabulary (PCM_Content_Vars) that Writer templates now compose too — the
+        // card's "centralized place… so that we always get the right variables".
+        // '' pins {{site.lang}} to the hub locale, which is what this local path has
+        // always used; the map is otherwise byte-identical to its previous inline form.
         return array(
             'title'                     => $post ? $post->post_title : '',
             'primary_keyword'           => PCM_SEO_Local::seo_get($post_id, 'keyword'),
@@ -508,23 +544,7 @@ class PCM_SEO_AI
             'meta_title'                => PCM_SEO_Local::seo_get($post_id, 'title'),
             'meta_description'          => PCM_SEO_Local::seo_get($post_id, 'description'),
             'post_type'                 => $post ? $post->post_type : '',
-            'site.lang'                 => $locale ? substr($locale, 0, 2) : 'en',
-            'website.url'               => $home,
-            'today'                     => gmdate('Y-m-d'),
-            'business.name'             => $business_name,
-            'business.tagline'          => $business_tag,
-            'business.website'          => !empty($gbp['website']) ? (string) $gbp['website'] : $home,
-            'business.website|hostname' => $host,
-            'business.address'          => (string) ($gbp['address'] ?? ''),
-            'business.phone'            => (string) ($gbp['phone'] ?? ''),
-            'business.category'         => (string) ($gbp['category'] ?? ''),
-            'business.hours'            => (string) ($gbp['hours'] ?? ''),
-            'business.description'      => (string) ($gbp['description'] ?? ''),
-            'business.rating'           => isset($gbp['rating']) ? (string) $gbp['rating'] : '',
-            'business.lat'              => isset($gbp['lat']) ? (string) $gbp['lat'] : '',
-            'business.lng'              => isset($gbp['lng']) ? (string) $gbp['lng'] : '',
-            'business.types'            => !empty($gbp['types']) ? implode(', ', (array) $gbp['types']) : '',
-        );
+        ) + PCM_Content_Vars::site_business($brand_id, '');
     }
 
     /**
@@ -577,41 +597,25 @@ class PCM_SEO_AI
         $default = $prompts[$use][$mode];
         // Honor the user's Settings → Prompts → SEO override (falls back to default).
         $tpl     = self::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
-        $tpl    .= self::language_law($vars);
-        $prompt  = self::substitute_vars($tpl, $vars);
+        $prompt  = self::substitute_vars($tpl . self::language_law($vars), $vars);
         $max     = (int) ($prompts[$use]['max'] ?? 200);
 
         if (!class_exists('PCM_LLM')) {
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
         }
 
-        try {
-            $opts = array('max_tokens' => $max);
-            if (!empty($model)) {
-                $opts['model'] = $model;
-            }
-            // Data-driven provider routing — when the caller picks a model it also
-            // sends its provider, so we never fall back to detect_provider().
-            if (!empty($provider)) {
-                $opts['provider'] = $provider;
-            }
-            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
-            $value  = self::sanitize_ai_output((string) ($result['content'] ?? ''));
-            // The slug field must be a valid URL slug — slugify whatever the model
-            // returned (handles chatty output / spaces / casing reliably).
-            if ($field === 'slug') {
-                $value = sanitize_title($value);
-            }
-            if ($value === '') {
-                if (self::is_structured_envelope((string) ($result['content'] ?? ''))) {
-                    return new WP_Error('pcm_seo_envelope', __('The prompt behind this field returns a JSON envelope ({"html":…,"changes":…}) instead of a single value — check the template selected for this column in Templates → SEO.', 'power-creatives'), array('status' => 422));
-                }
-                return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
-            }
-            return array('field' => $field, 'value' => $value);
-        } catch (\Throwable $e) {
-            return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        $opts = array('max_tokens' => $max);
+        if (!empty($model)) {
+            $opts['model'] = $model;
         }
+        // Data-driven provider routing — when the caller picks a model it also
+        // sends its provider, so we never fall back to detect_provider().
+        if (!empty($provider)) {
+            $opts['provider'] = $provider;
+        }
+        // Shared invoke: sanitizes, slugifies, and SELF-HEALS an envelope answer by
+        // retrying once with the shipped default when the prompt was customized.
+        return self::invoke_scalar_field($prompt, $default, $vars, $field, $opts, $tpl !== $default);
     }
 
     /**

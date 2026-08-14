@@ -135,8 +135,17 @@ check('the brand value is NOT substr-mangled ("Swedish" must not become "Sw")',
 // The LOCAL builder is correct as-is: there the hub IS the site.
 $aisrc = file_get_contents($SEO . 'ai.php');
 $b = strpos($aisrc, 'function build_field_vars');
-check('build_field_vars (local posts) still uses the hub locale — correct there',
-    str_contains(substr($aisrc, $b, 2500), "'site.lang'"), 'local var missing');
+// The token now comes from the SHARED builder, which takes an explicit language:
+// '' means "use the hub locale" — exactly what this local path has always done.
+check('build_field_vars (local posts) still pins site.lang to the hub locale',
+    str_contains(substr($aisrc, $b, 2500), "PCM_Content_Vars::site_business(\$brand_id, '')"),
+    'local path no longer pins the hub locale');
+$cvsrc = file_get_contents(dirname(__DIR__, 2) . '/includes/core/class-pcm-content-vars.php');
+check("…and '' really does resolve to the hub locale in the shared builder",
+    preg_match("/elseif \\(\\\$lang === ''\\) \\{\\s*\\n\\s*\\\$site_lang = \\\$fallback_lang;/", $cvsrc) === 1,
+    'the empty-string contract changed');
+check('the shared fallback is still the hub locale, 2-letter',
+    str_contains($cvsrc, "\$fallback_lang = \$locale ? substr(\$locale, 0, 2) : 'en';"), 'fallback changed');
 
 echo "\n6. The user's TEMPLATE really does reach the prompt\n";
 // Reported as "the prompt in templates are not used" (SEO → Meta Title → Generate).
@@ -159,8 +168,11 @@ check('the shipped default is only the last resort',
     strrpos($rp, 'return $default;') > strpos($rp, 'seo_template_prompt'), 'default returned too early');
 // ORDERING: the law says "the instructions ABOVE". If it were ever prepended,
 // that sentence would point at nothing and the override would silently not work.
+// (Spelling changed 2026-08-15: the append is now inline — `$tpl . language_law()`
+// inside substitute_vars — because the retry path needs the same composition. The
+// ORDER is what matters: template first, law after.)
 check('the law is APPENDED after the template, so "above" is true',
-    preg_match('/\$tpl\s*=\s*self::resolve_prompt\([^;]*;\s*\n\s*\$tpl\s*\.=\s*self::language_law\(/', $gen) === 1,
+    preg_match('/substitute_vars\(\$tpl \. self::language_law\(\$vars\), \$vars\)/', $gen) === 1,
     'law prepended or reordered — "instructions above" would be meaningless');
 
 echo "\n" . str_repeat('-', 56) . "\n";

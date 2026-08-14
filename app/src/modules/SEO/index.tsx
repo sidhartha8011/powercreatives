@@ -431,7 +431,18 @@ export function SEOModule() {
     { id: siteId },
     { enabled: !isLocal && typeof siteId === 'number', staleTime: 300_000, retry: false },
   ) as any;
-  const connectorState: { status?: string; version?: string } = connectorStatusQuery.data ?? {};
+  const connectorState: { status?: string; version?: string; outdated?: boolean } = connectorStatusQuery.data ?? {};
+  // An ACTIVE but old connector answers everything it knows and 404s the rest, so a
+  // degraded feature looked like a broken one. When the hub has seen it refuse
+  // /head-tags, offer the self-update it already supports.
+  const connectorUpdate = trpc.sites.updateConnector.useMutation({
+    onSuccess: (res: any) => {
+      if (res?.updated || res?.ok) toast.success(`Connector updated${res?.to ? ` to v${res.to}` : ''}. Reload to read the meta tags.`);
+      else toast.error(res?.message || 'The connector could not self-update — reinstall it once (Download connector).');
+      void connectorStatusQuery.refetch();
+    },
+    onError: (e: any) => toast.error(e.message ?? 'Could not update the connector.'),
+  }) as any;
   const connectorActivate = trpc.sites.connectorActivate.useMutation({
     onSuccess: (res: any) => {
       if (res?.switched) toast.success(`Connector activated (v${res?.to || '?'}).`);
@@ -505,7 +516,7 @@ export function SEOModule() {
       const a = { id: Number(created?.id), name: String(created?.name ?? name) };
       if (!a.id) { toast.error('The server did not return a user id.'); return; }
       setExtraAuthors((prev) => [...prev, a]);
-      saveCell(rowId, 'author', String(a.id));   // assign the new author to the row
+      saveCell(rowId, 'author', String(a.id), a.name);   // assign the new author to the row
       toast.success(`“${a.name}” created and assigned`);
       setNewAuthorFor(null); setNewAuthorName(''); setNewAuthorEmail('');
     };
@@ -706,7 +717,10 @@ export function SEOModule() {
     } as Record<string, FilterDef>;
   }, [prtRanks, normKw]);
   // Per-column filters (funnel icon in each column header).
-  const filterDefs = useMemo(() => ({ ...buildFilterDefs(options), ...gscFilterDefs, ...prtFilterDefs }), [options, gscFilterDefs, prtFilterDefs]);
+  // Types present in the loaded rows — lets the Type filter offer a connected site's
+  // custom post types, which this hub's own options payload can't know about.
+  const rowTypes = useMemo(() => Array.from(new Set(rows.map((r) => r.type).filter(Boolean))), [rows]);
+  const filterDefs = useMemo(() => ({ ...buildFilterDefs(options, rowTypes), ...gscFilterDefs, ...prtFilterDefs }), [options, rowTypes, gscFilterDefs, prtFilterDefs]);
   const { values: filterValues, setFilter, setAll, clearAll, apply, activeCount } = useColumnFilters<SeoRow>();
   // Column visibility (Columns menu) — missing/true = visible, false = hidden.
   const [cols, setCols] = useState<Record<string, boolean>>(
@@ -841,7 +855,7 @@ export function SEOModule() {
   // Bulk "Scan links" — scans every visible row's links (internal/external/dead).
   const [scanningAll, setScanningAll] = useState(false);
   // Per-post link inspector popup (clicked from an Internal/External/Dead count cell).
-  const [linksPopup, setLinksPopup] = useState<{ id: number; kind: LinkKind; title: string; type: 'post' | 'page' } | null>(null);
+  const [linksPopup, setLinksPopup] = useState<{ id: number; kind: LinkKind; title: string; type: string } | null>(null);
   // AI staging: suggestions keyed `${id}:${field}`, plus the in-flight key.
   const [staged, setStaged] = useState<Record<string, string>>({});
   const [genKey, setGenKey] = useState<string | null>(null);
@@ -1033,7 +1047,9 @@ export function SEOModule() {
         date: (r) => new Date(r.date).getTime(),
         slug: (r) => r.slug.toLowerCase(),
         supportingKeyword: (r) => r.supportingKeyword.toLowerCase(),
-        featuredImage: (r) => (r.featuredImage ? 1 : 0),
+        // "Has an image" includes one whose URL couldn't be resolved — the cell shows it as
+        // set, so sorting must agree with what the user sees.
+        featuredImage: (r) => (r.featuredImage || (r.featuredImageId ?? 0) > 0 ? 1 : 0),
         // Unscanned (null) sorts below 0 so scanned rows group together.
         internalLinks: (r) => r.internalLinks ?? -1,
         externalLinks: (r) => r.externalLinks ?? -1,
@@ -1383,7 +1399,9 @@ export function SEOModule() {
           <TableCell key={key}>
             <Select
               value={row.authorId ? String(row.authorId) : ''}
-              onValueChange={(v) => saveCell(row.id, 'author', v)}
+              // Pass the picked option's NAME too: the row displays `author` (name) and
+              // the id lives in `authorId` — without it the cell showed the raw id.
+              onValueChange={(v) => saveCell(row.id, 'author', v, authors.find((a) => String(a.id) === v)?.name)}
             >
               <SelectTrigger variant="ghost" size="auto" className="h-full w-full">
                 {/* Fall back to the stored NAME when the current author isn't in the list —
@@ -1414,18 +1432,43 @@ export function SEOModule() {
       }
       case 'slug': {
         const ckey = `${row.id}:slug`;
+        // SHOW subpages as subpages (Filip: the table "needs to pull in and show the
+        // subpages"): a child page or custom-type item lives under a path
+        // (/services/lymphatic-drainage/), but the cell showed only the leaf slug, so
+        // nothing distinguished it from a top-level page. Derive the prefix from the
+        // permalink the row already carries — display-only; the editable value stays
+        // the leaf slug, which is what WordPress actually lets you change.
+        let pathPrefix = '';
+        try {
+          if (row.permalink) {
+            const segs = new URL(row.permalink).pathname.split('/').filter(Boolean);
+            if (segs.length > 1) pathPrefix = '/' + segs.slice(0, -1).join('/') + '/';
+          }
+        } catch { /* draft preview links etc. — no prefix */ }
         return (
           <TableCell key={key}>
-            <EditableCell
-              value={row.slug}
-              placeholder="slug"
-              onSave={(v) => saveSlug(row.id, v)}
-              onGenerate={() => handleGenerate(row.id, 'slug')}
-              generating={genKey === ckey}
-              suggestion={staged[ckey] ?? null}
-              onAccept={() => acceptStaged(row.id, 'slug')}
-              onReject={() => rejectStaged(row.id, 'slug')}
-            />
+            <div className="flex min-w-0 items-center">
+              {pathPrefix && (
+                <span
+                  className="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground/60"
+                  title={`This is a subpage — it lives under ${pathPrefix}`}
+                >
+                  {pathPrefix}
+                </span>
+              )}
+              <div className="min-w-0 flex-1">
+                <EditableCell
+                  value={row.slug}
+                  placeholder="slug"
+                  onSave={(v) => saveSlug(row.id, v)}
+                  onGenerate={() => handleGenerate(row.id, 'slug')}
+                  generating={genKey === ckey}
+                  suggestion={staged[ckey] ?? null}
+                  onAccept={() => acceptStaged(row.id, 'slug')}
+                  onReject={() => rejectStaged(row.id, 'slug')}
+                />
+              </div>
+            </div>
           </TableCell>
         );
       }
@@ -1435,21 +1478,36 @@ export function SEOModule() {
             <EditableCell value={row.supportingKeyword} placeholder="Supporting KW" onSave={(v) => saveCell(row.id, 'supportingKeyword', v)} />
           </TableCell>
         );
-      case 'featuredImage':
+      case 'featuredImage': {
+        // Three honest states: a thumbnail; "set but unreadable" (the post carries a
+        // featured-media id whose URL we couldn't resolve — say so instead of showing the
+        // empty box, which reads as "no image"); or genuinely none.
+        const hasImageId = (row.featuredImageId ?? 0) > 0;
         return (
           <TableCell key={key} className="text-center">
             <button
               type="button"
               onClick={() => openFeaturedImage(row)}
-              title={row.featuredImage ? 'Change featured image' : 'Set featured image'}
+              title={
+                row.featuredImage
+                  ? 'Change featured image'
+                  : hasImageId
+                    ? 'A featured image is set on this page, but its URL could not be read (the media may be restricted). Click to choose another.'
+                    : 'Set featured image'
+              }
               className="inline-flex items-center justify-center align-middle transition-opacity hover:opacity-80"
             >
-              {row.featuredImage
-                ? <img src={row.featuredImage} alt="" loading="lazy" className="h-8 w-8 rounded object-cover" />
-                : <span className="flex h-8 w-8 items-center justify-center rounded border border-dashed border-border text-muted-foreground"><ImageIcon className="h-4 w-4" /></span>}
+              {row.featuredImage ? (
+                <img src={row.featuredImage} alt="" loading="lazy" className="h-8 w-8 rounded object-cover" />
+              ) : hasImageId ? (
+                <span className="flex h-8 w-8 items-center justify-center rounded border border-border bg-muted text-muted-foreground"><ImageIcon className="h-4 w-4" /></span>
+              ) : (
+                <span className="flex h-8 w-8 items-center justify-center rounded border border-dashed border-border text-muted-foreground"><ImageIcon className="h-4 w-4" /></span>
+              )}
             </button>
           </TableCell>
         );
+      }
       case 'date':
         return (
           <TableCell key={key} className="whitespace-nowrap text-xs text-muted-foreground">
@@ -1511,7 +1569,9 @@ export function SEOModule() {
         const value = key === 'internalLinks' ? row.internalLinks : key === 'externalLinks' ? row.externalLinks : row.brokenLinks;
         const isBroken = key === 'brokenLinks';
         const popupKind: LinkKind = key === 'internalLinks' ? 'internal' : key === 'externalLinks' ? 'external' : 'broken';
-        const linkType: 'post' | 'page' = row.type === 'page' ? 'page' : 'post';
+        // Pass the row's REAL type: the hub resolves it to that type's REST route, so a
+        // custom-post-type row (services, doctors…) edits the right endpoint.
+        const linkType: string = row.type || 'post';
         return (
           <TableCell key={key} className="text-center text-xs">
             {scanning ? (
@@ -1974,6 +2034,23 @@ export function SEOModule() {
         </div>
       )}
 
+      {/* Connector is ACTIVE but too old for /head-tags: meta still appears (the hub
+          reads the rendered pages itself) but slowly, a page-batch per load. Say so,
+          and offer the self-update that makes it instant. */}
+      {!isLocal && connectorState.status === 'active' && connectorState.outdated && (
+        <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2">
+          <span className="text-sm text-foreground">
+            This site’s connector is an older build{connectorState.version ? ` (v${connectorState.version})` : ''} without the
+            meta-tag reader, so Meta Title / Description fill in slowly, a batch per reload. Updating it makes them appear at once.
+          </span>
+          <span className="flex-1" />
+          <Button size="sm" className="h-8 gap-1.5" disabled={connectorUpdate.isPending} onClick={() => connectorUpdate.mutate({ id: siteId })}>
+            {connectorUpdate.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            Update connector
+          </Button>
+        </div>
+      )}
+
       {/* Pending AI suggestions — accept/discard everything at once. */}
       {pendingCount > 0 && (
         <div className="flex items-center flex-wrap gap-2 mb-3 rounded-lg border border-primary/20 bg-accent/60 px-4 py-2">
@@ -2062,7 +2139,7 @@ export function SEOModule() {
                   {expandedRows.has(row.id) && (
                     <HeadingRows
                       postId={row.id}
-                      type={row.type === 'page' ? 'page' : 'post'}
+                      type={row.type || 'post'}
                       siteId={siteId}
                       model={genModelId || undefined}
                       provider={genProvider}
@@ -2167,6 +2244,9 @@ export function SEOModule() {
         <LinksPopup
           open={!!linksPopup}
           onClose={() => setLinksPopup(null)}
+          // Anything edited inside the popup → rescan the row so the TABLE's
+          // Int/Ext/Broken counts update too ("it's still saying 27 dead links").
+          onChanged={() => { void scanLinks(linksPopup.id); }}
           postId={linksPopup.id}
           kind={linksPopup.kind}
           title={linksPopup.title}
@@ -2195,7 +2275,7 @@ export function SEOModule() {
           key={`page-${pageEditRow.id}`}
           siteId={siteId}
           postId={pageEditRow.id}
-          type={pageEditRow.type === 'page' ? 'page' : 'post'}
+          type={pageEditRow.type || 'post'}
           readOnly={false}
           mode="page"
           page={{

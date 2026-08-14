@@ -135,7 +135,8 @@ export function HeadingRows({
   postId, type, siteId, brandId, model, provider, orderedCols,
 }: {
   postId: number;
-  type: 'post' | 'page';
+  /** Content type slug — post, page, or any public custom type. */
+  type: string;
   siteId: number | 'local';
   brandId?: number;
   model?: string;

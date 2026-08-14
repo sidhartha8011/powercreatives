@@ -14146,3 +14146,443 @@ python scripts/build_zip.py → 658 files / 3.47 MB, root powerplatform/, tests/
 excluded. Archive-verified: hub carries set_view_order/update_view_config +
 the /seo/views/order and /{id}/config routes; the minified bundle carries the
 draggable tabs ('drag to reorder') and the Update-view helper copy.
+
+## 2026-08-14 — Featured image: the table could SET one but never DISCOVER one (remote)
+
+3-SEO-Table-Not-pulling-in-the-featured-image.pdf. Diagnosis: the LOCAL row
+builder was already correct (get_the_post_thumbnail_url + get_post_thumbnail_id,
+pages included). The REMOTE list read the image ONLY from the `_embed` payload
+(_embedded['wp:featuredmedia']) — and that payload is optional: older cores drop
+it when `_fields` is used, and security plugins / CDNs strip it. When it went
+missing the row had no URL and, worse, no id either, so the cell rendered the
+"set an image" box — exactly "can only Set an image, not discover if there is
+one". (Checked WP core's get_fields_for_response against trunk before blaming
+`_fields` alone: modern core keeps _embedded/_links as a convenience, so the
+embed is merely UNRELIABLE, not always broken — hence a fallback, not a rewrite.)
+
+Fix (includes/modules/seo/service.php):
+- remote_row now returns featuredImageId from `featured_media` (parity with
+  local; featured_media is unconditional, unlike the embed).
+- NEW fill_remote_featured_images(): rows with an id but no URL get resolved by
+  one batched /wp/v2/media?include=… call (chunks of 100, cap 200, deduped by
+  media id, thumbnail-size → full-URL fallback). Costs ZERO requests when the
+  embed already worked. A blocked/erroring media route leaves cells empty —
+  never a fabricated URL.
+- SEO/index.tsx: the cell now has three honest states — thumbnail / "set but
+  its URL could not be read" (solid box + explaining tooltip) / genuinely none
+  (dashed box); the Image sort accessor agrees with what is displayed.
+
+Verified: NEW tests/standalone/seo_featured_image_test.php 25/25 — the resolver
+is EXECUTED with scripted HTTP (bug case, embed-present no-op, SVG/odd-size
+fallbacks, unreachable + 401 media routes, 150-image chunking, shared-image
+dedupe, 400-image cap) plus row-builder and cell-state pins. Negative control
+10/10 CAUGHT (incl. fabricating URLs on failure and re-fetching what the embed
+delivered). Suite 43/43. php -l clean, build clean, tsc baseline 58. Zip NOT
+rebuilt.
+
+## 2026-08-14 — "Pages in a subfolder" were CUSTOM POST TYPES (proven live), now listed
+
+4-SEO-table-not-pulling-pages-in-a-subfolder…pdf. Root cause found by PROBING
+the live site's public REST API rather than guessing:
+  GET massagegoteborg.nu/wp-json/wp/v2/types  → registers `services` and
+  `cmsms_doctor` custom post types.
+  GET /wp/v2/pages?search=lymphatic            → only the homepage (no such page).
+  GET /wp/v2/services                          → id 28837 "Lymfdränage",
+  link /services/lymphatic-drainage/ — i.e. THE 17-click top GSC URL.
+The table only ever queried post+page, so every CPT URL was invisible. From
+outside they look exactly like "pages in a subfolder". (Checked and REJECTED
+two other hypotheses first: the 100-row cap — that site has 81 rows total —
+and REST `_fields`+`_embed` interaction, verified against WP core trunk.)
+
+Fix:
+- service.php: NON_CONTENT_TYPES denylist (WP internals + builder template
+  libraries); remote_content_types() discovers public types from CORE's
+  /wp/v2/types (context=edit → view fallback, honours `viewable`, refuses
+  regex/nested rest_bases), cached 12h per site, NEVER caching a failed lookup
+  and always degrading to post+page; remote_route() is now the ONE place a
+  type becomes a URL — all 11 hardcoded pages/posts ternaries replaced (each
+  verified to have $site in scope); remote_list_content iterates discovered
+  types.
+- local.php: content_types() from get_post_types(public) minus the denylist;
+  list_content allows them all.
+- controller.php + editing.php: default types + options payload use it.
+- Client: LinksPopup/HeadingsPanel/SectionModal/EditorHeader/useAiReview take
+  `type: string`; index.tsx passes row.type through instead of coercing to
+  post|page (a CPT row now edits its own endpoint); the Type filter unions the
+  server list with the types present in the rows (a REMOTE site's custom types
+  are unknowable to this hub's options payload). quickCreate stays post|page
+  on purpose.
+
+Verified: NEW tests/standalone/seo_content_types_test.php 45/45 — discovery +
+routing EXECUTED against the REAL /wp/v2/types payload captured from the site.
+Negative control 13/13 CAUGHT after strengthening one weak assertion (the
+regex-rest_base guard was passing only because wp_font_face is ALSO denylisted;
+added a non-denylisted nested route to make it falsifiable). Suite 44/44, build
+clean, tsc back to baseline 58 (one new error introduced and fixed:
+useAiReview's type prop). Zip NOT rebuilt.
+
+## 2026-08-15 — Writer templates now share SEO's site+business variables (one centralized map)
+
+5-Templates-Writer-Templates.pdf: "writer templates should share the variables
+coming from the site and the business… a centralized place where all these
+variables are for their respective module… we're lacking variables that we
+currently have in SEO, but we don't have it in writer."
+
+NEW includes/core/class-pcm-content-vars.php — PCM_Content_Vars::site_business()
+is THE shared, post-independent vocabulary (site.lang, website.url, today +
+the 13 business.* tokens from the brand's GBP). keys() is derived from the map
+itself, so the contract cannot drift from the implementation.
+- seo/ai.php build_field_vars() = post tokens + the shared map. Passes '' for
+  the language, pinning {{site.lang}} to the hub locale exactly as before
+  (SEO behaviour byte-identical; the seo_language_law test now guards the new
+  mechanism instead of the old inline literal).
+- strategy/service.php build_prompt() merges the same map (class_exists-guarded,
+  brand-id scoped, lang=null so it prefers the BRAND's language). They are plain
+  values, NOT fragments — never auto-appended, so a template using none stays
+  byte-identical.
+- templateVars.ts: SITE_BUSINESS_VARS defined once; WRITER_VARS and SEO_VARS
+  both compose it. Removed the PHANTOM {{site_name}} — advertised in the
+  typeahead but substituted nowhere in PHP.
+- SourceVarsHint: tells Writer authors the SEO site/business variables resolve
+  here too and points at the "/" typeahead.
+
+Verified: NEW template_vars_parity_test.php 38/38 — the shared builder AND the
+real Writer renderer EXECUTED (GBP precedence, empty-not-leaked, the piped
+{{business.website|hostname}} token resolving through the regex alternation,
+whitespace tolerance, unknown tokens left alone) plus two-direction PHP↔TS
+parity. Negative control 12/12 CAUGHT after fixing one weak assertion (an
+unanchored regex could be satisfied by the OTHER block's spread — now
+block-scoped).
+
+Two EXISTING tests caught the change and were updated to keep their intent, not
+silenced: seo_language_law (the hub-locale law now lives in the shared builder's
+'' branch — asserted there) and template_vars (ts_map AND ts_list now follow the
+...SITE_BUSINESS_VARS spread; without that they would have silently stopped
+checking 16 tokens per module). Writer's advertised vocabulary went 10 → 26
+tokens, every one verified substituted by its PHP; total 97 → 112.
+
+Suite 45/45, build clean, tsc baseline 58, php -l clean. Zip NOT rebuilt.
+
+## 2026-08-15 — Zip rebuilt with the shared-variables round
+
+python scripts/build_zip.py → 659 files / 3.47 MB (658 + the new core class),
+root powerplatform/, tests/ excluded. Archive-verified: class-pcm-content-vars.php
+is shipped AND required from power-creatives.php (a missing require would fatal at
+generation time), Writer + SEO both compose it, the bundle carries the shared
+typeahead vars and no longer carries the phantom {{site_name}}. Spot-checked that
+the three earlier rounds are still present (CPT discovery, featured-image
+resolver, view order/update-in-place).
+
+## 2026-08-15 — "Meta tags not shown in the table": the fill could never FINISH
+
+Filip on brizy.profitmedia.pro (63 rows, meta columns blank). The effective-meta
+fallback shipped 08-13 was correct but could not complete a table larger than its
+own cap — two independent structural defects:
+
+1. fill_effective_meta counted CACHE HITS against its fetch cap ($fetched++ ran
+   before the fetcher, which returns cached HTML for free). Every load therefore
+   re-spent its whole 10/20 budget on the same first N rows; rows N+1.. were never
+   reached, no matter how many reloads. It also BROKE out of the loop when the
+   budget ran out, skipping cached rows further down.
+2. The connector path sliced "the first 20 ids that need meta" on EVERY load and
+   cached nothing hub-side, so ids 21+ were never requested at all.
+
+Fix (both paths now converge, and a warm table costs zero requests):
+- local.php fill_effective_meta(+$cached_html_for_row): a free cache-only lookup
+  fills known pages WITHOUT consuming the cap, and an exhausted budget now
+  `continue`s instead of `break`ing so cached rows below it still fill.
+- local.php cached_page_html_only(): network-free reader of the same transient.
+  Wired into list_content.
+- service.php remote head-tags: hub-side cache per (site, post, modified); the
+  request carries only ids never resolved ($unseen), so successive loads learn 20
+  more each time. Empty answers are cached too (1h) so a genuinely bare page is
+  not re-fetched every load; real tags cached a week.
+- service.php connector-less fallback: same free cache pass.
+
+Verified: NEW seo_meta_fill_convergence_test.php 23/23 — fill_effective_meta
+EXECUTED across REPEATED loads: §1 reproduces the old no-progress behaviour, §2
+proves convergence (10 → 20 → … → all 63) with fetch counts, a warm table at ZERO
+fetches, and correct row↔page pairing; plus stored-meta-wins and empty-stays-empty.
+Negative control 10/10 CAUGHT after strengthening one case (all cached rows sat
+BEFORE the first uncached one, so break/continue were indistinguishable — added a
+cached row below an uncached one).
+
+seo_effective_meta_test caught the change (4 stale assertions: a multi-line call
+and two substr windows that no longer covered the grown function) — updated to
+the new shape, not silenced; it now also pins the free-cache-pass and the
+rotation. Suite 46/46, build clean, php -l clean. Zip rebuilt 659 files / 3.47 MB,
+archive-verified.
+
+## 2026-08-15 — Meta columns blank: the connector on that site is OLD (probed live)
+
+Repeat report ("not reading meta tags even if there are meta tags"). Probed
+brizy.profitmedia.pro instead of re-reasoning:
+  /wp-json/                  → pcm-conn/v1 IS present (connector installed, active)
+  /wp-json/pcm-conn/v1       → 15 routes, NO /head-tags (that route shipped 08-13)
+  /wp/v2/posts?_fields=meta  → _yoast_wpseo_title "", rank_math_title "",
+                               pcm_seo_meta_title "" — stored meta genuinely EMPTY
+                               (Rank Math renders from templates)
+  a post permalink           → real <title>…FIFA President - Dental Template</title>,
+                               no meta description
+So the tags exist ONLY in the rendered page, the connector is too old to serve
+them, and the hub's public-permalink reader was the only path — silently, 10
+rows per load, with nothing saying a one-click connector update was the fix.
+
+Fix:
+- sites/service.php: mark_connector_route()/connector_lacks_route() record when a
+  connector 404s a route the hub needs (12h, per site AND per route; a success
+  clears it instantly). connector_status() now returns `outdated` on EVERY branch.
+- seo/service.php: the /head-tags call records the verdict — but ONLY on a 2xx or
+  a 404. A 5xx/timeout is not a capability verdict (it would falsely accuse a
+  healthy connector). Tags are read only from a SERVED response.
+- The public-permalink reader cap 10 → 25 (still 6s-budgeted, pages cached a
+  week): on such a site it is the only path, and 10/load meant 7 visits for 63 rows.
+- SEO banner: active-but-outdated now says the meta columns fill slowly and offers
+  "Update connector" via the EXISTING per-site /pcm-conn/v1/update-now route; a
+  refused self-update says to reinstall rather than claiming success.
+
+Verified: NEW seo_meta_old_connector_test.php 24/24 (flag EXECUTED: per-site,
+per-route, cleared on success; every status branch carries `outdated`; the
+2xx-or-404-only rule; banner + honest failure). Negative control 10/10 CAUGHT.
+Two existing tests caught the change and were updated, not silenced:
+connector_status_test (host now includes the new helpers — its slice anchored on
+one visibility and swallowed the method above it; fixed to take the NEAREST
+declaration) and seo_effective_meta_test (cap assertion now pins "bounded", not
+the old number). Suite 47/47, build clean, tsc 58, php -l clean. Zip rebuilt
+659 files / 3.48 MB, archive-verified.
+
+## 2026-08-15 — Single-cell generation "complains about HTML": envelope guard now SELF-HEALS
+
+Filip: "It now works to generate for bulk, but individual lines do not work. It
+complains about HTML missing. Try to generate just one cell in meta-title."
+
+The error is the 08-13 envelope guard's own 422 ("returns a JSON envelope
+({"html":…})…"). WHY singular-only: bulk fills EMPTY cells → mode 'generate' →
+the shipped generate prompt (fine). A single FILLED cell resolves mode
+'optimize' → the user's customized optimize template, which on that install
+asks for the section-revise envelope — so every individual regenerate
+dead-ended while bulk sailed through.
+
+Fix: NEW PCM_SEO_AI::invoke_scalar_field() — the ONE invoke both generate paths
+(local ai.php + remote service.php) now route through. It sanitizes, slugifies,
+and when a CUSTOMIZED prompt (resolved ≠ shipped default) yields the envelope,
+retries ONCE with the shipped default for the same section+mode (language law
+kept). Generation succeeds instead of dead-ending; the honest 422 remains when
+the default itself envelopes or the prompt was not customized (nothing to heal
+with); empty answers never trigger the retry. The duplicated guard is gone —
+`pcm_seo_envelope` now exists in exactly one place.
+
+Verified: seo_envelope_guard_test.php extended to 42/42 — §5 EXECUTES the real
+invoke with a scripted PCM_LLM (good answer = one invoke; envelope→heal with
+the substituted default+law; default-envelopes→422; uncustomized→422 with no
+retry; empty→generic error, no retry; healed slug slugified). Negative control
+9/9 CAUGHT (incl. law dropped on retry and retry-on-empty). seo_language_law
+caught the inline-append respelling — assertion updated to pin the ORDER (its
+meaning), not the old two-statement form. Suite 47/47, php -l clean. Zip
+rebuilt 659 files / 3.48 MB — shared invoke + single-guard verified in-archive.
+
+## 2026-08-15 — "The table needs to pull in and show the subpages" — pinned down and closed
+
+Filip's 3-of-3 comment on the GSC thread. Probed live BEFORE building:
+massagegoteborg.nu has NINE pages, all parent=0 — its "subpages" ARE the
+services/cmsms_doctor custom-type URLs, already covered by yesterday's
+content-type discovery (they haven't installed that zip yet). What genuinely
+remained for the general case:
+
+1. PULL IN — remote_list_content fetched ONE 100-row request per type; rows
+   past 100 were silently dropped, and on page-heavy sites the dropped rows
+   are precisely the subpages. Now PAGINATED: up to PER_TYPE_PAGES(5) × 100
+   per type; a short page ends the walk without provoking WP's end-of-list
+   400; a 400/error past page 1 is the normal stop; an error ON page 1 skips
+   that type only (best-effort law). Local WP_Query bound raised to match:
+   PER_TYPE 100 → 500.
+2. SHOW — a subpage row displayed only its leaf slug, indistinguishable from a
+   top-level page. The Slug cell now derives the permalink's parent path and
+   shows it as a faint display-only prefix (/services/) with an explanatory
+   tooltip; the EDITABLE value stays the leaf slug (what WP lets you change);
+   URL-parse guarded so draft preview links never crash the cell.
+
+Verified: NEW tests/standalone/seo_subpages_test.php 16/16 — the pagination
+loop EXECUTED with a scripted proxy (234 rows → all 234; exact-multiple ends on
+the 400; small site = one request; huge site bounded at 500; best-effort skip).
+Negative control 7/7 CAUGHT after fixing a fixture-order flaw (with the
+erroring type LAST, "skip one" and "abort all" were indistinguishable — put it
+FIRST). Suite 48/48, build clean, tsc 58, php -l clean. Zip rebuilt 659 files /
+3.48 MB, archive-verified (pagination + cap + prefix all present).
+
+NOTE for the user: Filip's massagegoteborg case is fixed by the CPT-discovery
+round + this one — both land with THIS zip; nothing was installed there yet.
+
+## 2026-08-15 — "Is this AI slop?": two bulk bars at once → one surface at a time
+
+Screenshot: the Strategies card showed the ITEM bulk strip ("3 selected ·
+Generate (3) · Set post status · Linking · Duplicate · Delete") while the
+FLOATING strategy bar ("1 selected · Generate All · Publish completed ·
+Delete") sat at the bottom — two disagreeing "selected" counts and two Delete
+buttons with different blast radii (items vs whole strategies). Both features
+are deliberate (the item strip is the owner's own 08-10/08-13 ask; the
+floating bar is strategy-level bulk) — the slop was them showing TOGETHER.
+
+Fix (Strategies/index.tsx, one condition): the floating strategy bar now hides
+while any ITEM is ticked (`selectedItemIds.size === 0` added to its guard).
+One bulk surface at a time — the more specific intent (items) wins; clearing
+the item selection brings the strategy bar back. No handler/action changes.
+
+Verified: strategy_card_layout_test.mjs extended to 55/55 (§10: suppression
+guard + item strip untouched + rule documented in place). Inline negative
+control: reverting the condition → CAUGHT. Suite 48/48, build clean, tsc 58.
+Zip rebuilt 659 files — suppression verified in the minified bundle.
+
+## 2026-08-15 — Bulk-bar correction: the INLINE strip removed, the floating bar carries both modes
+
+Owner corrected v1 ("no no remove the top one not the bottom bulk actions").
+v1 had hidden the BOTTOM bar while items were ticked; wanted the opposite.
+
+Now: the inline card strip is GONE. The floating bottom bar is THE one bulk
+surface, with two modes that never mix:
+- ITEM mode (any items ticked — takes precedence): N selected · Generate (N) ·
+  Set post status… · Linking · Duplicate · Delete · ×. Handlers unchanged
+  (handleGenerateSelected / handleBulkPostStatus / runItemBulk); a cross-card
+  selection runs per owning strategy via the new itemGroups memo (count derived
+  from groups, so a stale id can't inflate it). Linking still targets ONE
+  strategy → disabled with an explaining title when the selection spans cards.
+- STRATEGY mode (strategies ticked, no items): Generate All · Publish
+  completed · Delete · × — byte-identical to before.
+
+Tests: strategy_card_layout §10 rewritten for the corrected behaviour (58/58;
+one floating container, mode split, inline strip gone, Linking gate);
+bulk_generate (50/50) + post_status (62/62) re-anchored to the bar's new home
+— including two region-boundary fixes in post_status where the moved bar's
+legitimate bulk dropdown landed inside to-EOF slices and false-positived
+"buried in overrides" / "duplicate dropdown". Negative control 3/3 CAUGHT
+(mode split dropped, item gating dropped, cross-card Linking un-gated). Suite
+48/48, build clean, tsc 58. Zip rebuilt 659 files — single container + both
+modes verified in the bundle.
+
+## 2026-08-15 — MY REGRESSION: Strategies crashed with React #310 (hook below an early return)
+
+The bulk-bar correction round added `const itemGroups = useMemo(...)` — and I
+placed it AFTER the component's `if (isLoading) return <Spinner/>` early
+return. Loading render: N hooks. Loaded render: N+1 hooks. React #310
+("rendered more hooks than during the previous render") → the ENTIRE
+Strategies module crashed to the error screen. Shipped in the previous zip;
+the owner hit it immediately. The suite stayed green because every check was
+structural — nothing asserted hook ORDER.
+
+Fix: the memo (+ selectedItemCount) moved up beside strategyList, above every
+early return, with a HOOK ORDER LAW comment naming this incident. Deps use
+`strategies` (the stable query value) rather than the per-render array literal.
+
+Guard so this class can't ship again: strategy_card_layout_test §11 — inside
+StrategiesModule (component boundary → AutoScanStatus), after the first
+early return there must be NO hook declaration of any kind (regex over
+useState/Memo/Callback/Ref/Query/Mutation/Effect), and the itemGroups memo
+must sit ABOVE the loading return. Negative control: re-inserting the memo
+below the return (the exact crash shape) → CAUGHT.
+
+Suite 48/48 (62/62 in the card test), build clean, tsc 58. Zip rebuilt
+659 files — REPLACES the broken one; the owner must reinstall.
+
+## 2026-08-15 — Author dropdown: "ones and threes" + lag (both hooks' save patch was wrong)
+
+Filip: "when you try to select him, you get just ones and threes and whatever.
+It's also extremely laggy."
+
+ROOT CAUSE, both hooks (useSeoContent + useRemoteSeoContent): saveCell's cache
+patch was `{ ...r, [field]: stored }` — for field 'author' the picked VALUE is
+a USER ID, so the id landed in the `author` NAME field ("3" rendered in the
+cell) and `authorId` never updated (the dropdown checkmark stayed on the old
+author). And nothing painted until the round trip returned (remote = hub →
+client site, seconds) — the "extremely laggy" feel.
+
+Fix:
+- Both hooks: cellPatch() — 'author' patches {authorId: Number(value),
+  author: display} (display = the picked option's name, passed from the
+  caller); other fields unchanged. Patch applied OPTIMISTICALLY before the
+  request; the canonical re-patch runs on success; failure rolls back
+  (invalidate) — remote previously had NO rollback at all.
+- index.tsx: the picker passes the selected option's name; submitNewAuthor
+  passes the created author's name. saveCell signature gains optional
+  `display` (backward compatible — all other callers unchanged).
+- Drive-by alignment: remote saveCell/generateField now pass the row's REAL
+  type instead of coercing to post|page (consistent with the CPT round).
+
+Verified: seo_author_dropdown_test.mjs 41/41 — two stale anchors updated (they
+pinned the 3-arg call) + NEW §7 pinning the patch shape, optimistic-before-
+request ordering (index-position check, not regex-over-CRLF), rollback on
+failure, and non-author fields untouched, for BOTH hooks. Negative control 6/6
+CAUGHT (id-into-name regression both hooks, optimistic paint dropped, rollback
+dropped, name dropped from both callers). Suite 48/48, build clean, tsc 58.
+Zip rebuilt 659 files — patch shape + name lookup verified in the bundle.
+
+## 2026-08-15 — "Author doesn't select": the write can be SILENTLY IGNORED — now verified
+
+Owner on knallenstandvard.se (screenshot still shows "3" in the cell = the
+PREVIOUS build; the display fix + optimistic paint from earlier today are not
+installed there). But the report exposed a real second hole in the CURRENT
+code: `author` sat on remote_save_cell's verification-EXEMPT list ("native —
+always OK"). A capability failure 403s and was surfaced — but core WP REST
+silently IGNORES the author param when the post type doesn't expose author
+support, answers 200 with the author unchanged, the hub reported success, and
+the next refetch reverted the cell: exactly "it doesn't select".
+
+Fix (service.php remote_save_cell): verify author saves from the POST's OWN
+response body — zero extra round trips. The updated-post body carries the
+stored author: echoed equal = saved; DIFFERENT or ABSENT (the field isn't in
+that type's schema) → honest 422 naming the likely causes (app-password user
+needs Editor/Admin for edit_others_posts, or the content type doesn't support
+authors). Pairs with today's frontend fix: the optimistic paint rolls back and
+the toast explains, instead of a silent revert.
+
+Verified: NEW tests/standalone/seo_author_save_test.php 10/10 —
+remote_save_cell EXECUTED with scripted HTTP (absent-key 422, different-author
+422, equal = success at exactly ONE request, 403 message pass-through, meta
+phantom-save law untouched, slug dedupe untouched). One fixture bug fixed in
+review (PHP + array union kept the base's slug key). Negative control 4/4
+CAUGHT. Suite 49/49, build clean, tsc 58. Zip rebuilt 659 files,
+archive-verified.
+
+NOTE for the user: the screenshot's symptoms ("3" + dead-feeling select) are
+from the previous build — TODAY'S zip must be installed. If after installing
+the pick REVERTS WITH AN ERROR TOAST, the message now tells the real blocker
+on that site (role/capability), which no reinstall can fix from the hub side.
+
+## 2026-08-15 — Link Scanner PDF: remove-all lied, indexes crossed lists, table counts froze
+
+6-SEO-table-bugfix-Link-Scanner…pdf (bokatandlakartid.se, 27 dead webp-image
+links; "we have been doing this back and forth multiple times"). Three defects:
+
+1. INDEX-SPACE MISMATCH (the core one): the popup numbers rows from the
+   CONNECTOR's builder-aware scan (content + all meta); remote remove/rel/
+   delete resolved that index against the CONTENT.RAW scan — a different,
+   shorter list. Every removal missed or hit the wrong link. The three ops now
+   carry the link's IDENTITY (html/to/anchor); remote_rewrite_link_content
+   resolves it in ITS OWN list via locate_link_index (exact html → to+anchor →
+   unique to; AMBIGUOUS to REFUSES rather than guessing). A link absent from
+   the editable content gets an honest pcm_seo_link_outside 422: "lives in
+   plugin or builder data… fix it in that plugin on the site" — which is
+   exactly what those webp-plugin links are.
+2. THE UI LIED: removeLinks swallowed every failure (catch{}) and
+   removeAllBroken/removeSelected toasted success unconditionally. Now
+   outcomes are counted, the last server reason is kept, and one honest toast
+   reports Removed X / N could not be removed + why.
+3. TABLE COUNTS FROZE: popup edits never refreshed the row's Int/Ext/Broken
+   cells. LinksPopup tracks dirtiness (changedRef via applyResult) and fires
+   onChanged on close; index.tsx rescans that row → the hook patches the
+   table cache. The "stale scan" itself was HONEST (no caching anywhere in the
+   scan path — verified) — the stored data still contains those links; the
+   fix is that the tool now says where they live instead of failing silently.
+
+Files: seo/service.php (locate_link_index + $locate through rewrite/remove/
+rel/delete), seo/controller.php (link_locate_from ×3), trpc-routes.ts (identity
+fields ×3), LinksPopup.tsx (honest bulk + identity + changedRef/onChanged +
+useRef import), SEO/index.tsx (onChanged → scanLinks row).
+
+Verified: NEW seo_link_remove_identity_test.php 21/21 — REAL scanner +
+locator + rewrite EXECUTED with scripted HTTP: the index-3-in-a-list-of-2
+repro, the outside-content 422, and the smoking gun (wrong index + right
+identity unwraps the DEAD link, not the healthy one). Negative control 8/8
+CAUGHT after adding a duplicate-target fixture (the ambiguity refusal was
+unfalsifiable without one). Suite 50/50, build clean, tsc 58. Zip rebuilt
+659 files — locator + honest summaries verified in-archive, the uncondition-
+al "Removed all dead links" string PROVEN GONE from the bundle.

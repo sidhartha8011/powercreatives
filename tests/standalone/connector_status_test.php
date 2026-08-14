@@ -19,6 +19,13 @@ error_reporting(E_ALL & ~E_DEPRECATED);
 if (!defined('ABSPATH')) { define('ABSPATH', __DIR__ . '/'); }
 if (!class_exists('WP_Error')) { class WP_Error { public function get_error_message() { return 'err'; } } }
 if (!function_exists('is_wp_error')) { function is_wp_error($x) { return $x instanceof WP_Error; } }
+// connector_status now also reports whether the connector serves routes the hub
+// needs (an ACTIVE but old build 404s /head-tags) — give it a transient store.
+$GLOBALS['transients'] = array();
+function get_transient($k) { return $GLOBALS['transients'][$k] ?? false; }
+function set_transient($k, $v, $t = 0) { $GLOBALS['transients'][$k] = $v; return true; }
+function delete_transient($k) { unset($GLOBALS['transients'][$k]); return true; }
+if (!defined('HOUR_IN_SECONDS')) { define('HOUR_IN_SECONDS', 3600); }
 
 $ROOT = dirname(__DIR__, 2);
 $svc  = file_get_contents($ROOT . '/includes/modules/sites/service.php');
@@ -29,7 +36,22 @@ $start = strrpos(substr($svc, 0, $i), "\n") + 1;
 $next = strpos($svc, "\n    public static function activate_newest_connector", $i);
 $fn = substr($svc, $start, $next - $start);
 if (preg_match('/\n    \}\r?\n/', $fn, $m, PREG_OFFSET_CAPTURE)) { $fn = substr($fn, 0, $m[0][1]) . "\n    }"; }
-eval('class ConnHost { public static $reply = null;'
+// The capability helpers connector_status leans on, taken verbatim.
+$helpers = '';
+foreach (array('missing_route_key', 'mark_connector_route', 'connector_lacks_route') as $h) {
+    $hi = strpos($svc, "function {$h}(");
+    // NEAREST preceding declaration of either visibility — anchoring on one kind
+    // walked back past a public method into the private one above it and sliced
+    // both (PHP then refused the duplicate).
+    $hp = strrpos(substr($svc, 0, (int)$hi), '    private static');
+    $hq = strrpos(substr($svc, 0, (int)$hi), '    public static');
+    $hs = max($hp === false ? -1 : $hp, $hq === false ? -1 : $hq);
+    $he = strpos($svc, "\n    /**", (int)$hi);
+    $hf = substr($svc, (int)$hs, (int)$he - (int)$hs);
+    if (preg_match('/\n    \}\r?\n/', $hf, $hm, PREG_OFFSET_CAPTURE)) { $hf = substr($hf, 0, $hm[0][1]) . "\n    }"; }
+    $helpers .= str_replace('private static', 'public static', $hf) . "\n";
+}
+eval('class ConnHost { public static $reply = null;' . $helpers
     . ' public static function remote_rest($site, $method, $route, $q = array(), $b = array(), $t = 30) { return self::$reply; }'
     . str_replace('self::remote_rest', 'self::remote_rest', $fn) . ' }');
 

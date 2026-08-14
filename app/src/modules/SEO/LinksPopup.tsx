@@ -8,7 +8,7 @@
  * Works on the local site and (via the connector) on connected sites.
  */
 
-import { useEffect, useMemo, useState, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import { ExternalLink, Unlink, Loader2, Trash2, RefreshCw, Lock, Shield, ShieldOff, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -48,13 +48,18 @@ const isEditable = (l: LinkRow) => l.editable !== false;
 interface LinksPopupProps {
   open: boolean;
   onClose: () => void;
+  /** Fired on close when anything was edited here, so the parent can rescan the
+   *  row — otherwise the TABLE's Int/Ext/Broken counts keep the old numbers
+   *  ("it's still saying 27 dead links"). */
+  onChanged?: () => void;
   postId: number;
   kind: LinkKind;
   title: string;
   /** Local site vs a connected site (drives which endpoints are used). */
   isLocal: boolean;
   siteId: number | null;
-  type: 'post' | 'page';
+  /** Content type slug — post, page, or any public custom type. */
+  type: string;
 }
 
 // Resizable columns (drag the right edge; widths persist per-browser), like the SEO table.
@@ -79,7 +84,7 @@ function StatusCell({ link }: { link: LinkRow }) {
   return <span className="text-muted-foreground/50">—</span>;
 }
 
-export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId, type }: LinksPopupProps) {
+export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId, type, onChanged }: LinksPopupProps) {
   const [links, setLinks] = useState<LinkRow[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busyIdx, setBusyIdx] = useState<number | null>(null);
@@ -118,6 +123,8 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
   const localScan = trpc.seo.scanLinks.useMutation();
   const remoteScan = trpc.seo.remoteScanLinks.useMutation();
   const [rescanning, setRescanning] = useState(false);
+  // Anything edited since open? Drives the close-time parent rescan.
+  const changedRef = useRef(false);
 
   // Resizable, persisted column widths (shared SEO-table mechanism).
   // v2 storage key: the dialog got wider + column defaults grew — a saved v1 layout would keep the
@@ -180,6 +187,7 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
   }, [links, kind, justEditedTo]);
 
   const applyResult = (res: any) => {
+    changedRef.current = true;
     setLinks(Array.isArray(res?.links) ? res.links : []);
     setSelected(new Set());
   };
@@ -255,7 +263,7 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
     try {
       const res = isLocal
         ? await removeLocal.mutateAsync({ id: postId, index: l.id } as any)
-        : await removeRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id } as any);
+        : await removeRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, html: l.html, to: l.to, anchor: l.anchor } as any);
       applyResult(res);
       toast.success('Link removed');
     } catch (err: any) {
@@ -272,7 +280,7 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
     try {
       const res = isLocal
         ? await relLocal.mutateAsync({ id: postId, index: l.id, nofollow } as any)
-        : await relRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, nofollow } as any);
+        : await relRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, nofollow, html: l.html, to: l.to, anchor: l.anchor } as any);
       applyResult(res);
       toast.success(nofollow ? 'Link set to nofollow' : 'Link set to follow');
     } catch (err: any) {
@@ -290,7 +298,7 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
     try {
       const res = isLocal
         ? await deleteLocal.mutateAsync({ id: postId, index: l.id } as any)
-        : await deleteRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id } as any);
+        : await deleteRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: l.id, html: l.html, to: l.to, anchor: l.anchor } as any);
       applyResult(res);
       refetchDeleted();
       toast.success('Element deleted — restorable from the Deleted list below.');
@@ -318,28 +326,56 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
 
   // Remove a set of links by their html (indices shift after each server re-scan, so we
   // re-resolve each by html against the freshest list every iteration).
-  const removeLinks = async (htmls: string[]) => {
-    if (htmls.length === 0) return;
+  //
+  // HONEST RESULTS (owner, bokatandlakartid.se: "It said that it removed all dead
+  // links, but the table is exactly the same"): every failure used to be swallowed
+  // and a success toast fired regardless. Now each outcome is counted, the last
+  // server reason is kept, and the toast reports what ACTUALLY happened.
+  const removeLinks = async (htmls: string[]): Promise<{ ok: number; failed: number; reason: string }> => {
+    if (htmls.length === 0) return { ok: 0, failed: 0, reason: '' };
     setBulkBusy(true);
     let current = links;
+    let ok = 0;
+    let failed = 0;
+    let reason = '';
     for (const html of htmls) {
       const target = current.find((l) => l.html === html);
       if (!target) continue;
       try {
         const res: any = isLocal
           ? await removeLocal.mutateAsync({ id: postId, index: target.id } as any)
-          : await removeRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: target.id } as any);
+          : await removeRemote.mutateAsync({ siteId: siteId ?? 0, postId, type, index: target.id, html: target.html, to: target.to, anchor: target.anchor } as any);
         current = Array.isArray(res?.links) ? res.links : current;
-      } catch { /* keep going */ }
+        changedRef.current = true;
+        ok++;
+      } catch (err: any) {
+        failed++;
+        reason = err?.message || reason;
+      }
     }
     setLinks(current);
     setSelected(new Set());
     setBulkBusy(false);
+    return { ok, failed, reason };
+  };
+
+  /** One toast that tells the truth about a bulk removal. */
+  const reportRemoval = ({ ok, failed, reason }: { ok: number; failed: number; reason: string }) => {
+    if (failed === 0 && ok > 0) {
+      toast.success(`Removed ${ok} link${ok === 1 ? '' : 's'}.`);
+      return;
+    }
+    if (ok === 0 && failed > 0) {
+      toast.error(`None of the ${failed} link${failed === 1 ? '' : 's'} could be removed. ${reason}`);
+      return;
+    }
+    if (failed > 0) {
+      toast.error(`Removed ${ok}, but ${failed} could not be removed. ${reason}`);
+    }
   };
 
   const removeSelected = async () => {
-    await removeLinks(filtered.filter((l) => selected.has(l.id) && isEditable(l)).map((l) => l.html));
-    toast.success('Removed selected links');
+    reportRemoval(await removeLinks(filtered.filter((l) => selected.has(l.id) && isEditable(l)).map((l) => l.html)));
   };
 
   // One-click fix for dead links: unwrap every (editable) broken link (keeps the anchor text).
@@ -347,8 +383,7 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
     const htmls = filtered.filter(isEditable).map((l) => l.html);
     if (htmls.length === 0) return;
     if (!window.confirm(`Remove all ${htmls.length} dead link(s)? This unwraps each broken <a> (the text stays).`)) return;
-    await removeLinks(htmls);
-    toast.success('Removed all dead links');
+    reportRemoval(await removeLinks(htmls));
   };
 
   // Re-scan this page from inside the popup (recovers an empty/stale list).
@@ -383,7 +418,7 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
   const hasReadOnly = filtered.some((l) => !isEditable(l));
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { if (changedRef.current) { changedRef.current = false; onChanged?.(); } onClose(); } }}>
       <DialogContent className="sm:max-w-[min(1400px,95vw)] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="capitalize">{kind === 'broken' ? 'Dead' : kind} links · {title}</DialogTitle>

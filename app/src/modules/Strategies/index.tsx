@@ -972,6 +972,22 @@ export function StrategiesModule() {
 
   // Cast to typed array (trpc proxy returns unknown)
   const strategyList: Strategy[] = Array.isArray(strategies) ? strategies : [];
+  // Ticked ITEMS grouped by their owning strategy — feeds the floating bulk bar's
+  // item mode (the handlers are per-strategy, so cross-card selections run per
+  // group). Count comes from the groups, not the raw set, so an id whose strategy
+  // left the list can't inflate the label.
+  //
+  // HOOK ORDER LAW: this useMemo MUST stay above the isLoading early return below.
+  // It originally landed after it, so the loading render counted one fewer hook
+  // than the loaded render — React #310, and the whole module crashed to the
+  // error screen ("what is this?? the error occured in strategy module").
+  const itemGroups = useMemo(() =>
+    strategyList
+      .map((s) => ({ strategy: s, ids: (s.items ?? []).filter((it) => selectedItemIds.has(it.id)).map((it) => it.id) }))
+      .filter((g) => g.ids.length > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [strategies, selectedItemIds]);
+  const selectedItemCount = itemGroups.reduce((n, g) => n + g.ids.length, 0);
 
   // Client-side search + status filter (AutoPress parity) — name match (also
   // checked against item keywords when items are already attached) plus an
@@ -1776,102 +1792,6 @@ export function StrategiesModule() {
               {/* Expanded items list */}
               {expandedId === strategy.id && strategy.items && (
                 <div style={{ background: colors.bgPage }}>
-                  {/* Item bulk bar — appears once at least one item in THIS strategy
-                      is ticked. Linking opens the same interlink modal the row button
-                      uses; Delete and Duplicate run per item and report a combined
-                      result so one failure can't abort the batch. */}
-                  {(() => {
-                    const ids = (strategy.items ?? [])
-                      .filter((it) => selectedItemIds.has(it.id))
-                      .map((it) => it.id);
-                    if (ids.length === 0) return null;
-                    return (
-                      <div
-                        className="flex flex-wrap items-center gap-2 px-6 py-2"
-                        style={{ background: colors.bgHover, borderBottom: `1px solid ${colors.borderLight}` }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <span style={{ fontSize: typography.xs, color: colors.textSecondary }}>
-                          {ids.length} selected
-                        </span>
-                        {/* Generate the SELECTION (owner, 2026-08-10). The header keeps
-                            "Generate All" (whole strategy) and "Generate" (next pending);
-                            this is the third case — exactly these N. Primary variant
-                            because it is the main thing you do with a selection, and
-                            disabled while any generate run owns this strategy so it
-                            can't be double-fired. */}
-                        <Button
-                          variant="default"
-                          size="sm"
-                          className="h-7"
-                          disabled={itemBulkBusy || bulkStrategyId === strategy.id || generatingItemId === strategy.id}
-                          title={`Generate the ${ids.length} selected item${ids.length === 1 ? '' : 's'}`}
-                          onClick={() => handleGenerateSelected(strategy, ids)}
-                        >
-                          {bulkStrategyId === strategy.id
-                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            : <Zap className="w-3.5 h-3.5" />}
-                          Generate ({ids.length})
-                        </Button>
-                        {/* Bulk WordPress status (owner, 2026-08-10). Resets to the
-                            placeholder after each run — it is an ACTION, not a
-                            setting, and a mixed selection has no single "current"
-                            status to display. */}
-                        <Select
-                          value=""
-                          disabled={itemBulkBusy || bulkStrategyId === strategy.id}
-                          onValueChange={(value) => handleBulkPostStatus(strategy, ids, value)}
-                        >
-                          <SelectTrigger
-                            className="w-40"
-                            title="Change the WordPress status of every selected item that is live on a site"
-                          >
-                            <SelectValue placeholder="Set post status…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {POST_STATUSES.map((s) => (
-                              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7"
-                          disabled={itemBulkBusy}
-                          onClick={() => setInterlinkModalStrategy({ id: strategy.id, name: strategy.name, interlinksConfig: config.interlinksConfig })}
-                        >
-                          <Link2 className="w-3.5 h-3.5" /> Linking
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7"
-                          disabled={itemBulkBusy}
-                          onClick={() => runItemBulk(strategy.id, ids, 'Duplicated', (itemId) =>
-                            duplicateItemMutation.mutateAsync({ id: strategy.id, itemId }))}
-                        >
-                          <Copy className="w-3.5 h-3.5" /> Duplicate
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-destructive hover:text-destructive"
-                          disabled={itemBulkBusy}
-                          onClick={() => {
-                            if (!window.confirm(`Remove ${ids.length} item${ids.length === 1 ? '' : 's'} from this strategy? Generated articles stay in Writer.`)) return;
-                            runItemBulk(strategy.id, ids, 'Removed', (itemId) =>
-                              deleteItemMutation.mutateAsync({ id: strategy.id, itemId }));
-                          }}
-                        >
-                          {itemBulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Delete
-                        </Button>
-                        <Button variant="ghost" size="sm" className="h-7" onClick={clearItemSelection}>
-                          <X className="w-3.5 h-3.5" /> Clear
-                        </Button>
-                      </div>
-                    );
-                  })()}
                   {strategy.items.map((item) => {
                     const itemConfig = parseStrategyConfig(item.config);
                     return (
@@ -2232,38 +2152,135 @@ export function StrategiesModule() {
         </div>
       )}
 
-      {/* Floating bulk action bar — bottom-center; visible while any strategy is
-          selected. Count is derived from the selection; actions operate only on
-          selected ids still present in strategyList. */}
-      {view === 'list' && selectedIds.size > 0 && (
+      {/* Floating bulk action bar — bottom-center, THE one bulk surface (owner:
+          "remove the top one, not the bottom bulk actions" — the card's inline
+          strip is gone; its item actions live here now).
+
+          Two modes, never both: while ITEMS are ticked it carries the item
+          actions (per owning strategy — a cross-card selection runs per group);
+          otherwise, while STRATEGIES are ticked, the strategy actions. The mode
+          split keeps one "selected" count and one Delete with a clear blast
+          radius on screen at a time. */}
+      {/* Item bulk bar (floating). Linking opens the same interlink modal the row
+          button uses — one strategy at a time, so it disables on a cross-card
+          selection; Delete and Duplicate run per item and report a combined
+          result so one failure can't abort the batch. */}
+      {view === 'list' && (selectedItemCount > 0 || selectedIds.size > 0) && (
         <div
           className="fixed left-1/2 -translate-x-1/2 bottom-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-full"
           style={{ background: colors.bgSurface, border: `1px solid ${colors.border}`, boxShadow: shadows.dropdown }}
         >
-          <span style={{ fontSize: typography.sm, fontWeight: typography.medium, color: colors.text }}>
-            {selectedIds.size} selected
-          </span>
-          <Button variant="default" size="sm" disabled={bulkBusy} onClick={handleBulkGenerate}>
-            {bulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-            Generate All
-          </Button>
-          <Button variant="outline" size="sm" disabled={bulkBusy} onClick={handleBulkPublish}>
-            <Send className="w-3.5 h-3.5" />
-            Publish completed
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={bulkBusy}
-            onClick={handleBulkDelete}
-            className="text-muted-foreground hover:text-destructive"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            Delete
-          </Button>
-          <Button variant="ghost" size="sm" disabled={bulkBusy} onClick={clearSelection} title="Clear selection">
-            <X className="w-3.5 h-3.5" />
-          </Button>
+          {selectedItemCount > 0 ? (
+            <>
+              <span style={{ fontSize: typography.sm, fontWeight: typography.medium, color: colors.text }}>
+                {selectedItemCount} selected
+              </span>
+              <Button
+                variant="default"
+                size="sm"
+                disabled={itemBulkBusy || bulkStrategyId !== null}
+                title={`Generate the ${selectedItemCount} selected item${selectedItemCount === 1 ? '' : 's'}`}
+                onClick={async () => {
+                  for (const g of itemGroups) { await handleGenerateSelected(g.strategy, g.ids); }
+                }}
+              >
+                {bulkStrategyId !== null
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Zap className="w-3.5 h-3.5" />}
+                Generate ({selectedItemCount})
+              </Button>
+              <Select
+                value=""
+                disabled={itemBulkBusy || bulkStrategyId !== null}
+                onValueChange={async (value) => {
+                  for (const g of itemGroups) { await handleBulkPostStatus(g.strategy, g.ids, value); }
+                }}
+              >
+                <SelectTrigger
+                  className="w-40"
+                  title="Change the WordPress status of every selected item that is live on a site"
+                >
+                  <SelectValue placeholder="Set post status…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {POST_STATUSES.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={itemBulkBusy || itemGroups.length !== 1}
+                title={itemGroups.length === 1 ? 'Configure interlinking for these items' : 'Select items within ONE strategy to configure linking'}
+                onClick={() => {
+                  const g = itemGroups[0];
+                  const cfg = parseStrategyConfig(g.strategy.config);
+                  setInterlinkModalStrategy({ id: g.strategy.id, name: g.strategy.name, interlinksConfig: cfg.interlinksConfig });
+                }}
+              >
+                <Link2 className="w-3.5 h-3.5" /> Linking
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={itemBulkBusy}
+                onClick={async () => {
+                  for (const g of itemGroups) {
+                    await runItemBulk(g.strategy.id, g.ids, 'Duplicated', (itemId) =>
+                      duplicateItemMutation.mutateAsync({ id: g.strategy.id, itemId }));
+                  }
+                }}
+              >
+                <Copy className="w-3.5 h-3.5" /> Duplicate
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                disabled={itemBulkBusy}
+                onClick={async () => {
+                  if (!window.confirm(`Remove ${selectedItemCount} item${selectedItemCount === 1 ? '' : 's'}? Generated articles stay in Writer.`)) return;
+                  for (const g of itemGroups) {
+                    await runItemBulk(g.strategy.id, g.ids, 'Removed', (itemId) =>
+                      deleteItemMutation.mutateAsync({ id: g.strategy.id, itemId }));
+                  }
+                }}
+              >
+                {itemBulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Delete
+              </Button>
+              <Button variant="ghost" size="sm" disabled={itemBulkBusy} onClick={clearItemSelection} title="Clear selection">
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: typography.sm, fontWeight: typography.medium, color: colors.text }}>
+                {selectedIds.size} selected
+              </span>
+              <Button variant="default" size="sm" disabled={bulkBusy} onClick={handleBulkGenerate}>
+                {bulkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                Generate All
+              </Button>
+              <Button variant="outline" size="sm" disabled={bulkBusy} onClick={handleBulkPublish}>
+                <Send className="w-3.5 h-3.5" />
+                Publish completed
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={bulkBusy}
+                onClick={handleBulkDelete}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete
+              </Button>
+              <Button variant="ghost" size="sm" disabled={bulkBusy} onClick={clearSelection} title="Clear selection">
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            </>
+          )}
         </div>
       )}
 

@@ -5622,7 +5622,17 @@ class PCM_Strategy_Service
             // the blank-line collapse. Empty string when the brand sets no language,
             // so a template referencing it degrades to nothing rather than breaking.
             'brand_language'     => $brand_language,
-        );
+        )
+        // The SHARED site + business vocabulary — the same tokens SEO templates
+        // resolve ({{business.name}}, {{business.phone}}, {{site.lang}}, {{today}}…).
+        // Writer templates simply did not have them before, which is the card:
+        // "we're lacking variables that we currently have in SEO, but we don't have
+        // it in writer". All plain values (never fragments), so an unreferenced one
+        // is never auto-appended and a template using none is byte-identical.
+        // `null` lang = the brand's own content language, hub locale as fallback.
+        + (class_exists('PCM_Content_Vars')
+            ? PCM_Content_Vars::site_business($brand ? (int) ($brand->id ?? 0) : null, null)
+            : array());
 
         // ── System prompt from the template's prompt entries. Concatenate every
         //     prompt entry so a variable referenced in ANY of them suppresses

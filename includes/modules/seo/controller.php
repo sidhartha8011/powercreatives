@@ -187,7 +187,9 @@ class PCM_REST_SEO extends PCM_REST_Base
         $types_param = $request->get_param('types');
         $types = is_string($types_param) && $types_param !== ''
             ? array_map('sanitize_key', explode(',', $types_param))
-            : PCM_SEO_Service::VALID_TYPES;
+            // Default = every public content type, so custom types (services, doctors,
+            // products…) are listed too, not just post + page.
+            : PCM_SEO_Local::content_types();
 
         return $this->success(PCM_SEO_Local::list_content($types));
     }
@@ -481,6 +483,20 @@ class PCM_REST_SEO extends PCM_REST_Base
     }
 
     /** POST /seo/sites/{id}/content/{post}/links/{idx}/remove — unwrap a connected post's link. */
+    /** The link's IDENTITY from the request body (html / to / anchor) — lets the
+     *  service resolve the link within ITS OWN scan instead of trusting an index
+     *  numbered by a different list (the popup shows the connector's scan). */
+    private function link_locate_from(array $params): ?array
+    {
+        $locate = array();
+        foreach (array('html', 'to', 'anchor') as $k) {
+            if (isset($params[$k]) && is_string($params[$k]) && $params[$k] !== '') {
+                $locate[$k] = (string) $params[$k];
+            }
+        }
+        return $locate === array() ? null : $locate;
+    }
+
     public function remote_remove_link(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
         $user = $this->get_current_pcm_user();
@@ -490,7 +506,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
         $params = $request->get_json_params() ?: array();
         $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
-        $result = PCM_SEO_Service::remote_remove_link($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')));
+        $result = PCM_SEO_Service::remote_remove_link($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), $this->link_locate_from($params));
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -507,7 +523,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
         $params = $request->get_json_params() ?: array();
         $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
-        $result = PCM_SEO_Service::remote_set_link_rel($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), !empty($params['nofollow']));
+        $result = PCM_SEO_Service::remote_set_link_rel($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), !empty($params['nofollow']), $this->link_locate_from($params));
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -524,7 +540,7 @@ class PCM_REST_SEO extends PCM_REST_Base
         }
         $params = $request->get_json_params() ?: array();
         $type   = sanitize_key($params['type'] ?? 'post') === 'page' ? 'page' : 'post';
-        $result = PCM_SEO_Service::remote_delete_link($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), (int) $user->id);
+        $result = PCM_SEO_Service::remote_delete_link($site, absint($request->get_param('post')), $type, absint($request->get_param('idx')), (int) $user->id, $this->link_locate_from($params));
         if ($result instanceof WP_Error) {
             return $result;
         }

@@ -168,6 +168,41 @@ check('controls still stop row-toggle propagation',
 check('the stale "settings panel below" comment is gone',
   !SRC.includes('SETTINGS PANEL'), 'stale comment');
 
+console.log('\n10. ONE bulk surface: the floating bar, two modes (owner corrected: keep the BOTTOM one)');
+// v1 of this fix hid the bottom bar while items were ticked; the owner wanted
+// the OPPOSITE — the inline card strip removed and the bottom bar to carry the
+// item actions. One container, item mode first, strategy mode otherwise.
+check('the floating bar shows for item OR strategy selections',
+  SRC.includes("view === 'list' && (selectedItemCount > 0 || selectedIds.size > 0) && ("),
+  'bar gating changed');
+check('item mode wins when items are ticked', SRC.includes('{selectedItemCount > 0 ? ('), 'no mode split');
+check('the inline card strip is GONE',
+  !SRC.includes('handleGenerateSelected(strategy, ids)'), 'top strip back');
+check('item groups derive from the owning strategies',
+  SRC.includes('.filter((it) => selectedItemIds.has(it.id)).map((it) => it.id)'), 'groups rewired');
+check('Linking disables on a cross-strategy selection',
+  SRC.includes('disabled={itemBulkBusy || itemGroups.length !== 1}'), 'cross-card linking allowed');
+check('there is exactly ONE floating-bar container',
+  (SRC.match(/fixed left-1\/2 -translate-x-1\/2 bottom-6/g) || []).length === 1, 'two bars again');
+
+console.log('\n11. HOOK ORDER LAW — no hook below the loading return (React #310)');
+// The itemGroups useMemo originally landed AFTER `if (isLoading) return …`, so
+// the loading render counted one fewer hook than the loaded render and React
+// crashed the whole module to the error screen (minified #310). Every hook in
+// StrategiesModule must be declared before its first early return.
+const modStart = SRC.indexOf('export function StrategiesModule()');
+const modEnd = SRC.indexOf('\nfunction AutoScanStatus()');
+const mod = SRC.slice(modStart, modEnd === -1 ? undefined : modEnd);
+check('component + boundary located', modStart !== -1 && modEnd !== -1, { modStart, modEnd });
+const loadingAt = mod.indexOf('if (isLoading) {');
+check('the loading early return exists', loadingAt !== -1, loadingAt);
+const below = mod.slice(loadingAt);
+const hooksBelow = below.match(/=\s*use(State|Memo|Callback|Ref|Query|Mutation)\(|\buse(Effect|LayoutEffect)\(/g) ?? [];
+check('NO hook is declared below the early return', hooksBelow.length === 0, hooksBelow);
+check('the itemGroups memo sits ABOVE the loading return',
+  mod.indexOf('const itemGroups = useMemo(') !== -1 && mod.indexOf('const itemGroups = useMemo(') < loadingAt,
+  { memoAt: mod.indexOf('const itemGroups = useMemo('), loadingAt });
+
 console.log('\n' + '-'.repeat(56));
 console.log(`  passed: ${pass}   failed: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);

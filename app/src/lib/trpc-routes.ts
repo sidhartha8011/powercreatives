@@ -717,17 +717,17 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteRemoveLink": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/remove`, body: { type: input.type } }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/remove`, body: { type: input.type, html: input.html, to: input.to, anchor: input.anchor } }),
     },
     "seo.remoteSetLinkRel": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/rel`, body: { type: input.type, nofollow: input.nofollow } }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/rel`, body: { type: input.type, nofollow: input.nofollow, html: input.html, to: input.to, anchor: input.anchor } }),
     },
     "seo.remoteDeleteLink": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/delete`, body: { type: input.type } }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/content/${input.postId}/links/${input.index}/delete`, body: { type: input.type, html: input.html, to: input.to, anchor: input.anchor } }),
     },
     "seo.remoteDeletedLinks": {
         endpoint: "seo/sites",

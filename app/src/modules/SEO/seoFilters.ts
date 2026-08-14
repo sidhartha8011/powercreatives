@@ -69,8 +69,12 @@ function linkMatch(field: keyof SeoRow) {
  * Build the { columnKey → FilterDef } map. Choice lists for type/status/author
  * come from the server `options` payload (fall back to sensible defaults).
  */
-export function buildFilterDefs(options: SeoOptions | null): Record<string, FilterDef> {
-  const typeOpts: FilterOption[] = (options?.types ?? ['post', 'page']).map((t) => ({ value: t, label: t }));
+export function buildFilterDefs(options: SeoOptions | null, rowTypes: string[] = []): Record<string, FilterDef> {
+  // Type choices = what the server advertises PLUS whatever the loaded rows actually are.
+  // A connected site's custom types (services, doctors…) are unknown to this hub's own
+  // options payload, so without the rows the filter could not offer them.
+  const typeValues = Array.from(new Set([...(options?.types ?? ['post', 'page']), ...rowTypes])).filter(Boolean);
+  const typeOpts: FilterOption[] = typeValues.map((t) => ({ value: t, label: t }));
   const statusOpts: FilterOption[] = (options?.statuses ?? ['publish', 'draft', 'pending', 'private', 'future']).map((s) => ({ value: s, label: s }));
   const authorOpts: FilterOption[] = (options?.authors ?? []).map((a) => ({ value: String(a.id), label: a.name }));
 

@@ -64,6 +64,32 @@ export interface TemplateVar {
   description: string;
 }
 
+/**
+ * The SHARED site + business vocabulary — PHP: PCM_Content_Vars::site_business().
+ *
+ * Writer and SEO both compose this map server-side, so both offer it here. Written
+ * TIGHT ({{business.name}}), matching how SEO substitutes; the Writer renderer is
+ * whitespace-tolerant so the same spelling resolves in both modules.
+ */
+const SITE_BUSINESS_VARS: Record<string, string> = {
+  '{{site.lang}}': 'Language to write in — the brand’s content language, falling back to the site locale.',
+  '{{website.url}}': 'The site’s URL.',
+  '{{today}}': 'Today’s date (YYYY-MM-DD).',
+  '{{business.name}}': 'Business name — the brand’s Google Business Profile name, else the brand, else the site.',
+  '{{business.tagline}}': 'Business tagline.',
+  '{{business.website}}': 'Business website URL.',
+  '{{business.website|hostname}}': 'Business website as a bare hostname — no scheme, no path.',
+  '{{business.address}}': 'Street address.',
+  '{{business.phone}}': 'Phone number.',
+  '{{business.category}}': 'Primary Google Business Profile category.',
+  '{{business.hours}}': 'Opening hours.',
+  '{{business.description}}': 'Google Business Profile description.',
+  '{{business.rating}}': 'Average review rating.',
+  '{{business.lat}}': 'Latitude, for location-aware copy.',
+  '{{business.lng}}': 'Longitude, for location-aware copy.',
+  '{{business.types}}': 'Full Google Business Profile category list.',
+};
+
 /** Writer/strategy prompt variables. */
 const WRITER_VARS: Record<string, string> = {
   '{{ post_title }}': 'Title of the source post (RSS or social item). Empty for keyword strategies.',
@@ -76,6 +102,10 @@ const WRITER_VARS: Record<string, string> = {
   '{{ output_format }}': 'The required output structure. Auto-appended unless you place it yourself.',
   '{{ media_instructions }}': 'Image placeholder rules, including how many media assets you may insert.',
   '{{ brand_language }}': 'The brand’s content language (Brands → Language). Empty when none is set.',
+  // The site + business half — the card: "writer templates should share the
+  // variables that it can have coming from the site and the business… just like
+  // the SEO". Resolved by build_prompt() via PCM_Content_Vars.
+  ...SITE_BUSINESS_VARS,
 };
 
 /** SEO prompt variables. */
@@ -89,10 +119,6 @@ const SEO_VARS: Record<string, string> = {
   '{{meta_keywords}}': 'The page’s current meta keywords.',
   '{{post_type}}': 'WordPress post type of the page (post, page, product…).',
   '{{page.type}}': 'Page intent (local, service, blog…) so the copy can match that intent.',
-  '{{site.lang}}': 'Site language — write the output in this language.',
-  '{{site_name}}': 'The site’s name.',
-  '{{website.url}}': 'The site’s URL.',
-  '{{today}}': 'Today’s date.',
   '{{topic}}': 'The topic instruction for the section being written.',
   '{{name}}': 'The business name, for positioning copy (“What {{name}} does”).',
   '{{why}}': 'One-sentence explanation of the change made, returned with the edit.',
@@ -107,19 +133,8 @@ const SEO_VARS: Record<string, string> = {
   '{{area_bullet}}': 'Ready-made bullet emphasising local focus. Empty when no service area is set.',
   '{{area_section}}': 'Extra “areas we serve” section. Empty when no service area is set.',
   '{{area_serves_clause}}': 'Clause naming the areas served. Empty when no service area is set.',
-  '{{business.name}}': 'Business name from the brand’s Google Business Profile.',
-  '{{business.category}}': 'Primary Google Business Profile category.',
-  '{{business.description}}': 'Google Business Profile description.',
-  '{{business.tagline}}': 'Business tagline.',
-  '{{business.address}}': 'Street address.',
-  '{{business.phone}}': 'Phone number.',
-  '{{business.hours}}': 'Opening hours.',
-  '{{business.rating}}': 'Average review rating.',
-  '{{business.types}}': 'Full Google Business Profile category list.',
-  '{{business.website}}': 'Business website URL.',
-  '{{business.website|hostname}}': 'Business website as a bare hostname — no scheme, no path.',
-  '{{business.lat}}': 'Latitude, for location-aware copy.',
-  '{{business.lng}}': 'Longitude, for location-aware copy.',
+  // Same shared half Writer now composes — one definition, both modules.
+  ...SITE_BUSINESS_VARS,
 };
 
 /** Copy prompt variables. */

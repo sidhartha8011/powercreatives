@@ -21,7 +21,7 @@ export interface UseSeoContentResult {
   isLoading: boolean;
   refetch: () => void;
   /** Persist one cell; patches the cache to the server's canonical value. */
-  saveCell: (id: number, field: string, value: string | number) => Promise<void>;
+  saveCell: (id: number, field: string, value: string | number, display?: string) => Promise<void>;
   /** Create a draft post/page and refresh. */
   quickCreate: (type: 'post' | 'page') => Promise<void>;
   /** Trash selected ids and refresh. */
@@ -67,16 +67,32 @@ export function useSeoContent(): UseSeoContentResult {
     [queryClient],
   );
 
+  /** The cache patch for a saved cell. `author` is special: its VALUE is a user id,
+   *  but the row keeps the id in `authorId` and the display NAME in `author` —
+   *  writing the raw value into `author` put "3" in the cell (Filip: "you get just
+   *  ones and threes and whatever"). `display` carries the picked option's name. */
+  const cellPatch = (field: string, value: string | number, display?: string): Partial<SeoRow> =>
+    field === 'author'
+      ? { authorId: Number(value), ...(display ? { author: display } : {}) }
+      : { [field]: value } as Partial<SeoRow>;
+
   const saveCell = useCallback(
-    (id: number, field: string, value: string | number): Promise<void> =>
-      saveCellMutation
+    (id: number, field: string, value: string | number, display?: string): Promise<void> => {
+      // OPTIMISTIC: paint the change immediately — the round trip is what made the
+      // dropdown feel dead ("extremely laggy"); a failure rolls back via invalidate.
+      queryClient.setQueriesData<SeoRow[]>({ queryKey: LIST_PREFIX }, (prev) =>
+        Array.isArray(prev)
+          ? prev.map((r) => (Number(r.id) === id ? { ...r, ...cellPatch(field, value, display) } : r))
+          : prev,
+      );
+      return saveCellMutation
         .mutateAsync({ id, field, value })
         .then((res: any) => {
           // Reflect the server's canonical value (e.g. slug dedup) in the cache.
           const stored = res?.value ?? value;
           queryClient.setQueriesData<SeoRow[]>({ queryKey: LIST_PREFIX }, (prev) =>
             Array.isArray(prev)
-              ? prev.map((r) => (Number(r.id) === id ? { ...r, [field]: stored } : r))
+              ? prev.map((r) => (Number(r.id) === id ? { ...r, ...cellPatch(field, stored, display) } : r))
               : prev,
           );
         })
@@ -84,7 +100,8 @@ export function useSeoContent(): UseSeoContentResult {
           toast.error(err instanceof Error ? err.message : 'Failed to save');
           void invalidate();
           throw err;
-        }),
+        });
+    },
     [saveCellMutation, queryClient, invalidate],
   );
 

@@ -127,7 +127,7 @@ class PCM_SEO_Local
      * @param float    $budget       Seconds allowed across all fetches.
      * @return array Rows with empty meta fields filled where possible.
      */
-    public static function fill_effective_meta(array $rows, callable $html_for_row, int $cap = 20, float $budget = 8.0): array
+    public static function fill_effective_meta(array $rows, callable $html_for_row, int $cap = 20, float $budget = 8.0, ?callable $cached_html_for_row = null): array
     {
         $fetched = 0;
         $started = microtime(true);
@@ -140,11 +140,28 @@ class PCM_SEO_Local
             if ((!$needs_title && !$needs_desc) || empty($row['permalink'])) {
                 continue;
             }
-            if ($fetched >= $cap || (microtime(true) - $started) > $budget) {
-                break;
+            // ALREADY-KNOWN pages are free: no network, so they must not consume the
+            // fetch budget and must keep filling after it is spent. Without this the
+            // table could never finish: the cap counted cache HITS, so every load
+            // re-spent its whole budget on the same first N rows and the rest stayed
+            // blank forever — the reported "it is not reading the meta tags" on a
+            // 63-row site. Now each load fills everything learned so far for free and
+            // spends the budget only on pages it has never read, so repeated loads
+            // converge on a complete table (and a warm table costs nothing).
+            $html = null;
+            if ($cached_html_for_row !== null) {
+                $hit = $cached_html_for_row($row);
+                if (is_string($hit) && $hit !== '') {
+                    $html = $hit;
+                }
             }
-            $fetched++;
-            $html = $html_for_row($row);
+            if ($html === null) {
+                if ($fetched >= $cap || (microtime(true) - $started) > $budget) {
+                    continue;   // budget spent — keep scanning; later rows may be cached
+                }
+                $fetched++;
+                $html = $html_for_row($row);
+            }
             if (!is_string($html) || $html === '') {
                 continue;
             }
@@ -164,6 +181,21 @@ class PCM_SEO_Local
      * Cache keys on the post's modified time, so an edit invalidates naturally;
      * failures cache briefly so one dead permalink can't re-block every load.
      */
+    /**
+     * The CACHED head for a post, or null when it has never been read — a free,
+     * network-free lookup so fill_effective_meta can fill known pages without
+     * spending its fetch budget on them.
+     */
+    public static function cached_page_html_only(int $post_id): ?string
+    {
+        $post = get_post($post_id);
+        if (!$post || $post->post_status !== 'publish') {
+            return null;
+        }
+        $cached = get_transient('pcm_seo_head_' . $post_id . '_' . md5((string) $post->post_modified_gmt));
+        return (is_string($cached) && $cached !== '') ? $cached : null;
+    }
+
     public static function cached_page_html(int $post_id): ?string
     {
         $post = get_post($post_id);
@@ -294,16 +326,39 @@ class PCM_SEO_Local
     // =====================================================================
 
     /**
-     * List content rows for the requested types (post/page), newest first.
+     * Public content types on THIS site — post, page, and every custom type that is a real
+     * public URL (services, doctors, products, portfolio…), minus WordPress internals and
+     * page-builder template libraries.
      *
-     * @param string[] $types Subset of VALID_TYPES.
+     * The remote twin is PCM_SEO_Service::remote_content_types(); both exist because the
+     * table showed only post+page, so custom-post-type URLs like /services/lymphatic-
+     * drainage/ were missing entirely ("not pulling pages in a subfolder").
+     *
+     * @return string[] Type slugs, post + page first.
+     */
+    public static function content_types(): array
+    {
+        $types = array_values(array_diff(
+            (array) get_post_types(array('public' => true), 'names'),
+            PCM_SEO_Service::NON_CONTENT_TYPES
+        ));
+        // Keep the familiar two at the front; the rest in registration order.
+        $head = array_values(array_intersect(PCM_SEO_Service::VALID_TYPES, $types));
+        return array_values(array_unique(array_merge($head, $types)));
+    }
+
+    /**
+     * List content rows for the requested types, newest first.
+     *
+     * @param string[] $types Subset of content_types(); empty = all of them.
      * @return array[] Row arrays.
      */
     public static function list_content(array $types): array
     {
-        $types = array_values(array_intersect($types, PCM_SEO_Service::VALID_TYPES));
+        $allowed = self::content_types();
+        $types = array_values(array_intersect($types, $allowed));
         if (empty($types)) {
-            $types = PCM_SEO_Service::VALID_TYPES;
+            $types = $allowed;
         }
 
         $rows = array();
@@ -324,9 +379,19 @@ class PCM_SEO_Local
         // (plugin-template titles/descriptions are generated, not stored — the
         // table looked blank on sites whose SEO was in fact fine). Stored meta
         // always wins; cap+budget keep the first uncached load bounded.
-        return self::fill_effective_meta($rows, static function (array $row) {
-            return self::cached_page_html((int) ($row['id'] ?? 0));
-        });
+        return self::fill_effective_meta(
+            $rows,
+            static function (array $row) {
+                return self::cached_page_html((int) ($row['id'] ?? 0));
+            },
+            20,
+            8.0,
+            // Free cache-only pass, so already-read pages don't consume the budget
+            // and a big site converges instead of stalling on its first 20 rows.
+            static function (array $row) {
+                return self::cached_page_html_only((int) ($row['id'] ?? 0));
+            }
+        );
     }
 
     /**

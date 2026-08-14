@@ -99,15 +99,20 @@ check('the individual path does NOT collapse', plan([1, 4, 5], false).calls.leng
 
 console.log('\n5. The button is wired to it, and the run is sequential');
 const idx = readFileSync(join(SRC, 'index.tsx'), 'utf8');
-// The bulk bar region: from its marker to the item list that follows.
-const bar = idx.slice(idx.indexOf('Item bulk bar'), idx.indexOf('{strategy.items.map('));
-check('a Generate button exists in the bulk bar', /Generate \(\{ids\.length\}\)/.test(bar), 'no button');
-check('it shows the selected count', bar.includes('{ids.length}'), 'no count');
-check('it calls the bulk-generate handler', bar.includes('handleGenerateSelected(strategy, ids)'), 'not wired');
+// The bulk bar region: the ITEM MODE of the floating bottom bar (the inline
+// card strip was removed — owner: "remove the top one not the bottom bulk
+// actions"). Slice from its marker to the modal that follows the bar.
+const bar = idx.slice(idx.indexOf('Item bulk bar'), idx.indexOf('Interlink configuration'));
+check('a Generate button exists in the bulk bar', /Generate \(\{selectedItemCount\}\)/.test(bar), 'no button');
+check('it shows the selected count', bar.includes('{selectedItemCount} selected'), 'no count');
+check('it calls the bulk-generate handler per owning strategy',
+  bar.includes('await handleGenerateSelected(g.strategy, g.ids)'), 'not wired');
 check('it is the primary action in the bar', /variant="default"/.test(bar), 'not primary');
-check('it is disabled while a run owns this strategy',
-  /disabled=\{itemBulkBusy \|\| bulkStrategyId === strategy\.id/.test(bar), 'double-fireable');
+check('it is disabled while a run is active',
+  /disabled=\{itemBulkBusy \|\| bulkStrategyId !== null\}/.test(bar), 'double-fireable');
 check('it shows a spinner mid-run', bar.includes('animate-spin'), 'no progress feedback');
+check('the inline card strip is GONE (one bulk surface)',
+  !idx.includes('handleGenerateSelected(strategy, ids)'), 'top strip back');
 
 // Slice from the declaration to ITS OWN closing deps array. Anchoring the end
 // on a neighbouring function is fragile — the handler was moved during this
