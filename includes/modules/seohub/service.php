@@ -735,12 +735,22 @@ add_action('init', function () {
         'pcm_seo_meta_title', 'pcm_seo_meta_description', 'pcm_seo_primary_keyword', 'pcm_seo_meta_keywords',
         'pcm_seo_supporting_keyword', 'pcm_seo_cluster_label', 'pcm_seo_schema',
     );
-    foreach (array('post', 'page') as $type) {
+    // EVERY public post type, not just post + page. Since 2026-08-14 the hub lists a
+    // site's custom types too (services, doctors, products…); with only post/page
+    // registered, WordPress silently DROPPED SEO-meta writes on those rows and the hub's
+    // phantom-save guard 422'd "install the connector" — on a site that HAD it. Late
+    // priority so CPTs registered by themes/plugins on init already exist.
+    $types = array_values(array_unique(array_merge(
+        array('post', 'page'),
+        (array) get_post_types(array('public' => true), 'names')
+    )));
+    foreach ($types as $type) {
+        if (in_array($type, array('attachment'), true)) { continue; }
         foreach ($keys as $k) {
             register_post_meta($type, $k, array('show_in_rest' => true, 'single' => true, 'type' => 'string', 'auth_callback' => function () { return current_user_can('edit_posts'); }));
         }
     }
-});
+}, 99);
 
 // Flush known page + page-builder caches for a post so a change shows on the live page. Many
 // cache plugins purge on an editor save but SKIP programmatic/REST saves, so the hub's edit
@@ -1561,6 +1571,34 @@ add_action('rest_api_init', function () {
                 if ((microtime(true) - $started) > 8.0) { break; }
                 $post = get_post($pid);
                 if (!$post || $post->post_status !== 'publish') { continue; }
+                // FIRST: ask the SEO plugin's own PHP API for the effective title/description
+                // — no HTTP at all. The loopback fetch below is walled by Cloudflare's bot
+                // challenge on some sites (massagegoteborg.nu: 403 "Just a moment..." for
+                // every user-agent), and a plugin's rendered value IS what the page prints.
+                $api_title = ''; $api_desc = '';
+                try {
+                    if (defined('WPSEO_VERSION') && function_exists('YoastSEO')) {
+                        $mm = YoastSEO()->meta;
+                        $m0 = (is_object($mm) && method_exists($mm, 'for_post')) ? $mm->for_post($pid) : null;
+                        if (is_object($m0)) { $api_title = (string) ($m0->title ?? ''); $api_desc = (string) ($m0->description ?? ''); }
+                    } elseif (class_exists('RankMath\Helper') && method_exists('RankMath\Helper', 'replace_vars')) {
+                        $t0 = get_post_meta($pid, 'rank_math_title', true);
+                        $d0 = get_post_meta($pid, 'rank_math_description', true);
+                        if ($t0 === '' || $t0 === false) { $t0 = \RankMath\Helper::get_settings('titles.pt_' . $post->post_type . '_title', ''); }
+                        if ($d0 === '' || $d0 === false) { $d0 = \RankMath\Helper::get_settings('titles.pt_' . $post->post_type . '_description', ''); }
+                        $api_title = (string) \RankMath\Helper::replace_vars((string) $t0, $post);
+                        $api_desc  = (string) \RankMath\Helper::replace_vars((string) $d0, $post);
+                    }
+                } catch (\Throwable $e) { $api_title = ''; $api_desc = ''; }
+                $api_title = trim(html_entity_decode(wp_strip_all_tags($api_title), ENT_QUOTES | ENT_HTML5));
+                $api_desc  = trim(html_entity_decode(wp_strip_all_tags($api_desc), ENT_QUOTES | ENT_HTML5));
+                if ($api_title !== '' || $api_desc !== '') {
+                    $out[(string) $pid] = array(
+                        'title'       => preg_replace('/\s+/u', ' ', $api_title),
+                        'description' => preg_replace('/\s+/u', ' ', $api_desc),
+                    );
+                    continue;
+                }
                 $key = 'pcm_conn_head_' . $pid . '_' . md5((string) $post->post_modified_gmt);
                 $head = get_transient($key);
                 if (!is_string($head)) {

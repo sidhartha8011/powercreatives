@@ -155,14 +155,52 @@ class PCM_SEO_AI
         }
     }
 
+    /**
+     * Does a prompt DEMAND the section-revise JSON envelope ({"html":…,"changes":…})?
+     *
+     * Such a prompt can only ever produce a structured blob — it is the contract of
+     * revise_envelope, not of any single-value field. If it is routed to a scalar
+     * section (a template whose TYPE says "Meta Title" while its VALUE still asks for
+     * the envelope — the Templates UI lets the two be edited independently), every
+     * generate for that cell dead-ends: "individual lines do not work. It complains
+     * about HTML missing" (Filip). Detected on the OUTPUT-FORMAT instruction, not on the
+     * mere word "html", so a legitimate prompt that says "no HTML" is unaffected.
+     */
+    public static function prompt_demands_envelope(string $prompt): bool
+    {
+        // The literal envelope key pair, or the mandatory-JSON instruction that only
+        // revise_envelope carries.
+        return (bool) preg_match('/"html"\s*:\s*"[^"]*"\s*,\s*"changes"\s*:|\{\s*"html"\s*:[\s\S]{0,200}"changes"\s*:/i', $prompt)
+            || (bool) preg_match('/OUTPUT FORMAT \(mandatory\):[\s\S]{0,160}\{"html"/i', $prompt);
+    }
+
+    /** Sections whose output is ONE plain value — an envelope prompt is never eligible. */
+    private static function is_scalar_section(string $section): bool
+    {
+        return (bool) preg_match('/^(page_title|meta_title|meta_description|meta_keywords|primary_keyword|slug)_(generate|optimize)$/', $section);
+    }
+
+    /** Set by seo_template_prompt() when the caller's EXPLICITLY picked template was
+     *  skipped by the eligibility law. Read once by the generate paths and reported as
+     *  `templateIgnored` so the UI can say the pick was not used. */
+    public static bool $last_pick_ignored = false;
+
     /** Resolve a section's prompt from Templates (module=seo): the chosen template,
-     *  else the user's own default, else the SYSTEM default, else any. */
+     *  else the user's own default, else the SYSTEM default, else any.
+     *
+     *  ELIGIBILITY LAW (2026-08-16): for a scalar section, a candidate whose value
+     *  demands the JSON envelope is skipped — it cannot produce a value for that
+     *  field, so it must not win the resolution. The shipped default (clean by
+     *  construction) then resolves naturally: no wasted LLM call, no retry, no
+     *  dead-end error, and the misrouted template can't hijack the field. */
     private static function seo_template_prompt(int $user_id, string $section, ?int $template_id): ?string
     {
         global $wpdb;
         $table = PCM_Schema::table('templates');
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
         $rows  = $wpdb->get_results($wpdb->prepare("SELECT id, userId, formData, isDefault, updatedAt FROM {$table} WHERE (userId = %d OR userId = 0) AND module = 'seo' ORDER BY updatedAt DESC, id DESC", $user_id), ARRAY_A);
+        $scalar = self::is_scalar_section($section);
+        self::$last_pick_ignored = false;   // reset per resolution
         $chosen = null;
         $chosen_shared = false; // requested id points at a SHARED (userId=0) row
         $user_fork = null;      // the user's most-recent OWN template for this section
@@ -176,6 +214,15 @@ class PCM_SEO_AI
             }
             $prompt = self::seo_entry_prompt($fd);
             if ($prompt === null) {
+                continue;
+            }
+            // Eligibility law: an envelope-demanding prompt can never fill a scalar cell.
+            if ($scalar && self::prompt_demands_envelope($prompt)) {
+                // If this was the EXPLICIT pick, remember it — the response tells the
+                // UI so the user learns the pick was set aside instead of guessing.
+                if ($template_id && (int) $r['id'] === $template_id) {
+                    self::$last_pick_ignored = true;
+                }
                 continue;
             }
             if ($template_id && (int) $r['id'] === $template_id) {
@@ -442,7 +489,12 @@ class PCM_SEO_AI
             if ($field === 'slug') {
                 $value = sanitize_title($value);
             }
-            if ($value === '' && self::is_structured_envelope($raw) && $customized) {
+            $healed = false;
+            // A customized prompt that yields an ENVELOPE or a REFUSAL ("I need the existing
+            // content…") is the same disease — the model was handed a prompt it cannot
+            // answer for a scalar cell. Retry once with the shipped default.
+            $unanswerable = self::is_structured_envelope($raw) || self::is_refusal($raw);
+            if ($value === '' && $unanswerable && $customized) {
                 // Retry with the shipped default — same section, same vars.
                 $retry  = self::substitute_vars($default_tpl . self::language_law($vars), $vars);
                 $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $retry)), $opts);
@@ -451,23 +503,83 @@ class PCM_SEO_AI
                 if ($field === 'slug') {
                     $value = sanitize_title($value);
                 }
+                $healed = $value !== '';
             }
             if ($value === '') {
                 if (self::is_structured_envelope($raw)) {
                     return new WP_Error('pcm_seo_envelope', __('The prompt behind this field returns a JSON envelope ({"html":…,"changes":…}) instead of a single value — check the template selected for this column in Templates → SEO.', 'power-creatives'), array('status' => 422));
                 }
+                if (self::is_refusal($raw)) {
+                    // Never stage an apology as a title. Say what happened and why.
+                    return new WP_Error('pcm_seo_refused', sprintf(
+                        /* translators: %s: the model's opening words */
+                        __('The model declined instead of answering ("%s"). Usually the template for this column asks for content it never receives (e.g. a "revise this section" prompt behind a single-value field) — check it in Templates → SEO, or try another model.', 'power-creatives'),
+                        mb_substr(trim(preg_replace('/\s+/u', ' ', $raw)), 0, 80)
+                    ), array('status' => 422));
+                }
                 return new WP_Error('pcm_seo_empty', __('The model returned no text — try again.', 'power-creatives'), array('status' => 502));
             }
-            return array('field' => $field, 'value' => $value);
+            // `healed` tells the UI the SELECTED template could not produce a value and the
+            // shipped default was used instead — so the misconfigured template gets fixed
+            // rather than silently costing a second model call on every generate.
+            return array('field' => $field, 'value' => $value, 'healed' => $healed);
         } catch (\Throwable $e) {
             return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
         }
+    }
+
+    /**
+     * Is this output the model DECLINING rather than answering?
+     *
+     * The card's screenshot: Meta Title cells staged with "I'm sorry, I can't
+     * assist with that request." and "I need the existing content to provide a
+     * revised output according to the specified format. Please provide the
+     * section…" — the model refused (or asked for input it never got), and since a
+     * refusal is a plain string, the first-plausible-line sanitizer handed it
+     * through as a perfectly shaped title. One "Accept all" from the live site.
+     *
+     * Detected on the OPENING of the text: apology/refusal openers and
+     * "I need … to provide/proceed" requests, in English and Swedish (the client
+     * sites are Swedish and the language law can make the model answer in
+     * Swedish). Anchored at the start so a legitimate title that merely contains
+     * "sorry" or "need" (e.g. "Why We Need Sleep") is never rejected.
+     */
+    public static function is_refusal(string $raw): bool
+    {
+        $t = trim($raw);
+        if ($t === '') {
+            return false;
+        }
+        // Strip a leading markdown marker/bold, then look at the first ~160 chars.
+        $t = trim((string) preg_replace('/^\s*(?:#{1,6}|>|[-*+]|\d+\.)\s+/', '', $t));
+        $t = trim(str_replace(array('**', '__'), '', $t));
+        $head = mb_substr($t, 0, 160);
+        $patterns = array(
+            // English refusals / apologies / can't-comply
+            '/^(?:i\'?m\s+sorry|i\s+am\s+sorry|sorry,|unfortunately,?\s+i|i\s+can(?:no|\')t\s+(?:assist|help|comply|provide|do\s+that)|i\s+(?:am\s+)?(?:unable|not\s+able)\s+to|i\s+won\'?t\s+be\s+able|as\s+an\s+ai\b|i\s+apologi[sz]e)/iu',
+            // English requests for missing input ("I need the existing content…")
+            '/^(?:i\s+need\s+(?:the|more|additional|some|you\s+to)|(?:please|could\s+you)\s+(?:provide|share|paste|send)|to\s+(?:proceed|help|assist),?\s+i\s+need|it\s+(?:seems|looks)\s+(?:like\s+)?(?:the|no|there\s+is\s+no)\s+(?:content|text|section)|there\s+is\s+no\s+(?:content|text|section)\s+(?:provided|to))/iu',
+            // Swedish equivalents
+            '/^(?:tyvärr|jag\s+kan\s+(?:inte|tyvärr)|jag\s+beklagar|jag\s+behöver\s+(?:mer|det|den|texten|innehållet)|vänligen\s+(?:ange|skicka|dela)|det\s+(?:finns|verkar)\s+(?:inget|inte)\s+(?:innehåll|text))/iu',
+        );
+        foreach ($patterns as $p) {
+            if (preg_match($p, $head)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static function sanitize_ai_output(string $content): string
     {
         $content = trim($content);
         if ($content === '') {
+            return '';
+        }
+        // A refusal / "please provide the content" reply is not a value. Return ''
+        // so the caller raises a real error (invoke_scalar_field maps it to a
+        // dedicated code) instead of staging the apology as a title.
+        if (self::is_refusal($content)) {
             return '';
         }
         // Strip a wrapping code fence FIRST so a fenced ```json {...}``` envelope
@@ -615,7 +727,11 @@ class PCM_SEO_AI
         }
         // Shared invoke: sanitizes, slugifies, and SELF-HEALS an envelope answer by
         // retrying once with the shipped default when the prompt was customized.
-        return self::invoke_scalar_field($prompt, $default, $vars, $field, $opts, $tpl !== $default);
+        $out = self::invoke_scalar_field($prompt, $default, $vars, $field, $opts, $tpl !== $default);
+        if (is_array($out) && self::$last_pick_ignored) {
+            $out['templateIgnored'] = 'envelope';
+        }
+        return $out;
     }
 
     /**

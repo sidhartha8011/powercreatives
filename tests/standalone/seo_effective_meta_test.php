@@ -159,7 +159,9 @@ $hub = file_get_contents($ROOT . '/includes/modules/seohub/service.php');
 $a = strpos($hub, "<<<'PHP'"); $b = strpos($hub, "\nPHP;", $a);
 $tpl = substr($hub, $a + 9, $b - $a - 9);
 check('/head-tags route registered IN THE TEMPLATE', strpos($tpl, "register_rest_route('pcm-conn/v1', '/head-tags'") !== false, 'route not in shipped connector');
-$route = substr($tpl, strpos($tpl, "'/head-tags'"), 3200);
+// Window widened 3200 → 6000: the route now asks the SEO plugin's PHP API before
+// the loopback fetch (2026-08-16), which pushed the fetch/cache lines further down.
+$route = substr($tpl, strpos($tpl, "'/head-tags'"), 6000);
 check('published posts only', strpos($route, "post_status !== 'publish'") !== false, 'drafts leak');
 check('ids capped at 20 per call', strpos($route, ', 0, 20)') !== false, 'unbounded');
 check('time budget bounds the call', strpos($route, '> 8.0) { break; }') !== false, 'unbounded time');

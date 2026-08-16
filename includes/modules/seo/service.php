@@ -104,16 +104,59 @@ class PCM_SEO_Service
     }
 
     /** Map a remote WP REST post/page item → a SeoRow-shaped array (matches build_row). */
+    /**
+     * The EFFECTIVE meta title/description an SEO plugin computes for a post, read
+     * from the RENDERED-HEAD fields those plugins put on the REST response:
+     *   Yoast     → yoast_head_json { title, description, og_title, og_description }
+     *   Rank Math → rank_math_title / rank_math_description  (or head.title/description)
+     *   SEOPress  → seopress_titles_title / seopress_titles_desc
+     * These are what the plugin will actually print in <head> — template-generated
+     * values included, which per-post `meta` NEVER holds (an SEO plugin stores only
+     * per-post OVERRIDES). And they survive where `meta` does not: `meta` is dropped
+     * from `embed`-context REST responses and blanked by security plugins, and the
+     * public-permalink reader is walled by Cloudflare's bot challenge on this site
+     * (proven 2026-08-16: HTTP 403 "Just a moment..." for every user-agent, while
+     * /wp-json answers 200 with yoast_head_json carrying the exact card screenshot's
+     * title). Third report of "the table is not reading the meta tags".
+     *
+     * @return array{title:string,description:string} Empty strings when absent.
+     */
+    public static function head_fields_from_item(array $item): array
+    {
+        $title = ''; $desc = '';
+        $yh = $item['yoast_head_json'] ?? null;
+        if (is_array($yh)) {
+            $title = (string) ($yh['title'] ?? $yh['og_title'] ?? '');
+            $desc  = (string) ($yh['description'] ?? $yh['og_description'] ?? '');
+        }
+        if ($title === '') {
+            $title = (string) ($item['rank_math_title'] ?? $item['head']['title'] ?? $item['seopress_titles_title'] ?? '');
+        }
+        if ($desc === '') {
+            $desc = (string) ($item['rank_math_description'] ?? $item['head']['description'] ?? $item['seopress_titles_desc'] ?? '');
+        }
+        return array(
+            'title'       => trim(wp_specialchars_decode(wp_strip_all_tags($title), ENT_QUOTES)),
+            'description' => trim(wp_specialchars_decode(wp_strip_all_tags($desc), ENT_QUOTES)),
+        );
+    }
+
+    /** The extra REST fields the SEO plugins expose their rendered head under. */
+    public const REMOTE_HEAD_FIELDS = 'yoast_head_json,rank_math_title,rank_math_description,head,seopress_titles_title,seopress_titles_desc';
+
     public static function remote_row(array $item, string $type, object $site): array
     {
         $meta = (isset($item['meta']) && is_array($item['meta'])) ? $item['meta'] : array();
-        $pick = static function (array $keys) use ($meta) {
+        $head = self::head_fields_from_item($item);
+        // Stored per-post override wins (it is what the user set); the plugin's rendered
+        // head fills the rest — the effective tag, exactly what the live page prints.
+        $pick = static function (array $keys, string $fallback = '') use ($meta) {
             foreach ($keys as $k) {
                 if (!empty($meta[$k])) {
                     return (string) $meta[$k];
                 }
             }
-            return '';
+            return $fallback;
         };
         $id     = (int) ($item['id'] ?? 0);
         $schema = array();
@@ -148,8 +191,15 @@ class PCM_SEO_Service
             'excerpt'           => isset($item['excerpt']['rendered'])
                 ? wp_trim_words(wp_strip_all_tags((string) $item['excerpt']['rendered']), 20, '…')
                 : '',
-            'metaTitle'         => $pick(self::remote_meta_keys('metaTitle')),
-            'metaDescription'   => $pick(self::remote_meta_keys('metaDescription')),
+            'metaTitle'         => $pick(self::remote_meta_keys('metaTitle'), $head['title']),
+            'metaDescription'   => $pick(self::remote_meta_keys('metaDescription'), $head['description']),
+            // Which of the two are DISPLAY-ONLY fallbacks (nothing stored per post). The
+            // table's "generate where empty" treats those cells as empty — a rendered
+            // title must not make the run skip a cell the user sees as blank.
+            'metaFromHead'      => array(
+                'title'       => $pick(self::remote_meta_keys('metaTitle')) === '' && $head['title'] !== '',
+                'description' => $pick(self::remote_meta_keys('metaDescription')) === '' && $head['description'] !== '',
+            ),
             'primaryKeyword'    => $pick(self::remote_meta_keys('primaryKeyword')),
             'metaKeywords'      => $pick(self::remote_meta_keys('metaKeywords')),
             'supportingKeyword' => $pick(self::remote_meta_keys('supportingKeyword')),
@@ -305,7 +355,10 @@ class PCM_SEO_Service
     {
         self::ensure_sites_service();
         $rows   = array();
-        $fields = 'id,title,slug,status,date,modified,link,author,featured_media,excerpt,meta,_embedded.author,_embedded.wp:featuredmedia';
+        // + the SEO plugins' RENDERED-HEAD fields (see head_fields_from_item): the effective
+        // title/description even when per-post `meta` is empty, stripped, or the page is
+        // behind a bot wall. Unknown fields are ignored by core, so this is safe everywhere.
+        $fields = 'id,title,slug,status,date,modified,link,author,featured_media,excerpt,meta,_embedded.author,_embedded.wp:featuredmedia,' . self::REMOTE_HEAD_FIELDS;
         // EVERY public content type, not just post+page — a site's `services` /
         // `cmsms_doctor` items are real URLs and were invisible here (see
         // remote_content_types). Discovery degrades to post+page when unreadable.
@@ -426,9 +479,11 @@ class PCM_SEO_Service
                     }
                     if (($r['metaTitle'] ?? '') === '' && !empty($t['title'])) {
                         $rows[$i]['metaTitle'] = (string) $t['title'];
+                        $rows[$i]['metaFromHead']['title'] = true;   // display fallback, not stored
                     }
                     if (($r['metaDescription'] ?? '') === '' && !empty($t['description'])) {
                         $rows[$i]['metaDescription'] = (string) $t['description'];
+                        $rows[$i]['metaFromHead']['description'] = true;
                     }
                 }
             }
@@ -2258,7 +2313,11 @@ class PCM_SEO_Service
         // Shared invoke (same as the local path): sanitizes, slugifies, and
         // SELF-HEALS an envelope answer by retrying once with the shipped default
         // when the prompt was customized.
-        return PCM_SEO_AI::invoke_scalar_field($prompt, $default, $vars, $field, $opts, $tpl !== $default);
+        $out = PCM_SEO_AI::invoke_scalar_field($prompt, $default, $vars, $field, $opts, $tpl !== $default);
+        if (is_array($out) && PCM_SEO_AI::$last_pick_ignored) {
+            $out['templateIgnored'] = 'envelope';
+        }
+        return $out;
     }
 
     // =====================================================================

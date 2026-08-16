@@ -84,22 +84,35 @@ $src = file_get_contents(dirname(__DIR__, 2) . '/includes/modules/seo/ai.php');
 $grab = function (string $name) use ($src): string {
     $i = strpos($src, ' function ' . $name . '(');
     if ($i === false) { fwrite(STDERR, "method {$name} not found\n"); exit(1); }
-    // Back up to the start of the declaration, then brace-match the body.
+    // Back up to the start of the declaration, then slice to the NEXT method at class
+    // indentation. NOT brace-counting: several methods carry braces inside string
+    // literals / regexes (prompt_demands_envelope's `{"html"` pattern, sanitize's
+    // `{1,6}` quantifier), which a counter never balances — it swallowed the following
+    // method and the eval'd class failed to parse. Same technique as the sibling tests.
     $start = strrpos(substr($src, 0, $i), "\n") + 1;
-    $open  = strpos($src, '{', $i);
-    $depth = 0;
-    for ($p = $open; $p < strlen($src); $p++) {
-        if ($src[$p] === '{') { $depth++; }
-        elseif ($src[$p] === '}') { $depth--; if ($depth === 0) { break; } }
+    $next  = strlen($src);
+    foreach (array("\n    public static function ", "\n    private static function ",
+                   "\n    public function ", "\n    private function ") as $marker) {
+        $n = strpos($src, $marker, $i + 1);
+        if ($n !== false && $n < $next) { $next = $n; }
     }
+    $fn = substr($src, $start, $next - $start);
+    // Drop a trailing docblock that belongs to the NEXT method.
+    $doc = strrpos($fn, "\n    /**");
+    if ($doc !== false && strpos($fn, '}', $doc) === false) { $fn = substr($fn, 0, $doc); }
     // `private` would make these unreachable from the test host.
-    return str_replace('private static', 'public static', substr($src, $start, $p - $start + 1));
+    return str_replace('private static', 'public static', $fn);
 };
 eval('class Host { '
     . $grab('template_mode')
     . $grab('apply_template_mode')
     . $grab('seo_template_prompt')
     . $grab('seo_entry_prompt')
+    // seo_template_prompt now applies the envelope-ELIGIBILITY law (2026-08-16), so
+    // its two collaborators must be hosted too. Behaviour here is unchanged: none of
+    // this test's prompts demand the envelope.
+    . $grab('prompt_demands_envelope')
+    . $grab('is_scalar_section')
     . ' }');
 
 $PASS = 0; $FAIL = 0;

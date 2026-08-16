@@ -157,7 +157,20 @@ export function useSeoContent(): UseSeoContentResult {
     (id: number, field: string, model?: string, provider?: string, templateId?: number): Promise<string> =>
       generateMutation
         .mutateAsync({ id, field, ...(model ? { model, provider } : {}), ...(templateId ? { templateId } : {}) })
-        .then((res: any) => String(res?.value ?? ''))
+        .then((res: any) => {
+          // The server used the SHIPPED default because the selected template
+          // returned a JSON envelope instead of a value — say so once, so the
+          // template gets fixed instead of silently costing a second call each time.
+          if (res?.healed) {
+            toast.warning('The selected template for this column could not produce a value — the shipped default was used instead. Fix it in Templates → SEO.', { id: 'seo-template-healed' });
+          }
+          // The PICKED template was set aside before any model call (its prompt demands
+          // the JSON envelope, which a single-value cell can never hold).
+          if (res?.templateIgnored) {
+            toast.warning('The template you picked for this column asks for a JSON envelope, not a value, so it was not used — the default ran instead. Fix it in Templates → SEO.', { id: 'seo-template-ignored' });
+          }
+          return String(res?.value ?? '');
+        })
         .catch((err: unknown) => {
           toast.error(err instanceof Error ? err.message : 'AI generation failed');
           throw err;

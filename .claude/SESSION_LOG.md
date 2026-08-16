@@ -14586,3 +14586,153 @@ CAUGHT after adding a duplicate-target fixture (the ambiguity refusal was
 unfalsifiable without one). Suite 50/50, build clean, tsc 58. Zip rebuilt
 659 files — locator + honest summaries verified in-archive, the uncondition-
 al "Removed all dead links" string PROVEN GONE from the bundle.
+
+## 2026-08-16 — Meta tags, THIRD report: root cause finally proven live — Cloudflare walls the page; read the plugins' RENDERED-HEAD REST fields instead
+
+Owner: "this issue is still not fixed" (card: massagegoteborg.nu, "The table is
+not reading the meta tags, even if there are meta tags"). Stopped reasoning
+from code and fetched the card's EXACT page:
+  curl the permalink            → HTTP 403 + Cloudflare "Just a moment..." —
+                                  for EVERY user-agent (browser UA, Googlebot,
+                                  WordPress UA). The public-page reader (the
+                                  ONLY path on that connector-less site) is
+                                  walled; the challenge guard correctly refuses
+                                  to cache it → cells stay blank forever.
+  /wp-json/wp/v2/posts …        → 200, and Yoast's `yoast_head_json` carries the
+                                  EXACT title + description from the card's
+                                  screenshot. 40/44 posts have stored titles.
+  context=embed                 → `meta` is DROPPED entirely; yoast_head_json
+                                  survives every context.
+So the tags exist and are reachable — through the SEO plugins' rendered-head
+REST fields, never through the page HTML.
+
+Fix (three surfaces, same idea — ask the PLUGIN, not the page):
+- service.php: head_fields_from_item() reads yoast_head_json {title,
+  description, og_*}, rank_math_title/description (+ `head`), seopress_*;
+  entity-decoded + tag-stripped. remote_row uses it as the FALLBACK for both
+  cells (stored override still wins). remote_list_content appends
+  REMOTE_HEAD_FIELDS to _fields (core ignores unknown _fields → safe on any
+  site).
+- local.php: plugin_rendered_head() asks Yoast (YoastSEO()->meta->for_post),
+  Rank Math (Helper::replace_vars over stored-or-template), SEOPress services;
+  Throwable-guarded. Local rows fall back to it.
+- connector /head-tags: asks the plugin API FIRST; the loopback fetch (walled
+  on such sites) is now the last resort. Template re-linted.
+
+Verified: NEW tests/standalone/seo_rendered_head_fields_test.php 26/26 —
+head_fields_from_item + remote_row EXECUTED against the REAL payload captured
+from that site (tests/standalone/fixtures/massagegoteborg_post_rest.json; the
+fixture dir is excluded from the zip like the rest of tests/): the card's
+exact page yields its exact title/description; meta-missing and
+template-only scenarios fill; stored override precedence; Rank Math/SEOPress/
+og fallbacks; connector plugin-first ORDER (index check, not regex).
+Negative control 7/7 CAUGHT. seo_effective_meta_test caught the grown
+connector route (window 3200 → 6000, meaning unchanged). Suite 51/51, build
+clean, php -l clean incl. extracted template. Zip rebuilt 659 / 3.48 MB,
+archive-verified.
+
+Standing truth: massagegoteborg.nu's DESCRIPTIONS exist for only 12/44 posts
+(stored) — Yoast's description template renders nothing for the rest, so those
+cells will remain blank HONESTLY; titles will fill for 40/44 + the rest via
+the rendered head.
+
+## 2026-08-16 — Single-cell generation, done PROPERLY: eligibility law + healed flag + the full matrix
+
+Owner re-raised Filip's comment ("individual lines do not work… complains
+about HTML… test every generation, both bulk and singular"). Yesterday's
+self-heal retry was correct but incomplete for "properly": it still SPENT an
+LLM call on the envelope every time and told the user nothing, so the misrouted
+template stayed misrouted forever.
+
+Root: seo_template_prompt lets a user's OWN template for a section win even
+unstarred (user_default ?? user_fork), so ONE user template typed as
+meta_title_optimize whose value is the section-revise envelope hijacks the
+whole optimize mode — hitting exactly the singular filled-cell case while bulk
+(empty → generate) sails.
+
+Two layers now:
+1. ELIGIBILITY (resolver, ai.php): prompt_demands_envelope() detects the
+   OUTPUT-FORMAT instruction / the {"html":…,"changes":…} pair — not the word
+   "html" — and for a SCALAR section (page_title/meta_*/primary_keyword/slug
+   × generate/optimize) such a candidate is skipped entirely. The shipped
+   default resolves; ONE model call; no retry; no error. Scoped: non-scalar
+   sections (revise_envelope itself) keep their envelope prompt.
+2. HEAL FLAG (invoke): when the retry still fires (legacy override), the
+   response carries healed=true and both hooks toast ONCE ("…the shipped
+   default was used instead. Fix it in Templates → SEO", deduped id) — so the
+   broken template gets fixed rather than silently costing a second call.
+
+Verified: NEW seo_generation_matrix_test.php 38/38 — the REAL resolver +
+mode + invoke chain EXECUTED against a scripted templates table containing
+the misrouted template + an obeying model: Filip's exact repro (filled meta
+title → optimize → default resolves → value, ONE call, no heal); the FULL
+MATRIX of 6 fields × generate/optimize each → value in one call; picking the
+envelope template BY ID still can't hijack; a legit picked template still
+wins; the law is scoped (revise_envelope keeps its prompt); heal flags true
+only on a real heal, never on a clean customized answer, and a retry yielding
+nothing is an error not a heal; detector precision (no-HTML/JSON-LD/{"broad"}
+prompts NOT flagged); UI warns once in both hooks. Negative control 6/6 CAUGHT
+after adding two falsifiers (a non-scalar resolution; the flag-init
+regression). seo_template_mode_test caught the change — its brace-COUNTING
+slicer swallowed the next method on the new regex's literal braces; switched
+to the sibling tests' next-method boundary (the project's documented lesson).
+Suite 52/52, build clean, tsc 58, php -l clean. Zip rebuilt 659 files —
+law + flag + UI warning verified in-archive.
+
+## 2026-08-17 — Bugfix card 7 (SEO table): the SCREENSHOT diagnosis + what independent tracing found
+
+7-Bugfixes-SEO-Table-bugfixes.pdf re-listed six items. Four were already
+shipped and are cited done (rendered-head meta 08-16, bulk-save data loss
+08-13, GSC draft collision 08-13, template eligibility law 08-16). The card's
+own screenshots showed the two REAL remaining defects, and — ultracode on —
+three independent trace agents + one audit agent (4 agents, ~560k tokens)
+surfaced four more I would otherwise have shipped past.
+
+FIXED (all with executed tests):
+1. REFUSAL-AS-VALUE (the screenshot: cells staged with "I'm sorry, I can't
+   assist…" / "I need the existing content to provide a revised output…").
+   A refusal is a plain string, so sanitize_ai_output's first-plausible-line
+   pass handed it through as a title. NEW PCM_SEO_AI::is_refusal() — apology /
+   can't-comply / "I need the …" openers, EN + SV, anchored at the START so
+   "Why We Need Sleep" or "Sorry Seems to Be the Hardest Word" pass. sanitize
+   returns '' on refusal; invoke_scalar_field maps it to pcm_seo_refused
+   (quotes the model's opening words, points at Templates → SEO); a refusal on
+   a CUSTOMIZED prompt self-heals with the shipped default exactly like an
+   envelope ($unanswerable = envelope || refusal).
+2. BULK "SKIPS CELLS": since 08-16 the table DISPLAYS rendered-head fallbacks,
+   so a truly-empty Meta Title looked filled to "generate where empty" and got
+   skipped. Rows now carry metaFromHead {title,description} (set by remote_row,
+   build_row, the connector /head-tags fill AND fill_effective_meta); ONE
+   hoisted rowCellIsEmpty() treats those as empty — used by BOTH bulk paths
+   (floating bar + column ✦), which the tracer proved had disagreed.
+3. SILENT FAILURES: bulk swallowed every error and staged '' as an invisible
+   pending; the REMOTE hook's generateField had NO .catch at all (connected
+   sites: refusal/envelope 422 = spinner stops, nothing, no message — the
+   "sometimes it just does nothing"). Now: empty answer = failure; caught
+   errors counted; ONE honest summary ("Generated N of M. K produced nothing
+   (Meta Title) — still empty, not skipped"); remote hook toasts; single-cell
+   empty answer says so.
+4. IGNORED PICK IS REPORTED: when the eligibility law skips the user's
+   EXPLICITLY picked template, the response now carries templateIgnored and
+   both hooks toast once — the tracer showed this path was silent (no LLM
+   retry → no healed flag → no toast).
+5. CONNECTOR META ON EVERY PUBLIC TYPE: the connector registered SEO meta for
+   post+page only, so bulk-save on the CPT rows listed since 08-14
+   (services/doctors) phantom-422'd "install the connector" on a site that HAD
+   it. Now get_post_types(public) at init priority 99 (CPTs exist first),
+   attachment excluded, post+page always kept.
+6. CURSOR: pinned view tabs cursor-grab → cursor-pointer (drag-reorder kept).
+
+Verified: NEW seo_refusal_guard_test.php 43/43 (is_refusal + sanitize +
+invoke EXECUTED: the card's three exact strings, 9 more EN/SV shapes, 7 real
+titles NOT refused, dedicated error, heal, both-attempts-refuse, normal answer
+untouched); NEW seo_bulk_generate_honesty_test.php 39/39 (rowCellIsEmpty
+EXECUTED under node on 8 cases; both paths wired; metaFromHead on all four
+fill sites; failure accounting; remote .catch; templateIgnored both sides;
+connector CPT registration + template lint; cursor). Negative control 11/11
+CAUGHT. Three older tests caught the knock-ons (hosts needed is_refusal; the
+`$out =` capture; a grown invoke window) — updated to the new shape, meaning
+kept. Suite 54/54, build clean, tsc 58, php -l clean incl. extracted
+connector. Zip rebuilt 659 / 3.48 MB — all six verified in-archive.
+
+Standing: connector on client sites must self-update for #5 to take effect.

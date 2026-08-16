@@ -29,6 +29,12 @@ export interface SeoRow {
   excerpt: string;
   metaTitle: string;
   metaDescription: string;
+  /** Which meta cells are DISPLAY-ONLY fallbacks read from the rendered page /
+   *  SEO plugin (nothing is stored per post). Bulk "generate where empty" must
+   *  treat these as EMPTY, or a rendered title makes the cell look filled and the
+   *  run skips it (owner: "it skips or leaves a field empty even if it should have
+   *  generated in it"). */
+  metaFromHead?: { title?: boolean; description?: boolean };
   primaryKeyword: string;
   metaKeywords: string;
   supportingKeyword: string;

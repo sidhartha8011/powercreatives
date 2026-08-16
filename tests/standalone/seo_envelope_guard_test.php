@@ -53,7 +53,7 @@ $grab = function (string $name) use ($src): string {
     }
     return str_replace('private static', 'public static', $chunk);
 };
-eval('class Host { ' . $grab('is_structured_envelope') . $grab('sanitize_ai_output') . ' }');
+eval('class Host { ' . $grab('is_structured_envelope') . $grab('sanitize_ai_output') . $grab('is_refusal') . ' }');
 
 $PASS = 0; $FAIL = 0;
 function check(string $name, $ok, $got = null): void {
@@ -124,10 +124,13 @@ echo "\n4. ONE shared invoke reports the real cause — and SELF-HEALS first\n";
 $svc = file_get_contents($SEO . 'service.php');
 $inv_at = strpos($src, 'function invoke_scalar_field');
 check('the shared invoke exists', $inv_at !== false);
-$inv = substr($src, (int) $inv_at, 2600);
+// Window 2600 → 4200: the invoke grew a refusal branch (card 7, 2026-08-17).
+$inv = substr($src, (int) $inv_at, 4200);
 check('envelope is checked on the RAW output', strpos($inv, 'self::is_structured_envelope($raw)') !== false, 'raw not checked');
+// The heal condition is now `$unanswerable` = envelope OR refusal — same disease
+// (a customized prompt the model cannot answer for a scalar cell), same cure.
 check('a customized prompt retries with the shipped default',
-    preg_match('/is_structured_envelope\(\$raw\) && \$customized[\s\S]{0,400}?substitute_vars\(\$default_tpl/', $inv) === 1, 'no self-heal');
+    preg_match('/\$unanswerable = self::is_structured_envelope\(\$raw\) \|\| self::is_refusal\(\$raw\);[\s\S]{0,200}?\$unanswerable && \$customized[\s\S]{0,400}?substitute_vars\(\$default_tpl/', $inv) === 1, 'no self-heal');
 check('the retry keeps the language law', strpos($inv, '$default_tpl . self::language_law($vars)') !== false, 'law dropped on retry');
 check('names Templates → SEO in the message',
     strpos($inv, 'check the template selected for this column in Templates') !== false);
@@ -140,10 +143,11 @@ check('the specific error comes first', $env !== false && $emp !== false && $env
     array('envelope' => $env, 'empty' => $emp));
 check('the slug field is slugified on BOTH attempts', substr_count($inv, 'sanitize_title($value)') === 2, $inv);
 // Both per-field paths route through it, with customization = resolved ≠ default.
+// The result is captured (`$out = …`) so `templateIgnored` can be attached before return.
 check('local ai.php routes through the shared invoke',
-    preg_match('/return self::invoke_scalar_field\(\$prompt, \$default, \$vars, \$field, \$opts, \$tpl !== \$default\);/', $src) === 1, 'local bespoke');
+    preg_match('/\$out = self::invoke_scalar_field\(\$prompt, \$default, \$vars, \$field, \$opts, \$tpl !== \$default\);/', $src) === 1, 'local bespoke');
 check('remote service.php routes through the shared invoke',
-    preg_match('/return PCM_SEO_AI::invoke_scalar_field\(\$prompt, \$default, \$vars, \$field, \$opts, \$tpl !== \$default\);/', $svc) === 1, 'remote bespoke');
+    preg_match('/\$out = PCM_SEO_AI::invoke_scalar_field\(\$prompt, \$default, \$vars, \$field, \$opts, \$tpl !== \$default\);/', $svc) === 1, 'remote bespoke');
 check('no duplicated envelope guard remains outside the shared invoke',
     substr_count($src . $svc, 'pcm_seo_envelope') === 1, substr_count($src . $svc, 'pcm_seo_envelope'));
 
@@ -167,7 +171,7 @@ class PCM_LLM {
 }
 $inv_fn = $grab('invoke_scalar_field');
 eval('class InvokeHost { '
-    . $inv_fn . "\n" . $grab('sanitize_ai_output') . "\n" . $grab('is_structured_envelope') . "\n"
+    . $inv_fn . "\n" . $grab('sanitize_ai_output') . "\n" . $grab('is_structured_envelope') . "\n" . $grab('is_refusal') . "\n"
     . ' public static function substitute_vars($tpl, $vars) { foreach ($vars as $k => $v) { $tpl = str_replace(\'{{\' . $k . \'}}\', (string) $v, $tpl); } return $tpl; }'
     . ' public static function language_law($vars) { return " LAW"; } }');
 $ENVELOPE = '{"html":"<section><h1>Welcome</h1></section>","changes":[{"what":"x"}]}';

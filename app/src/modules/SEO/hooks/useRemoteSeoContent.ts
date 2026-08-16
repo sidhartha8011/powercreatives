@@ -105,7 +105,27 @@ export function useRemoteSeoContent(siteId: number | null): UseRemoteSeoContentR
       const type = rows.find((r) => Number(r.id) === id)?.type || 'post';
       return generateMutation
         .mutateAsync({ siteId: siteId ?? 0, postId: id, field, type, model, provider, templateId })
-        .then((res: any) => String(res?.value ?? ''));
+        .then((res: any) => {
+          // The server used the SHIPPED default because the selected template
+          // returned a JSON envelope / refusal instead of a value — say so once, so
+          // the template gets fixed instead of silently costing a second call each time.
+          if (res?.healed) {
+            toast.warning('The selected template for this column could not produce a value — the shipped default was used instead. Fix it in Templates → SEO.', { id: 'seo-template-healed' });
+          }
+          // The PICKED template was set aside before any model call (its prompt demands
+          // the JSON envelope, which a single-value cell can never hold).
+          if (res?.templateIgnored) {
+            toast.warning('The template you picked for this column asks for a JSON envelope, not a value, so it was not used — the default ran instead. Fix it in Templates → SEO.', { id: 'seo-template-ignored' });
+          }
+          return String(res?.value ?? '');
+        })
+        // The LOCAL hook toasts generate failures; this one never did — so on a
+        // CONNECTED site a refusal / envelope 422 was completely silent: spinner
+        // stops, nothing staged, no message. That IS "sometimes it just does nothing".
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : 'AI generation failed');
+          throw err;
+        });
     },
     [rows, generateMutation, siteId],
   );

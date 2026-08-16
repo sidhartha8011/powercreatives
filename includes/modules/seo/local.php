@@ -168,9 +168,11 @@ class PCM_SEO_Local
             $tags = self::parse_head_tags($html);
             if ($needs_title && $tags['title'] !== '') {
                 $rows[$i]['metaTitle'] = $tags['title'];
+                $rows[$i]['metaFromHead']['title'] = true;   // display fallback, not stored
             }
             if ($needs_desc && $tags['description'] !== '') {
                 $rows[$i]['metaDescription'] = $tags['description'];
+                $rows[$i]['metaFromHead']['description'] = true;
             }
         }
         return $rows;
@@ -271,6 +273,61 @@ class PCM_SEO_Local
             return 'seopress';
         }
         return 'simple';
+    }
+
+    /**
+     * The EFFECTIVE title/description the active SEO plugin will print for a post —
+     * template-generated values included — asked of the plugin's own PHP API. This is
+     * the local twin of the remote rendered-head REST fields: per-post meta holds only
+     * OVERRIDES, so a Yoast/Rank Math site whose titles come from "%%title%% %%sep%%
+     * %%sitename%%" has an EMPTY stored title for every post while every live page has
+     * a perfect one. Each plugin's API is used defensively; anything missing → ''.
+     *
+     * @return array{title:string,description:string}
+     */
+    public static function plugin_rendered_head(int $post_id): array
+    {
+        $title = ''; $desc = '';
+        try {
+            $plugin = self::detect_seo_plugin();
+            if ($plugin === 'yoast' && function_exists('YoastSEO')) {
+                $repo = YoastSEO()->meta;
+                $m = (is_object($repo) && method_exists($repo, 'for_post')) ? $repo->for_post($post_id) : null;
+                if (is_object($m)) {
+                    $title = (string) ($m->title ?? '');
+                    $desc  = (string) ($m->description ?? '');
+                }
+            } elseif ($plugin === 'rankmath' && class_exists('RankMath\Post') && class_exists('RankMath\Paper\Paper')) {
+                // Rank Math renders through its Paper on the singular page; its helper
+                // resolves the same variables from stored-or-template for a given post.
+                if (class_exists('RankMath\Helper') && method_exists('RankMath\Helper', 'replace_vars')) {
+                    $post = get_post($post_id);
+                    $t = get_post_meta($post_id, 'rank_math_title', true);
+                    $d = get_post_meta($post_id, 'rank_math_description', true);
+                    if (($t === '' || $t === false) && $post) {
+                        $t = \RankMath\Helper::get_settings('titles.pt_' . $post->post_type . '_title', '');
+                    }
+                    if (($d === '' || $d === false) && $post) {
+                        $d = \RankMath\Helper::get_settings('titles.pt_' . $post->post_type . '_description', '');
+                    }
+                    $title = (string) \RankMath\Helper::replace_vars((string) $t, $post);
+                    $desc  = (string) \RankMath\Helper::replace_vars((string) $d, $post);
+                }
+            } elseif ($plugin === 'seopress' && function_exists('seopress_get_service')) {
+                // SEOPress exposes title/description services keyed to the current post.
+                $tsvc = seopress_get_service('TitleOption');
+                $dsvc = seopress_get_service('MetaDescriptionOption');
+                if (is_object($tsvc) && method_exists($tsvc, 'getTitle')) { $title = (string) $tsvc->getTitle($post_id); }
+                if (is_object($dsvc) && method_exists($dsvc, 'getMetaDescription')) { $desc = (string) $dsvc->getMetaDescription($post_id); }
+            }
+        } catch (\Throwable $e) {
+            // A plugin API changing shape must degrade to "no rendered value", never fatal.
+            $title = ''; $desc = '';
+        }
+        return array(
+            'title'       => trim(wp_specialchars_decode(wp_strip_all_tags($title), ENT_QUOTES)),
+            'description' => trim(wp_specialchars_decode(wp_strip_all_tags($desc), ENT_QUOTES)),
+        );
     }
 
     /**
@@ -421,8 +478,14 @@ class PCM_SEO_Local
             'featuredImage'      => (string) get_the_post_thumbnail_url($id, 'thumbnail'),
             'featuredImageId'    => (int) get_post_thumbnail_id($id),
             'excerpt'            => wp_trim_words(wp_strip_all_tags($post->post_content), 20, '…'),
-            'metaTitle'          => self::seo_get($id, 'title'),
-            'metaDescription'    => self::seo_get($id, 'description'),
+            // Stored override wins; else the plugin's own RENDERED value (template-generated
+            // titles included) — the local twin of the remote yoast_head_json read.
+            'metaTitle'          => self::seo_get($id, 'title') !== '' ? self::seo_get($id, 'title') : self::plugin_rendered_head($id)['title'],
+            'metaDescription'    => self::seo_get($id, 'description') !== '' ? self::seo_get($id, 'description') : self::plugin_rendered_head($id)['description'],
+            'metaFromHead'       => array(
+                'title'       => self::seo_get($id, 'title') === '' && self::plugin_rendered_head($id)['title'] !== '',
+                'description' => self::seo_get($id, 'description') === '' && self::plugin_rendered_head($id)['description'] !== '',
+            ),
             'primaryKeyword'     => self::seo_get($id, 'keyword'),
             'metaKeywords'       => self::seo_get($id, 'meta_keywords'),
             'supportingKeyword'  => (string) get_post_meta($id, 'pcm_seo_supporting_keyword', true),

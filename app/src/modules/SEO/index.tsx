@@ -329,6 +329,22 @@ const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
 /** Fixed leading selection/row-number column (not reorderable/resizable). */
 const SELECT_COL_WIDTH = 44;
 
+/**
+ * ONE definition of "this cell is empty" for every bulk/column generate path.
+ * "Empty" = nothing STORED for the cell. A Meta Title/Description shown from the
+ * rendered page / SEO plugin (row.metaFromHead) is a display fallback, not content —
+ * the user sees a blank-ish cell and expects it to be generated. Counting it as
+ * filled is exactly "it skips a field even if it should have generated in it"
+ * (bugfix card 7). Hoisted so the column ✦ run and the floating-bar run cannot
+ * disagree (they did: the column run ignored metaFromHead).
+ */
+function rowCellIsEmpty(r: SeoRow | undefined, field: string): boolean {
+  if (!r) return true;
+  if (field === 'metaTitle' && r.metaFromHead?.title) return true;
+  if (field === 'metaDescription' && r.metaFromHead?.description) return true;
+  return !String(r[field as keyof SeoRow] ?? '').trim();
+}
+
 export function SEOModule() {
   const { rows: localRows, options, isLoading: localLoading, saveCell: localSaveCell, quickCreate: localQuickCreate, bulkDelete: localBulkDelete, bulkDuplicate: localBulkDuplicate, generateField: localGenerateField, scanLinks: localScanLinks } = useSeoContent();
 
@@ -922,7 +938,10 @@ export function SEOModule() {
       // star icon obeyed the edited prompt, Re-generate did not — this argument
       // was simply missing here).
       const value = await generateField(id, field, genModelId || undefined, genProvider, columnTemplate[field]);
-      setStaged((s) => ({ ...s, [key]: value }));
+      // An empty answer is not a suggestion — say so rather than staging an invisible
+      // pending value that looks like the click did nothing.
+      if (value.trim() === '') { toast.error('The model returned nothing for this cell — try again or pick another model.'); }
+      else { setStaged((s) => ({ ...s, [key]: value })); }
     } catch { /* toast in hook */ } finally {
       setGenKey(null);
     }
@@ -935,10 +954,7 @@ export function SEOModule() {
     const ids = Array.from(selected);
     if (ids.length === 0 || fields.length === 0) return;
     const rowById = new Map(rows.map((r) => [r.id, r]));
-    const cellIsEmpty = (id: number, field: string) => {
-      const r = rowById.get(id);
-      return !String(r?.[field as keyof SeoRow] ?? '').trim();
-    };
+    const cellIsEmpty = (id: number, field: string) => rowCellIsEmpty(rowById.get(id), field);
     // Build the work list, honoring the fill mode.
     const jobs: { id: number; field: string }[] = [];
     for (const id of ids) {
@@ -954,6 +970,8 @@ export function SEOModule() {
     setBusy(true);
     const total = jobs.length;
     let done = 0;
+    let staged = 0;
+    const failed: string[] = [];
     setProgress({ done, total });
     for (const { id, field } of jobs) {
       const key = `${id}:${field}`;
@@ -962,14 +980,28 @@ export function SEOModule() {
         // Per-field template pick, same as the column run and the per-cell
         // Re-generate — all three must resolve the same prompt.
         const value = await generateField(id, field, genModelId || undefined, genProvider, columnTemplate[field]);
-        setStaged((s) => ({ ...s, [key]: value }));
-      } catch { /* toast in hook */ }
+        // An empty answer is a FAILURE for this cell, not a suggestion — staging ''
+        // painted an invisible "pending" that looked like the run just skipped it.
+        if (value.trim() === '') { failed.push(key); }
+        else { setStaged((s) => ({ ...s, [key]: value })); staged += 1; }
+      } catch {
+        failed.push(key); // the hook already toasted the reason once
+      }
       done += 1;
       setProgress({ done, total });
     }
     setGenKey(null);
     setProgress(null);
     setBusy(false);
+    // ONE honest summary. Bulk used to swallow every failure silently, so a run that
+    // errored on half its cells reported nothing — "unstable feature".
+    if (failed.length > 0) {
+      const label = (k: string) => { const f = k.slice(k.indexOf(':') + 1); return GEN_FIELDS.find((g) => g.key === f)?.label ?? f; };
+      const byField = Array.from(new Set(failed.map(label))).join(', ');
+      toast.error(`Generated ${staged} of ${total}. ${failed.length} cell${failed.length === 1 ? '' : 's'} produced nothing (${byField}) — see the earlier error for the reason; those cells are still empty, not skipped.`);
+    } else if (staged > 0) {
+      toast.success(`Generated ${staged} suggestion${staged === 1 ? '' : 's'} — review and accept.`);
+    }
   }, [selected, rows, generateField, genModelId, genProvider, columnTemplate]);
 
   // Accept / discard ALL staged AI suggestions (the source's bar).
@@ -1097,26 +1129,38 @@ export function SEOModule() {
       ? sortedData.filter((r) => selected.has(r.id))
       : sortedData
     )
-      .filter((r) => mode === 'overwrite' || !String(r[field as keyof SeoRow] ?? '').trim())
+      // Same emptiness law as the floating-bar run (rowCellIsEmpty) — a rendered-head
+      // fallback is NOT content, so "where empty" no longer skips those cells here either.
+      .filter((r) => mode === 'overwrite' || rowCellIsEmpty(r, field))
       .map((r) => r.id);
     if (ids.length === 0) { toast('Nothing to generate — those cells already have content.'); return; }
     setColumnGenerating(field);
     const total = ids.length;
     let done = 0;
+    let staged = 0;
+    let failed = 0;
     setProgress({ done, total });
     for (const id of ids) {
       const key = `${id}:${field}`;
       setGenKey(key);
       try {
         const value = await generateField(id, field, genModelId || undefined, genProvider, templateId);
-        setStaged((s) => ({ ...s, [key]: value }));
-      } catch { /* toast in hook */ }
+        // Same rule as the floating-bar run: an empty answer is a failure, never an
+        // invisible "pending" that reads as a skipped cell.
+        if (value.trim() === '') failed += 1;
+        else { setStaged((s) => ({ ...s, [key]: value })); staged += 1; }
+      } catch { failed += 1; /* toast in hook */ }
       done += 1;
       setProgress({ done, total });
     }
     setGenKey(null);
     setProgress(null);
     setColumnGenerating(null);
+    if (failed > 0) {
+      toast.error(`Generated ${staged} of ${total}. ${failed} cell${failed === 1 ? '' : 's'} produced nothing — see the earlier error for the reason; those cells are still empty, not skipped.`);
+    } else if (staged > 0) {
+      toast.success(`Generated ${staged} suggestion${staged === 1 ? '' : 's'} — review and accept.`);
+    }
   }, [columnGenerating, sortedData, selected, generateField, genModelId, genProvider]);
 
   const toggleAll = () =>
@@ -1904,7 +1948,9 @@ export function SEOModule() {
               onDragEnd={() => setDragViewId(null)}
               onClick={() => applyView(v)}
               title={`Apply “${v.name}” — drag to reorder`}
-              className={`shrink-0 max-w-[12rem] cursor-grab truncate border-b-2 px-3 py-1.5 text-xs transition-colors active:cursor-grabbing ${
+              // A regular pointer (owner: the drag hand "is not requested") — the tab is a
+              // BUTTON you click; drag-to-reorder still works, it just isn't advertised by the cursor.
+              className={`shrink-0 max-w-[12rem] cursor-pointer truncate border-b-2 px-3 py-1.5 text-xs transition-colors ${
                 dragViewId === v.id ? 'opacity-40' : ''
               } ${
                 appliedViewId === v.id
