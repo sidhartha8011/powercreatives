@@ -120,7 +120,7 @@ export function ReviewRail({
             type="button"
             onClick={onAcceptAll}
             disabled={!review.some((s) => s.status === 'diff')}
-            className="inline-flex items-center gap-1 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-500 disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded bg-success px-1.5 py-0.5 text-[10px] font-medium text-success-foreground hover:bg-success/85 disabled:opacity-50"
           >
             <Check className="h-3 w-3" /> Accept all
           </button>
@@ -129,7 +129,7 @@ export function ReviewRail({
             onClick={() => { onReviseTargetChange('all'); onReviseNoteChange(''); }}
             disabled={!review.some((s) => s.status === 'diff')}
             title="Send every undecided section back to the AI with ONE adjustment"
-            className="inline-flex items-center gap-1 rounded border border-primary/40 px-1.5 py-0.5 text-[10px] text-primary hover:bg-[#e7f5ff] disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded border border-primary/40 px-1.5 py-0.5 text-[10px] text-primary hover:bg-accent disabled:opacity-50"
           >
             ↻ Revise all
           </button>
@@ -243,14 +243,14 @@ export function ReviewRail({
               type="button"
               onClick={onRunRevise}
               disabled={!reviseNote.trim()}
-              className="inline-flex items-center gap-1 rounded-full bg-green-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-green-500 disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-full bg-success px-2 py-0.5 text-[10px] font-medium text-success-foreground hover:bg-success/85 disabled:opacity-50"
             >
               Adjust
             </button>
             <button
               type="button"
               onClick={() => onReviseTargetChange(null)}
-              className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500 hover:bg-slate-100"
+              className="inline-flex items-center rounded-full border border-border bg-card px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
             >
               Cancel
             </button>
@@ -339,7 +339,7 @@ export function ReviewRail({
                       type="button"
                       onClick={() => onUpdateProposal(i, proposalNote(s))}
                       title="Rebuilds this section keeping only the ticked changes — the result comes back for review"
-                      className="mt-0.5 inline-flex items-center rounded-full border border-primary/40 bg-white px-1.5 py-px text-[9px] font-medium text-primary hover:bg-[#e7f5ff]"
+                      className="mt-0.5 inline-flex items-center rounded-full border border-primary/40 bg-white px-1.5 py-px text-[9px] font-medium text-primary hover:bg-accent"
                     >
                       Update proposal ({(s.kept ?? []).filter(Boolean).length} of {(s.changes ?? []).length})
                     </button>
@@ -379,7 +379,7 @@ export function ReviewRail({
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onResolve(i, 'accept'); }}
-                  className="inline-flex items-center gap-1 rounded-full bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-500"
+                  className="inline-flex items-center gap-1 rounded-full bg-success px-1.5 py-0.5 text-[10px] font-medium text-success-foreground hover:bg-success/85"
                 >
                   <Check className="h-3 w-3" /> Accept
                 </button>
@@ -387,23 +387,23 @@ export function ReviewRail({
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onReviseTargetChange(i); onReviseNoteChange(''); }}
                   title="Send this section back to the AI with an adjustment"
-                  className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-white px-1.5 py-0.5 text-[10px] text-primary hover:bg-[#e7f5ff]"
+                  className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-white px-1.5 py-0.5 text-[10px] text-primary hover:bg-accent"
                 >
                   ↻ Revise
                 </button>
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onResolve(i, 'reject'); }}
-                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50"
+                  className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted"
                 >
                   <X className="h-3 w-3" /> Reject
                 </button>
               </div>
             )}
-            {s.status === 'accepted' && <div className="mt-0.5 text-[10px] font-medium text-green-700">✓ Accepted</div>}
+            {s.status === 'accepted' && <div className="mt-0.5 text-[10px] font-medium text-success">✓ Accepted</div>}
             {s.status === 'rejected' && <div className="mt-0.5 text-[10px] text-slate-500">Rejected — original kept</div>}
             {s.status === 'failed' && (
-              <div className="mt-0.5 text-[10px] text-red-600" title={s.error}>AI failed — original kept</div>
+              <div className="mt-0.5 text-[10px] text-destructive" title={s.error}>AI failed — original kept</div>
             )}
           </div>
         ))}

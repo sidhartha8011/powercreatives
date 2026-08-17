@@ -913,6 +913,102 @@ class PCM_SEO_Service
     }
 
     /**
+     * A connected post's thumbnail BYTES, fetched through the connector (which reads
+     * the file from disk) and cached on this hub — so the SEO table can show featured
+     * images from sites whose bot/hotlink protection refuses to serve /wp-content to
+     * any other origin (massagegoteborg.nu: Cloudflare 403 on every image, for every
+     * user-agent, while the REST namespace answers). Owner: "the feature image is set
+     * but it is not displayed, even after set the image we see the icon".
+     *
+     * Cache: uploads/pcm-cache/thumbs/<md5(site|id|url|size)>.<ext>, 7 days. The
+     * connector's answer is re-validated here (getimagesizefromstring) before anything
+     * is stored or served — the hub never relays bytes it has not recognised as an image.
+     * A connector without /media (older build) is flagged for 12h via the shared
+     * capability flag so the table does not hammer it; the cell then falls back to its
+     * placeholder with the "update the connector" hint.
+     *
+     * @return array{mime:string,bytes:string,cached:bool}|\WP_Error
+     */
+    public static function remote_thumbnail(object $site, int $attachment_id, string $image_url, string $size = 'thumbnail')
+    {
+        self::ensure_sites_service();
+        $size = in_array($size, array('thumbnail', 'medium'), true) ? $size : 'thumbnail';
+        if ($attachment_id <= 0 && $image_url === '') {
+            return new WP_Error('pcm_seo_thumb_missing', __('No image to load.', 'power-creatives'), array('status' => 400));
+        }
+        $dir  = self::thumb_cache_dir();
+        $key  = md5((int) $site->id . '|' . $attachment_id . '|' . $image_url . '|' . $size);
+        if ($dir !== '') {
+            foreach (self::THUMB_EXT as $mime => $ext) {
+                $f = $dir . $key . '.' . $ext;
+                if (is_file($f) && (time() - (int) filemtime($f)) < 7 * DAY_IN_SECONDS) {
+                    $bytes = (string) file_get_contents($f);
+                    if ($bytes !== '') {
+                        return array('mime' => $mime, 'bytes' => $bytes, 'cached' => true);
+                    }
+                }
+            }
+        }
+        if (PCM_Sites_Service::connector_lacks_route((int) $site->id, 'media')) {
+            return new WP_Error('pcm_seo_thumb_no_route', __('This site’s connector is an older build without the image reader — update it (SEO → Update connector) to preview images from a bot-protected site.', 'power-creatives'), array('status' => 404));
+        }
+        $q = array('size' => $size);
+        if ($attachment_id > 0) { $q['id'] = $attachment_id; }
+        if ($image_url !== '')  { $q['url'] = $image_url; }
+        $res = PCM_Sites_Service::remote_rest($site, 'GET', '/pcm-conn/v1/media', $q, null, 20);
+        if (is_wp_error($res)) {
+            return new WP_Error('pcm_seo_thumb_transport', $res->get_error_message(), array('status' => 502));
+        }
+        $status = (int) ($res['status'] ?? 0);
+        if ($status === 404 && !isset($res['body']['error'])) {
+            // The ROUTE is missing (an older connector), not the attachment: WP answers a
+            // bare rest_no_route. Flag it so the table does not re-ask for 12h.
+            PCM_Sites_Service::mark_connector_route((int) $site->id, 'media', false);
+            return new WP_Error('pcm_seo_thumb_no_route', __('This site’s connector is an older build without the image reader — update it (SEO → Update connector) to preview images from a bot-protected site.', 'power-creatives'), array('status' => 404));
+        }
+        if ($status >= 300 || empty($res['body']['data']) || !is_string($res['body']['data'])) {
+            return new WP_Error('pcm_seo_thumb_unavailable', sprintf(__('The connected site could not provide this image (HTTP %d).', 'power-creatives'), $status), array('status' => $status >= 400 ? $status : 502));
+        }
+        PCM_Sites_Service::mark_connector_route((int) $site->id, 'media', true);
+        $bytes = base64_decode((string) $res['body']['data'], true);
+        $info  = $bytes !== false && $bytes !== '' ? @getimagesizefromstring($bytes) : false;
+        $mime  = is_array($info) ? (string) ($info['mime'] ?? '') : '';
+        if ($bytes === false || $mime === '' || !isset(self::THUMB_EXT[$mime]) || strlen($bytes) > 2 * 1024 * 1024) {
+            return new WP_Error('pcm_seo_thumb_invalid', __('The connected site returned something that is not an image.', 'power-creatives'), array('status' => 502));
+        }
+        if ($dir !== '') {
+            @file_put_contents($dir . $key . '.' . self::THUMB_EXT[$mime], $bytes);
+        }
+        return array('mime' => $mime, 'bytes' => $bytes, 'cached' => false);
+    }
+
+    /** Image mimes the thumbnail proxy will store/serve → cache-file extension. */
+    private const THUMB_EXT = array(
+        'image/jpeg' => 'jpg',
+        'image/png'  => 'png',
+        'image/gif'  => 'gif',
+        'image/webp' => 'webp',
+        'image/avif' => 'avif',
+    );
+
+    /** uploads/pcm-cache/thumbs/ (created on demand, with an index.html); '' if unwritable. */
+    private static function thumb_cache_dir(): string
+    {
+        $up = wp_get_upload_dir();
+        if (!empty($up['error']) || empty($up['basedir'])) {
+            return '';
+        }
+        $dir = trailingslashit((string) $up['basedir']) . 'pcm-cache/thumbs/';
+        if (!is_dir($dir) && !wp_mkdir_p($dir)) {
+            return '';
+        }
+        if (!is_file($dir . 'index.html')) {
+            @file_put_contents($dir . 'index.html', '');
+        }
+        return is_writable($dir) ? $dir : '';
+    }
+
+    /**
      * Scan a connected site's post links — analysis runs on the HUB over the remote's
      * rendered content (internal/external counts + broken-link HEAD checks). Counts are
      * returned for the table (not persisted on the remote).

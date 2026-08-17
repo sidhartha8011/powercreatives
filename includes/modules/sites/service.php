@@ -450,7 +450,10 @@ class PCM_Sites_Service
     {
         // An active-but-OLD connector degrades features silently; surface it so the
         // banner can offer the self-update that already exists.
-        $outdated = self::connector_lacks_route((int) ($site->id ?? 0), 'head-tags');
+        // Any hub-relied route the connector was seen NOT to serve = an older build.
+        // head-tags (meta reader) and media (thumbnail bytes for bot-walled sites) today.
+        $outdated = self::connector_lacks_route((int) ($site->id ?? 0), 'head-tags')
+            || self::connector_lacks_route((int) ($site->id ?? 0), 'media');
         $res = self::remote_rest($site, 'GET', '/wp/v2/plugins', array('_fields' => 'plugin,name,version,status'));
         if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
             return array('status' => 'unknown', 'version' => '', 'copies' => 0, 'outdated' => $outdated);

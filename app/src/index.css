@@ -133,6 +133,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -219,6 +221,13 @@
   /* Destructive */
   --destructive: oklch(0.6 0.2 25);
   --destructive-foreground: oklch(0.98 0 0);
+
+  /* Success — the ONE "keep / accept / save" green (owner rulings 2026-07-13:
+     green = keep, blue = asks the AI, grey = decline; 2026-08-18: shared tokens,
+     never inline). Value = the green-600 those surfaces used inline, so the
+     design stays the same and now comes from ONE place. */
+  --success: oklch(0.627 0.194 149.2);
+  --success-foreground: oklch(0.98 0 0);
 
   /* Borders */
   --border: oklch(0.94 0.002 250);

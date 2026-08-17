@@ -5280,9 +5280,23 @@ class PCM_Strategy_Service
         }
 
         $form_data = json_decode($row->formData, true) ?: array();
+        $entries   = is_array($form_data['entries'] ?? null) ? $form_data['entries'] : array();
+        // A WRITER template's entries ARE its prompt — Writer has no other kind of
+        // entry. The Templates dialog used to save writer entries under whatever
+        // category its dropdown defaulted to ('reference_ad'), and every reader below
+        // keeps only 'prompt' entries: such a template's text was silently IGNORED
+        // (the article got the hardcoded fallback prompt) and its "/" variable menu
+        // stayed empty — owner cards 5/13: "we're lacking variables … in writer",
+        // and "the template doesn't work at all". Normalise on read so every stored
+        // writer template counts, whatever category it was saved under.
+        if ((string) ($row->module ?? '') === 'writer') {
+            foreach ($entries as $i => $e) {
+                if (is_array($e)) { $entries[$i]['category'] = 'prompt'; }
+            }
+        }
         return array(
             'name'    => $row->name,
-            'entries' => $form_data['entries'] ?? array(),
+            'entries' => $entries,
             'type'    => $form_data['type'] ?? null,
         );
     }
@@ -5622,6 +5636,10 @@ class PCM_Strategy_Service
             // the blank-line collapse. Empty string when the brand sets no language,
             // so a template referencing it degrades to nothing rather than breaking.
             'brand_language'     => $brand_language,
+            // SEO's name for the same thing (owner cards 5/13: "the right variables,
+            // just like the SEO"). A PLAIN value — the fragment/suppression logic stays
+            // keyed on 'keyword'; placing this one counts as placing that one (below).
+            'primary_keyword'    => $keyword_text,
         )
         // The SHARED site + business vocabulary — the same tokens SEO templates
         // resolve ({{business.name}}, {{business.phone}}, {{site.lang}}, {{today}}…).
@@ -5655,6 +5673,11 @@ class PCM_Strategy_Service
             }
         }
         $referenced = array_unique($referenced);
+        // {{ primary_keyword }} IS the keyword: a template that places it must not
+        // also get the "Write a comprehensive article targeting…" line auto-appended.
+        if (in_array('primary_keyword', $referenced, true) && !in_array('keyword', $referenced, true)) {
+            $referenced[] = 'keyword';
+        }
 
         // Deliberate exception to the "author places every fragment" contract:
         // a template with zero prompt entries has no text to place a token in,

@@ -158,7 +158,7 @@ check('the states are visually distinct (image vs solid vs dashed)',
     && strpos($thumb, '<img') !== false
     && preg_match("/blocked \|\| hasImageId \? 'border-border bg-muted' : 'border-dashed border-border'/", $thumb) === 1,
     'states collapsed');
-check('the Image cell delegates to it', strpos($ui, '<FeaturedThumb src={row.featuredImage') !== false, 'cell not wired');
+check('the Image cell delegates to it', preg_match('/<FeaturedThumb\s+src=\{row\.featuredImage/', $ui) === 1, 'cell not wired');
 check('sorting agrees with what the cell shows',
     strpos($ui, "featuredImage: (r) => (r.featuredImage || (r.featuredImageId ?? 0) > 0 ? 1 : 0)") !== false, 'sort disagrees with display');
 check('the client keeps featuredImageId on remote rows',

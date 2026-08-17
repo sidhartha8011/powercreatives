@@ -44,6 +44,12 @@ interface LinkRow {
 }
 
 const isEditable = (l: LinkRow) => l.editable !== false;
+/** A page-builder ELEMENT link (button/icon-box…) — editable (URL/text via the connector) but it has
+ *  no <a> in the post body to unwrap or cut, so Remove/Delete/rel are not offered for it. Attempting
+ *  them can only fail (the hub answers "lives in builder data") — bokatandlakartid.se: "Remove all
+ *  dead links" ran 27 such attempts and the table stayed exactly the same. */
+const isBuilderRow = (l: LinkRow) => !!l.elId;
+const canUnwrap = (l: LinkRow) => isEditable(l) && !isBuilderRow(l);
 
 interface LinksPopupProps {
   open: boolean;
@@ -375,14 +381,23 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
   };
 
   const removeSelected = async () => {
-    reportRemoval(await removeLinks(filtered.filter((l) => selected.has(l.id) && isEditable(l)).map((l) => l.html)));
+    reportRemoval(await removeLinks(filtered.filter((l) => selected.has(l.id) && canUnwrap(l)).map((l) => l.html)));
   };
 
-  // One-click fix for dead links: unwrap every (editable) broken link (keeps the anchor text).
+  // Dead links that are builder ELEMENTS: nothing to unwrap — say so instead of trying.
+  const builderDead = filtered.filter((l) => isEditable(l) && isBuilderRow(l)).length;
+  const builderNote = builderDead > 0
+    ? `${builderDead} of them ${builderDead === 1 ? 'is' : 'are'} page-builder element${builderDead === 1 ? '' : 's'} (a button, icon box…) with no <a> to unwrap — change ${builderDead === 1 ? 'its' : 'their'} URL by clicking the To cell, or fix ${builderDead === 1 ? 'it' : 'them'} in the builder on the site.`
+    : '';
+
+  // One-click fix for dead links: unwrap every broken link that HAS an <a> to unwrap (keeps the text).
   const removeAllBroken = async () => {
-    const htmls = filtered.filter(isEditable).map((l) => l.html);
-    if (htmls.length === 0) return;
-    if (!window.confirm(`Remove all ${htmls.length} dead link(s)? This unwraps each broken <a> (the text stays).`)) return;
+    const htmls = filtered.filter(canUnwrap).map((l) => l.html);
+    if (htmls.length === 0) {
+      if (builderNote) toast.info(builderNote, { duration: 10000 });
+      return;
+    }
+    if (!window.confirm(`Remove ${htmls.length} dead link(s)? This unwraps each broken <a> (the text stays).${builderNote ? `\n\n${builderNote}` : ''}`)) return;
     reportRemoval(await removeLinks(htmls));
   };
 
@@ -410,8 +425,8 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
 
   const toggleOne = (id: number) =>
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  // Only editable links are selectable / bulk-removable.
-  const selectable = filtered.filter(isEditable);
+  // Only links with an <a> to unwrap are selectable / bulk-removable.
+  const selectable = filtered.filter(canUnwrap);
   const allSelected = selectable.length > 0 && selectable.every((l) => selected.has(l.id));
   const toggleAll = () =>
     setSelected(allSelected ? new Set() : new Set(selectable.map((l) => l.id)));
@@ -432,12 +447,18 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
         {kind === 'broken' && filtered.length > 0 && (
           <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
             <span className="text-xs text-muted-foreground">
-              {filtered.length} dead link{filtered.length === 1 ? '' : 's'} found. One-click fix unwraps each broken link, keeping its text.
+              {filtered.length} dead link{filtered.length === 1 ? '' : 's'} found.
+              {filtered.length - builderDead > 0
+                ? ` One-click fix unwraps ${builderDead > 0 ? `the ${filtered.length - builderDead} with an <a>` : 'each broken link'}, keeping the text.`
+                : ''}
+              {builderNote ? ` ${builderNote}` : ''}
             </span>
-            <Button variant="destructive" size="sm" disabled={bulkBusy} onClick={removeAllBroken} className="gap-1.5 shrink-0">
-              {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlink className="h-3.5 w-3.5" />}
-              Remove all dead links
-            </Button>
+            {filtered.length - builderDead > 0 && (
+              <Button variant="destructive" size="sm" disabled={bulkBusy} onClick={removeAllBroken} className="gap-1.5 shrink-0">
+                {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Unlink className="h-3.5 w-3.5" />}
+                Remove {builderDead > 0 ? `${filtered.length - builderDead} dead link${filtered.length - builderDead === 1 ? '' : 's'}` : 'all dead links'}
+              </Button>
+            )}
           </div>
         )}
 
@@ -562,7 +583,13 @@ export function LinksPopup({ open, onClose, postId, kind, title, isLocal, siteId
                           <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => window.open(l.to, '_blank', 'noopener,noreferrer')} title="Open link in a new tab">
                             <ExternalLink className="h-3 w-3" />
                           </Button>
-                          {editable ? (
+                          {editable && isBuilderRow(l) ? (
+                            /* A builder element: its URL/text edit inline (To / Anchor cells, via the
+                               connector); there is no <a> to unwrap, cut, or set rel on. */
+                            <span className="inline-flex h-7 w-7 items-center justify-center text-muted-foreground/50" title="Page-builder element — change its URL by clicking the To cell (or its text via Anchor). It has no <a> to unwrap or delete from here.">
+                              <Lock className="h-3 w-3" />
+                            </span>
+                          ) : editable ? (
                             <>
                               {/* Unlink = unwrap, text/element stays (card wording). */}
                               <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-destructive" disabled={rowBusy} onClick={() => remove(l)} title="Unlink — remove the link but keep the text">

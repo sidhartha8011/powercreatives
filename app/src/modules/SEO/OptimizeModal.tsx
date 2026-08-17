@@ -24,8 +24,8 @@ function ScoreList({ html, keyword }: { html: string; keyword: string }) {
       {verdicts.map((v) => (
         <div key={v.label} className="flex items-center justify-between text-xs">
           <span className="text-muted-foreground">{v.label}</span>
-          <span className={`inline-flex items-center gap-1 font-medium ${v.ok ? 'text-green-700' : 'text-amber-700'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${v.ok ? 'bg-green-600' : 'bg-amber-500'}`} />
+          <span className={`inline-flex items-center gap-1 font-medium ${v.ok ? 'text-success' : 'text-muted-foreground'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${v.ok ? 'bg-success' : 'bg-muted-foreground'}`} />
             {v.value}
           </span>
         </div>

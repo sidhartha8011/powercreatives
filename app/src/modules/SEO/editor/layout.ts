@@ -86,9 +86,11 @@ export const BLOCK_STYLES =
   // law (owner 2026-07-13): SELF-hover only (`.pcm-chip-x:hover`, never a
   // container-hover — that darkened every chip from anywhere in the text)
   // and hover LIGHTENS. Colors state the action: green = keep (save
-  // family), blue = asks the AI (generate family), grey ghost = decline.
+  // family), blue = asks the AI (generate family), grey ghost = decline —
+  // every colour a SHARED token (success / primary / accent / border / muted),
+  // never an inline palette (owner card 11).
   '[&_.pcm-review-chip]:float-right [&_.pcm-review-chip]:ml-2 [&_.pcm-review-chip]:inline-flex [&_.pcm-review-chip]:gap-1 [&_.pcm-review-chip]:align-middle ' +
   '[&_.pcm-review-chip_button]:rounded-full [&_.pcm-review-chip_button]:px-2 [&_.pcm-review-chip_button]:py-0.5 [&_.pcm-review-chip_button]:text-[10px] ' +
-  '[&_.pcm-chip-accept]:bg-green-600 [&_.pcm-chip-accept]:font-medium [&_.pcm-chip-accept]:text-white [&_.pcm-chip-accept:hover]:bg-green-500 ' +
-  '[&_.pcm-chip-revise]:border [&_.pcm-chip-revise]:border-primary/40 [&_.pcm-chip-revise]:bg-white [&_.pcm-chip-revise]:text-primary [&_.pcm-chip-revise:hover]:bg-[#e7f5ff] ' +
-  '[&_.pcm-chip-ghost]:border [&_.pcm-chip-ghost]:border-slate-200 [&_.pcm-chip-ghost]:bg-white [&_.pcm-chip-ghost]:text-slate-500 [&_.pcm-chip-ghost:hover]:bg-slate-50';
+  '[&_.pcm-chip-accept]:bg-success [&_.pcm-chip-accept]:font-medium [&_.pcm-chip-accept]:text-success-foreground [&_.pcm-chip-accept:hover]:bg-success/85 ' +
+  '[&_.pcm-chip-revise]:border [&_.pcm-chip-revise]:border-primary/40 [&_.pcm-chip-revise]:bg-card [&_.pcm-chip-revise]:text-primary [&_.pcm-chip-revise:hover]:bg-accent ' +
+  '[&_.pcm-chip-ghost]:border [&_.pcm-chip-ghost]:border-border [&_.pcm-chip-ghost]:bg-card [&_.pcm-chip-ghost]:text-muted-foreground [&_.pcm-chip-ghost:hover]:bg-muted';

@@ -45,7 +45,7 @@ export function ImagePanel({ img, busyAction }: ImagePanelProps) {
           <button
             type="button"
             onClick={() => { void saveImageMeta('save'); }}
-            className="inline-flex items-center gap-1 rounded bg-green-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-green-500"
+            className="inline-flex items-center gap-1 rounded bg-success px-2 py-1 text-[10px] font-medium text-success-foreground hover:bg-success/85"
           >
             {busyAction === 'imageSave' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Save
           </button>
@@ -53,7 +53,7 @@ export function ImagePanel({ img, busyAction }: ImagePanelProps) {
             type="button"
             onClick={() => { void saveImageMeta('hide'); }}
             title="Stop serving this image — it stays in the media library; restore it via the versions dropdown"
-            className="inline-flex items-center gap-1 rounded border border-red-200 bg-white px-2 py-1 text-[10px] text-red-600 hover:bg-red-50"
+            className="inline-flex items-center gap-1 rounded border border-destructive/30 bg-card px-2 py-1 text-[10px] text-destructive hover:bg-destructive/10"
           >
             {busyAction === 'imageHide' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Hide image
           </button>

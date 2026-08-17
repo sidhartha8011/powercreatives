@@ -878,10 +878,12 @@ interface PCM_Conn_Builder_Handler {
     public function label();
     public function detect($post_id);     // bool — does this builder own the post?
     public function regenerate($post_id); // clear/rebuild this builder's cache + CSS
+    public function render_html($post_id); // string — the builder's LIVE render of the post ('' = unknown)
 }
 abstract class PCM_Conn_Builder_Base implements PCM_Conn_Builder_Handler {
     public function regenerate($post_id) {}
     public function source_keys() { return array(); } // default: builder renders from post_content
+    public function render_html($post_id) { return ''; } // default: no authoritative render available
     protected function meta_has($post_id, $key) {
         $v = get_post_meta($post_id, $key, true);
         return $v !== '' && $v !== false && $v !== null && $v !== array();
@@ -895,6 +897,23 @@ class PCM_Conn_B_Elementor extends PCM_Conn_Builder_Base {
     public function regenerate($post_id) {
         do_action('elementor/core/files/clear_cache');
         if (class_exists('\\Elementor\\Plugin')) { try { \Elementor\Plugin::$instance->files_manager->clear_cache(); } catch (\Throwable $e) {} }
+    }
+    /** Elementor's own frontend render of the post — what a visitor actually gets. _elementor_data
+     *  carries settings that never reach the page (defaults of unused controls, values overridden by
+     *  dynamic tags, elements whose display conditions fail), so "it is in the data" is not "it is on
+     *  the page". Errors/absent API → '' and the caller keeps every harvested link (visibility floor). */
+    public function render_html($post_id) {
+        if (!class_exists('\\Elementor\\Plugin') || !isset(\Elementor\Plugin::$instance->frontend)) { return ''; }
+        $level = ob_get_level();
+        try {
+            ob_start();
+            $html = (string) \Elementor\Plugin::$instance->frontend->get_builder_content_for_display((int) $post_id, false);
+            $noise = (string) ob_get_clean(); // anything the render echoed instead of returning
+            return $html !== '' ? $html : $noise;
+        } catch (\Throwable $e) {
+            while (ob_get_level() > $level) { ob_end_clean(); }
+            return '';
+        }
     }
 }
 class PCM_Conn_B_Bricks extends PCM_Conn_Builder_Base {
@@ -1252,7 +1271,8 @@ class PCM_Conn_Builder_Manager {
         // stale cache copies of edited links), so scan ONLY the source keys. Content-based builders
         // (Divi/WPBakery shortcodes) and classic posts keep the full post_content + all-meta scan.
         $source_keys = array();
-        foreach ($this->detect($post_id) as $h) {
+        $handlers    = $this->detect($post_id);
+        foreach ($handlers as $h) {
             foreach ((array) $h->source_keys() as $k) { $source_keys[] = (string) $k; }
         }
         $result = $this->scan_links_pass($post_id, $source_keys);
@@ -1263,7 +1283,40 @@ class PCM_Conn_Builder_Manager {
         if (!empty($source_keys) && empty($result)) {
             $result = $this->scan_links_pass($post_id, array());
         }
+        // ON-THE-PAGE guard: a builder's source data holds more than the page shows — defaults of
+        // controls that were never used, values a dynamic tag overrides at render, elements whose
+        // display conditions fail. Reported as links, those are phantoms nobody can clear from the
+        // page (bokatandlakartid.se: 27 "dead links" under an old install path, none of them in the
+        // rendered homepage — "the scan is stale no matter what we fix on the site"). When a builder
+        // can hand us its LIVE render, keep only builder links whose target actually occurs in it.
+        // No render (other builders, an API hiccup) → keep everything: never trade a phantom for a
+        // blind spot.
+        $rendered = '';
+        foreach ($handlers as $h) {
+            $rendered = (string) $h->render_html($post_id);
+            if ($rendered !== '') { break; }
+        }
+        if ($rendered !== '') {
+            $hay = rawurldecode(html_entity_decode($rendered, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+            $result = array_values(array_filter($result, static function ($l) use ($hay) {
+                if (($l['source'] ?? '') !== 'builder') { return true; }
+                return PCM_Conn_Builder_Manager::url_on_page((string) ($l['to'] ?? ''), $hay);
+            }));
+        }
         return $result;
+    }
+    /** Does $url occur in the (entity/percent-decoded) render? Matched on the PATH when there is one
+     *  (a render may absolutise, escape or CDN-prefix a URL, but its path survives), on the host for
+     *  a bare homepage link. Conservative: an unparseable URL is treated as present. */
+    public static function url_on_page($url, $hay) {
+        if ($url === '' || $hay === '') { return true; }
+        $p    = @parse_url($url);
+        $path = is_array($p) ? (string) ($p['path'] ?? '') : '';
+        if ($path !== '' && $path !== '/') {
+            return stripos($hay, $path) !== false || stripos($hay, rawurldecode($path)) !== false;
+        }
+        $host = is_array($p) ? (string) ($p['host'] ?? '') : '';
+        return $host === '' || stripos($hay, $host) !== false;
     }
     /** One harvest pass: $source_keys scopes the meta scan; empty = post_content + all meta. */
     private function scan_links_pass($post_id, $source_keys) {
@@ -1349,8 +1402,24 @@ class PCM_Conn_Builder_Manager {
                 $generic = self::label_from_node($val);
                 if ($generic !== '') { $lbl = $generic; }
             }
-            if (isset($val['url']) && is_string($val['url']) && preg_match('#^https?://#i', $val['url'])) {
-                $out[] = array('anchor' => $lbl, 'to' => $val['url'], 'html' => '', 'source' => 'builder', 'elId' => $el_id);
+            // MEDIA is not a link. Elementor/Bricks/Breakdance store an image/video/file pick as
+            // {url, id, …} — the attachment id rides beside the url — while a LINK control is
+            // {url, is_external, nofollow, …} and never carries an attachment id. Reporting media
+            // refs as links inflated the counts with every image on the page and, worse, surfaced
+            // refs that never render (bokatandlakartid.se: 27 "dead links" that were image-control
+            // DEFAULTS — Elementor's own placeholder asset under a moved install path — which no fix
+            // on the page could ever clear). Elementor's placeholder asset is skipped outright.
+            $u = isset($val['url']) && is_string($val['url']) ? $val['url'] : '';
+            $is_media = $u !== '' && array_key_exists('id', $val) && !array_key_exists('is_external', $val) && !array_key_exists('nofollow', $val) && !array_key_exists('elType', $val);
+            if ($u !== '' && !$is_media && !preg_match('#/plugins/elementor/assets/#i', $u)) {
+                if (preg_match('#^https?://#i', $u)) {
+                    $out[] = array('anchor' => $lbl, 'to' => $u, 'html' => '', 'source' => 'builder', 'elId' => $el_id);
+                } elseif (preg_match('#^/(?!/)#', $u)) {
+                    // Root-relative builder links ("/tandlakare") ARE the page's real links on many
+                    // sites; they were invisible while absolute media refs were counted. Report them
+                    // absolute (host = this site) so the hub classifies + probes them like any other.
+                    $out[] = array('anchor' => $lbl, 'to' => rtrim((string) home_url(), '/') . $u, 'html' => '', 'source' => 'builder', 'elId' => $el_id, 'stored' => $u);
+                }
             }
             // Brizy stores a button/link target under linkExternal, not url — guarded by its own
             // linkType so a stale value left over from a previous link type isn't reported as live.
@@ -1551,6 +1620,49 @@ add_action('rest_api_init', function () {
             return call_user_func($read);
         }),
     ));
+    // Thumbnail BYTES for the hub's SEO-table Image cell — read from DISK, never over
+    // HTTP. Why: sites behind a bot-challenge wall (massagegoteborg.nu: Cloudflare 403s
+    // every /wp-content/uploads request from any other origin, even a full browser
+    // header set) can never render their own featured images in the hub — the cell
+    // showed a placeholder even right after "Featured image set". The REST namespace
+    // passes that wall (proven live: /?rest_route= and /wp-json/ both answer), so the
+    // hub asks HERE, caches the bytes, and serves them from its own origin. Image
+    // mimes only, smallest fitting size, hard 2 MB cap; base64 keeps the connector's
+    // JSON contract (the hub's transport decodes JSON everywhere).
+    register_rest_route('pcm-conn/v1', '/media', array(
+        'methods' => 'GET', 'permission_callback' => $perm,
+        'callback' => function ($req) {
+            $id  = absint($req->get_param('id'));
+            $url = (string) $req->get_param('url');
+            if (!$id && $url !== '') { $id = (int) attachment_url_to_postid($url); }
+            if (!$id || get_post_type($id) !== 'attachment') { return new WP_REST_Response(array('error' => 'not_found'), 404); }
+            $mime = (string) get_post_mime_type($id);
+            if (strpos($mime, 'image/') !== 0 || $mime === 'image/svg+xml') { return new WP_REST_Response(array('error' => 'not_image'), 415); }
+            $size = sanitize_key((string) ($req->get_param('size') ?: 'thumbnail'));
+            $path = '';
+            // Requested size → any smaller registered size → the original (bounded below).
+            foreach (array_unique(array($size, 'thumbnail', 'medium')) as $s) {
+                $src = image_get_intermediate_size($id, $s);
+                if (is_array($src) && !empty($src['path'])) {
+                    $dir = wp_get_upload_dir();
+                    $cand = trailingslashit((string) $dir['basedir']) . ltrim((string) $src['path'], '/');
+                    if (is_readable($cand)) { $path = $cand; break; }
+                }
+            }
+            if ($path === '') { $orig = (string) get_attached_file($id); if ($orig !== '' && is_readable($orig)) { $path = $orig; } }
+            if ($path === '' || (int) filesize($path) > 2 * 1024 * 1024) { return new WP_REST_Response(array('error' => 'too_large'), 413); }
+            $bytes = (string) file_get_contents($path);
+            $info  = @getimagesizefromstring($bytes);
+            if (!is_array($info) || empty($info['mime']) || strpos((string) $info['mime'], 'image/') !== 0) { return new WP_REST_Response(array('error' => 'not_image'), 415); }
+            return new WP_REST_Response(array(
+                'id'   => $id,
+                'mime' => (string) $info['mime'],
+                'w'    => (int) ($info[0] ?? 0),
+                'h'    => (int) ($info[1] ?? 0),
+                'data' => base64_encode($bytes),
+            ), 200);
+        },
+    ));
     // Featherweight page-state (3.0.7, gap e48b1ff): version+fingerprint ONLY —
     // no page render, no rule application. version 0 / '' = never pushed under
     // versioning (the true baseline, never an invention).
@@ -1697,7 +1809,19 @@ add_action('rest_api_init', function () {
             $el_id = (is_array($p) && isset($p['elId'])) ? (string) $p['elId'] : '';
             if ($el_id !== '' && count($replacements) === 1) {
                 $old = (string) array_key_first($replacements); $new = (string) $replacements[$old];
-                return new WP_REST_Response(pcm_conn_builder_manager()->replace_link_in_element($pid, $el_id, $old, $new), 200);
+                $r = pcm_conn_builder_manager()->replace_link_in_element($pid, $el_id, $old, $new);
+                // The scan reports root-relative builder links ABSOLUTE (host = this site); the hub
+                // sends that absolute form back as `old`. If the element stores the relative form
+                // ("/tandlakare"), retry with it — scoped to this one element, so the short needle
+                // cannot touch anything else on the page.
+                if ((int) ($r['replaced'] ?? 0) === 0) {
+                    $home = rtrim((string) home_url(), '/');
+                    if ($home !== '' && stripos($old, $home . '/') === 0) {
+                        $rel = substr($old, strlen($home));
+                        if ($rel !== '' && $rel !== $new) { $r = pcm_conn_builder_manager()->replace_link_in_element($pid, $el_id, $rel, $new); }
+                    }
+                }
+                return new WP_REST_Response($r, 200);
             }
             return new WP_REST_Response(pcm_conn_builder_manager()->replace_links($pid, $replacements), 200);
         },

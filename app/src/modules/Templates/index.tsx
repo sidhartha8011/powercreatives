@@ -11,6 +11,7 @@
  */
 
 import { ModuleHeader } from "@/components/shared/ModuleHeader";
+import { isPromptOnlyModule } from "./templateVars";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -506,7 +507,8 @@ export function TemplatesModule() {
             type,
             niche,
             groupName,
-            entries: [{ category: subtype ?? "default", value }],
+            // Prompt-only modules (writer/video/seo/optimizer): the entry IS the prompt, whatever the CSV says.
+            entries: [{ category: isPromptOnlyModule(module) ? "prompt" : (subtype ?? "default"), value }],
           });
           successCount++;
         } catch {

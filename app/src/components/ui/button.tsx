@@ -12,6 +12,11 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
         destructive:
           "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
+        // The "keep / accept / save" action — the ONE success green (token
+        // `--success`, defined once in index.css). Surfaces used to hand-roll
+        // `bg-green-600 hover:bg-green-700 text-white`; this is that look, shared.
+        success:
+          "bg-success text-success-foreground hover:bg-success/90 focus-visible:ring-success/20",
         // Outline buttons must READ as controls. `bg-transparent` let the page
         // (`--background`, oklch .98) show through, so an outline button on a
         // toolbar dissolved into the page. `--card` (white) matches the input/
@@ -29,6 +34,10 @@ const buttonVariants = cva(
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",
         sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
+        // In-cell / in-row controls (table cells, list rows). The ONE small size, so
+        // tiny actions share the app's type scale (text-xs), radius and colours
+        // instead of each surface hand-rolling a 10px chip with its own palette.
+        xs: "h-6 rounded-md gap-1 px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
         lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
         icon: "size-9",
         "icon-sm": "size-8",

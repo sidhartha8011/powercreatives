@@ -35,17 +35,19 @@ console.log('\n1. The component exists and the cell uses it');
 const at = SRC.indexOf('function FeaturedThumb(');
 check('FeaturedThumb is defined at module scope (stable identity, no remount per render)',
   at !== -1 && /\nfunction FeaturedThumb\(/.test(SRC), at);
-check('the Image cell renders it', SRC.includes('<FeaturedThumb src={row.featuredImage || \'\'} hasImageId={hasImageId} />'), 'cell not wired');
+// 2026-08-18: the cell also hands over the hub proxy URL for connected sites (multi-line JSX now).
+check('the Image cell renders it', /<FeaturedThumb\s+src=\{row\.featuredImage \|\| ''\}\s+hasImageId=\{hasImageId\}/.test(SRC), 'cell not wired');
 check('no bare <img> is left in the Image cell',
   !/case 'featuredImage'[\s\S]{0,900}?<img /.test(SRC), 'raw img survives in the cell');
 const body = SRC.slice(at, SRC.indexOf('\nfunction rowCellIsEmpty', at));
 
 console.log('\n2. The failure path exists at all');
-check('the image reports its own failure (onError)', /onError=\{\(\) => setFailed\(true\)\}/.test(body), 'no onError — broken glyph stays');
+// 2026-08-18: failure now steps direct → hub proxy → placeholder (same law: a failure is REPORTED, never a torn glyph).
+check('the image reports its own failure (onError)', /onError=\{\(\) => setStage\(\(s\) => \(s === 'direct' && proxySrc \? 'proxy' : 'failed'\)\)\}/.test(body), 'no onError — broken glyph stays');
 check('a failed load flips to the placeholder, not a retry loop',
-  /if \(src && !failed\)/.test(body), 'failed state not consulted');
+  /const attempt = stage === 'direct' \? src : stage === 'proxy' \? proxySrc : '';\s*if \(attempt\)/.test(body), 'failed state not consulted');
 check('a NEW url resets the failed state (changed image / other site gets a fresh try)',
-  /useEffect\(\(\) => \{ setFailed\(false\); \}, \[src\]\)/.test(body), 'stuck on the old failure');
+  /useEffect\(\(\) => \{ setStage\('direct'\); \}, \[src, proxySrc\]\)/.test(body), 'stuck on the old failure');
 check('referrerPolicy="no-referrer" is sent (rescues HOTLINK-protected sites, which allow an empty referer)',
   /referrerPolicy="no-referrer"/.test(body), 'cross-site referer still sent');
 check('lazy loading kept (75-row tables)', /loading="lazy"/.test(body));
@@ -63,7 +65,9 @@ const decide = (src, failed, hasImageId) => {
 // The table below runs a TRANSCRIPTION of the decision, so pin the two source
 // expressions it transcribes — otherwise editing the component's own logic (e.g.
 // hardcoding `blocked = false`) would leave this section happily green.
-check('source: the image branch is exactly (src && !failed)', /if \(src && !failed\) \{/.test(body), 'branch changed');
+// 2026-08-18: the branch is now staged — `attempt` is the direct src, then the hub proxy,
+// then '' (placeholder). With no proxy it is byte-for-byte the old (src && !failed).
+check('source: the image branch is exactly (attempt = direct → proxy → none)', /const attempt = stage === 'direct' \? src : stage === 'proxy' \? proxySrc : '';\s*if \(attempt\) \{/.test(body), 'branch changed');
 check('source: blocked is derived from the url being present', /const blocked = src !== '';/.test(body), 'blocked derivation changed');
 const cases = [
   ['a working image renders', ['https://ok.test/t.jpg', false, true], 'image'],

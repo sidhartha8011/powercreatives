@@ -131,8 +131,11 @@ check('delete confirms before cutting', preg_match('/deleteWhole[\s\S]{0,400}?wi
 check('delete refreshes the Deleted list', preg_match('/deleteWhole[\s\S]{0,900}?refetchDeleted\(\)/', $ui) === 1);
 check('the Deleted list renders with Restore', strpos($ui, 'Deleted links on this page') !== false && strpos($ui, 'restoreDeleted(d.ledgerId)') !== false);
 check('deleted rows stay visible (struck through, not hidden)', strpos($ui, 'line-through') !== false);
+// The gate grew a builder branch (card 10: builder ELEMENTS have no <a> to unlink/rel/delete —
+// they get a lock + reason). Read-only rows still get nothing; the three actions sit only in
+// the `editable ?` branch that follows it.
 check('all three actions live inside the editable gate',
-    preg_match('/\{editable \? \(\s*\n\s*<>/', $ui) === 1, 'actions offered on read-only rows');
+    preg_match('/\{editable && isBuilderRow\(l\) \? \([\s\S]{0,600}?\) : editable \? \(\s*\r?\n\s*<>/', $ui) === 1, 'actions offered on read-only rows');
 $routes = file_get_contents($ROOT . '/app/src/lib/trpc-routes.ts');
 foreach (array('seo.setLinkRel', 'seo.deleteLink', 'seo.deletedLinks', 'seo.restoreDeletedLink',
                'seo.remoteSetLinkRel', 'seo.remoteDeleteLink', 'seo.remoteDeletedLinks', 'seo.remoteRestoreDeletedLink') as $r) {

@@ -34,14 +34,15 @@ export const LockedImage = Image.extend({
 export const DiffAdded = Mark.create({
   name: 'diffAdded',
   parseHTML() { return [{ tag: 'span[data-diff-added]' }]; },
-  // ONE green (owner 2026-07-13): the same green-600 family as the shared
-  // save/Accept buttons — never a second green.
-  renderHTML() { return ['span', { 'data-diff-added': '1', class: 'rounded-sm bg-green-600/15 text-green-800' }, 0]; },
+  // ONE green (owner 2026-07-13): the same green as the shared save/Accept
+  // buttons — never a second green. Since card 11 that green is the shared
+  // `success` token; the tint marks added text, the text keeps its own colour.
+  renderHTML() { return ['span', { 'data-diff-added': '1', class: 'rounded-sm bg-success/15' }, 0]; },
 });
 export const DiffRemoved = Mark.create({
   name: 'diffRemoved',
   parseHTML() { return [{ tag: 'span[data-diff-removed]' }]; },
-  renderHTML() { return ['span', { 'data-diff-removed': '1', class: 'rounded-sm bg-red-50 text-red-800 line-through decoration-red-400' }, 0]; },
+  renderHTML() { return ['span', { 'data-diff-removed': '1', class: 'rounded-sm bg-destructive/10 line-through decoration-destructive' }, 0]; },
 });
 
 /** SECTION BLOCKS (page mode, owner UX ruling 2026-07-13): every section is

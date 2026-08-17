@@ -123,8 +123,14 @@ check('it explains the SYMPTOM the owner reported (slow/blank meta columns)',
 check('it offers the self-update the connector already supports',
     strpos($ui, 'connectorUpdate.mutate({ id: siteId })') !== false && strpos($ui, 'Update connector') !== false);
 check('the update route is the per-site one', strpos(file_get_contents($ROOT . '/app/src/lib/trpc-routes.ts'), 'sites/${input.id}/update-connector') !== false);
+// A refusal is a hub 409 (pcm_conn_too_old) whose message names the reinstall; the UI must
+// relay THAT message (onError), never a canned success — and never (card 8) the reverse:
+// treating a real success as a refusal by testing keys the payload does not have.
+$ctl = file_get_contents($ROOT . '/includes/modules/sites/controller.php');
 check('a refused self-update says to reinstall instead of claiming success',
-    strpos($ui, 'reinstall it once (Download connector)') !== false, 'fake success on refusal');
+    strpos($ctl, "Reinstall the connector once (Download connector), then it self-updates from here on.") !== false
+    && strpos($ui, "onError: (e: any) => toast.error(e.message ?? 'Could not update the connector.')") !== false
+    && strpos($ui, 'res?.updated || res?.ok') === false, 'fake success on refusal / fake refusal on success');
 check('the missing/inactive banner is untouched',
     strpos($ui, "(connectorState.status === 'missing' || connectorState.status === 'inactive')") !== false);
 

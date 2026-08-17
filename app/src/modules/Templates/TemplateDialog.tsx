@@ -54,7 +54,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { CreatableCombobox } from "@/components/ui/creatable-combobox";
 import { SourceVarsHint } from "./SourceVarsHint";
-import { templateVarsFor } from "./templateVars";
+import { templateVarsFor, isPromptOnlyModule } from "./templateVars";
 import { SlashVariableMenu, useSlashVariables } from "./SlashVariableMenu";
 
 // ============================================
@@ -440,13 +440,15 @@ export function TemplateDialog({
   }, [open, initialData]);
 
   // When module changes, cascade: reset type to first available
-  // For video module, also auto-set category to 'prompt' (categories are irrelevant)
+  // For prompt-only modules (writer/video/seo/optimizer) the entry IS the prompt:
+  // auto-set 'prompt' — a writer template saved under the dropdown default
+  // ('reference_ad') was ignored by the strategy engine and offered no variables.
   useEffect(() => {
     const types = MODULE_TYPE_OPTIONS[module];
     if (types && types.length > 0 && !types.find((t) => t.value === type)) {
       setType(types[0].value);
     }
-    if (module === "video" || module === "seo" || module === "optimizer") {
+    if (isPromptOnlyModule(module)) {
       setSelectedCategory("prompt");
     }
   }, [module]);
@@ -610,8 +612,8 @@ export function TemplateDialog({
               {isCurrentlyEditing ? "Edit Entry" : "Add Template"}
             </p>
 
-            {/* Module + Type dropdowns (+ Category for non-video modules) */}
-            <div className={`grid ${module === "video" || module === "seo" || module === "optimizer" ? "grid-cols-2" : "grid-cols-3"} gap-2`}>
+            {/* Module + Type dropdowns (+ Category for modules that have more than one kind of entry) */}
+            <div className={`grid ${isPromptOnlyModule(module) ? "grid-cols-2" : "grid-cols-3"} gap-2`}>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Module</Label>
                 <Select
@@ -653,8 +655,8 @@ export function TemplateDialog({
                 </Select>
               </div>
 
-              {/* Category dropdown — only for Copy/Image (Video/SEO/Optimizer auto-default to 'prompt') */}
-              {module !== "video" && module !== "seo" && module !== "optimizer" && (
+              {/* Category dropdown — only for Copy/Image (Writer/Video/SEO/Optimizer auto-default to 'prompt') */}
+              {!isPromptOnlyModule(module) && (
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">
                     Category

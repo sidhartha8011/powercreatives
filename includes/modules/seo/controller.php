@@ -125,6 +125,8 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)', 'remote_update_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings/(?P<idx>\d+)/optimize', 'remote_optimize_heading', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/featured', 'remote_set_featured', array(), 'manage_options'),
+            // Thumbnail BYTES via the connector (disk read) — for sites whose bot/hotlink wall refuses /wp-content to other origins.
+            array('GET',  '/seo/sites/(?P<id>\d+)/thumb', 'remote_thumb', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/preview', 'remote_preview', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_get',   array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_save',  array(), 'manage_options'),
@@ -1048,6 +1050,48 @@ class PCM_REST_SEO extends PCM_REST_Base
             return $result;
         }
         return $this->success($result);
+    }
+
+    /**
+     * GET /seo/sites/{id}/thumb?attachmentId=&url=&size= — stream a connected post's
+     * thumbnail from the hub's own origin (see PCM_SEO_Service::remote_thumbnail).
+     * The Image cell loads the site's URL directly first and only comes here when
+     * that fails (bot / hotlink protection), so ordinary sites cost the hub nothing.
+     * Raw bytes, not the JSON envelope: the browser's <img> is the consumer.
+     */
+    public function remote_thumb(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $result = PCM_SEO_Service::remote_thumbnail(
+            $site,
+            absint($request->get_param('attachmentId')),
+            esc_url_raw((string) $request->get_param('url')),
+            sanitize_key((string) ($request->get_param('size') ?: 'thumbnail'))
+        );
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->stream_bytes((string) $result['mime'], (string) $result['bytes']);
+    }
+
+    /** Send raw bytes to the client and end the request (REST would otherwise JSON-wrap them). */
+    protected function stream_bytes(string $mime, string $bytes): WP_REST_Response
+    {
+        if (defined('PCM_TESTING_NO_EXIT') && PCM_TESTING_NO_EXIT) {
+            return new WP_REST_Response(array('mime' => $mime, 'length' => strlen($bytes)), 200);
+        }
+        if (!headers_sent()) {
+            header('Content-Type: ' . $mime);
+            header('Content-Length: ' . strlen($bytes));
+            header('Cache-Control: private, max-age=86400');
+            header('X-Content-Type-Options: nosniff');
+        }
+        echo $bytes; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- binary image data
+        exit;
     }
 
     /** GET /seo/sites/{id}/site — read a connected site's hub-managed Site settings. */

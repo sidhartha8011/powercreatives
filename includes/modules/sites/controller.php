@@ -193,11 +193,45 @@ class PCM_REST_Sites extends PCM_REST_Base
         if ($code >= 300) {
             return $this->error((string) ($body['message'] ?? ('HTTP ' . $code)), 502, 'pcm_conn_update_failed');
         }
+        // The connector answered /update-now (updated OR already up-to-date): whatever
+        // route-capability flags the SEO module recorded against this site are stale
+        // now — clear them so the "older build" banner disappears on the next status
+        // read instead of nagging until the next successful meta fetch (up to 12h).
+        // The flags re-arm honestly if a route still 404s after the update.
+        PCM_Sites_Service::mark_connector_route((int) $site->id, 'head-tags', true);
+        PCM_Sites_Service::mark_connector_route((int) $site->id, 'media', true);
+        $installed = PCM_Sites_Service::remote_connector_version($site);
+        $status    = (string) ($body['status'] ?? 'ok');
+        // "up-to-date" is the connector's OWN verdict, formed by asking WordPress to poll
+        // the hub's manifest. If that poll silently fails on the client site (the hub
+        // URL unreachable from there, a security plugin blocking outbound requests, a
+        // stale update transient), the connector honestly believes it is current while
+        // it is NOT — the version the HUB serves is higher. That is precisely "the
+        // update doesn't work even though it's a self-updating build". Compare and say
+        // so, instead of relaying a verdict the hub can see is wrong.
+        $served = class_exists('PCM_SEOHub_Service') && method_exists('PCM_SEOHub_Service', 'connector_effective_version')
+            ? (string) PCM_SEOHub_Service::connector_effective_version()
+            : '';
+        $stale  = $status === 'up-to-date' && $installed !== '' && $served !== '' && version_compare($installed, $served, '<');
+        if ($stale) {
+            // Not an error status — the request DID work — but the truth belongs in the payload.
+            $status = 'stale';
+        }
         return $this->success(array(
-            'status'  => (string) ($body['status'] ?? 'ok'),
-            'from'    => (string) ($body['from'] ?? ''),
-            'to'      => (string) ($body['to'] ?? ''),
-            'version' => PCM_Sites_Service::remote_connector_version($site),
+            'status'    => $status,
+            'from'      => (string) ($body['from'] ?? ''),
+            'to'        => (string) ($body['to'] ?? ''),
+            'version'   => $installed,
+            'served'    => $served,
+            'message'   => $stale
+                ? sprintf(
+                    /* translators: 1: installed version, 2: version the hub serves */
+                    __('The connector reports itself up to date at v%1$s, but this hub serves v%2$s. The site could not fetch the update manifest from the hub — check that the site can reach %3$s (firewall/security plugin), then try again; or reinstall once via Download connector.', 'power-creatives'),
+                    $installed,
+                    $served,
+                    home_url('/')
+                )
+                : '',
         ));
     }
 

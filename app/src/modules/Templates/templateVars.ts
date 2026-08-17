@@ -58,6 +58,18 @@
  * global lookup.
  */
 
+/**
+ * Modules whose entries can ONLY be prompts — there is no other category with a
+ * meaning there, so the editor auto-sets 'prompt', hides the category picker, and
+ * the variable menu is on offer whatever category an OLD row was saved under
+ * (the strategy engine normalises writer entries to 'prompt' on read for the same
+ * reason). Writer joined video/seo/optimizer here (owner cards 5/13): a writer
+ * template created in the dialog used to land under the dropdown's default,
+ * 'reference_ad' — no variables offered, and its text ignored at generation.
+ */
+export const PROMPT_ONLY_MODULES = new Set(['writer', 'video', 'seo', 'optimizer']);
+export const isPromptOnlyModule = (module?: string): boolean => PROMPT_ONLY_MODULES.has(String(module ?? ''));
+
 /** A variable on offer, with what it resolves to. */
 export interface TemplateVar {
   token: string;
@@ -96,6 +108,7 @@ const WRITER_VARS: Record<string, string> = {
   '{{ post_content }}': 'Body text of the source post. Using any post_* token replaces the built-in “write about this post” instruction.',
   '{{ post_link }}': 'URL of the source post.',
   '{{ keyword }}': 'The item’s target keyword. Placing it stops the keyword line being auto-appended.',
+  '{{ primary_keyword }}': 'The same target keyword under its SEO-template name — placing it also stops the keyword line being auto-appended.',
   '{{ title }}': 'The article title — available when a writer template is reused as a strategy’s image prompt.',
   '{{ brand_context }}': 'The brand block (name, summary, tone, colours) the generator otherwise injects for you.',
   '{{ research }}': 'Research findings gathered for this item.',
@@ -216,6 +229,7 @@ function varsFor(module?: string): Record<string, string> {
  * builder; on any other category the token would stay literal.
  */
 export function templateVarsFor(module?: string, category?: string): TemplateVar[] {
-  if (category !== 'prompt') return [];
+  // Prompt-only modules: every entry is a prompt, whatever category it was stored under.
+  if (category !== 'prompt' && !isPromptOnlyModule(module)) return [];
   return Object.entries(varsFor(module)).map(([token, description]) => ({ token, description }));
 }

@@ -41,6 +41,7 @@ import {
 
 import { useSeoContent } from './hooks/useSeoContent';
 import { useRemoteSeoContent } from './hooks/useRemoteSeoContent';
+import { StagedSuggestion } from './StagedSuggestion';
 import { useColumnFilters } from '@/hooks/useColumnFilters';
 import { useViews, type SeoView } from './hooks/useViews';
 import { useColumnLayout } from '@/hooks/useColumnLayout';
@@ -130,25 +131,17 @@ function EditableCell({
     if (e.key === 'Escape') { setDraft(value); setEditing(false); }
   };
 
-  // Staged AI suggestion → show new value with accept / reject / re-generate.
+  // Staged AI suggestion → show new value with accept / reject / re-generate
+  // (the shared StagedSuggestion — same component as the Headings panel).
   if (suggestion != null) {
     return (
-      <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
-        <div className="text-xs text-foreground break-words whitespace-normal" title={suggestion}>{suggestion}</div>
-        <div className="flex items-center gap-1">
-          <button type="button" onClick={onAccept} disabled={generating} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
-            <Check className="w-3 h-3" /> Accept
-          </button>
-          <button type="button" onClick={onReject} disabled={generating} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-            <X className="w-3 h-3" /> Reject
-          </button>
-          {onGenerate && (
-            <button type="button" onClick={onGenerate} disabled={generating} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-              {generating ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <RefreshCw className="w-3 h-3" />} Re-generate
-            </button>
-          )}
-        </div>
-      </div>
+      <StagedSuggestion
+        suggestion={suggestion}
+        busy={generating}
+        onAccept={() => onAccept?.()}
+        onReject={() => onReject?.()}
+        onRegenerate={onGenerate}
+      />
     );
   }
 
@@ -353,19 +346,41 @@ const SELECT_COL_WIDTH = 44;
  * hotlink protection — allows an empty Referer while rejecting a cross-site one, so
  * this genuinely rescues images on those sites. It cannot help a bot-challenge wall.
  */
-function FeaturedThumb({ src, hasImageId }: { src: string; hasImageId: boolean }) {
-  const [failed, setFailed] = useState(false);
-  // A new URL (image changed / different site) deserves a fresh attempt.
-  useEffect(() => { setFailed(false); }, [src]);
+/**
+ * Hub-side thumbnail proxy URL for a CONNECTED post's image (GET /seo/sites/{id}/thumb):
+ * the connector reads the file from disk and the hub serves the bytes from its own
+ * origin — the one path a bot-challenge wall (massagegoteborg.nu) cannot block, since
+ * the site's REST namespace answers while /wp-content does not. Cookie auth needs the
+ * REST nonce on an <img> request, so it rides in the query. '' when there is nothing
+ * to ask for.
+ */
+function remoteThumbUrl(siteId: number, attachmentId: number, imageUrl: string): string {
+  if (!siteId || (!attachmentId && !imageUrl)) return '';
+  const cfg = getConfig();
+  const base = `${cfg.restUrl}seo/sites/${siteId}/thumb`;
+  const q = new URLSearchParams();
+  if (attachmentId) q.set('attachmentId', String(attachmentId));
+  if (imageUrl) q.set('url', imageUrl);
+  if (cfg.nonce) q.set('_wpnonce', cfg.nonce);
+  // A plain-permalink restUrl already carries `?rest_route=`; then our params must join with `&`.
+  return `${base}${base.includes('?') ? '&' : '?'}${q.toString()}`;
+}
 
-  if (src && !failed) {
+function FeaturedThumb({ src, hasImageId, proxySrc = '' }: { src: string; hasImageId: boolean; /** Hub proxy URL tried when the site refuses the direct load. */ proxySrc?: string }) {
+  // 'direct' → the site's own URL; 'proxy' → the hub's byte proxy; 'failed' → placeholder.
+  const [stage, setStage] = useState<'direct' | 'proxy' | 'failed'>('direct');
+  // A new URL (image changed / different site) deserves a fresh attempt.
+  useEffect(() => { setStage('direct'); }, [src, proxySrc]);
+
+  const attempt = stage === 'direct' ? src : stage === 'proxy' ? proxySrc : '';
+  if (attempt) {
     return (
       <img
-        src={src}
+        src={attempt}
         alt=""
         loading="lazy"
         referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
+        onError={() => setStage((s) => (s === 'direct' && proxySrc ? 'proxy' : 'failed'))}
         className="h-8 w-8 rounded object-cover"
       />
     );
@@ -375,7 +390,9 @@ function FeaturedThumb({ src, hasImageId }: { src: string; hasImageId: boolean }
     <span
       title={
         blocked
-          ? 'This page has a featured image, but the site refuses to serve it to other origins (bot protection or hotlink protection), so it cannot be previewed here. Click to choose another.'
+          ? (proxySrc
+              ? 'This page has a featured image, but neither the site nor its connector would serve it here. If the site is behind bot protection, update its connector (SEO → Update connector) so images load through it. Click to choose another.'
+              : 'This page has a featured image, but the site refuses to serve it to other origins (bot protection or hotlink protection), so it cannot be previewed here. Click to choose another.')
           : hasImageId
             ? 'A featured image is set on this page, but its URL could not be read (the media may be restricted). Click to choose another.'
             : 'Set featured image'
@@ -504,8 +521,28 @@ export function SEOModule() {
   // /head-tags, offer the self-update it already supports.
   const connectorUpdate = trpc.sites.updateConnector.useMutation({
     onSuccess: (res: any) => {
-      if (res?.updated || res?.ok) toast.success(`Connector updated${res?.to ? ` to v${res.to}` : ''}. Reload to read the meta tags.`);
-      else toast.error(res?.message || 'The connector could not self-update — reinstall it once (Download connector).');
+      // The hub answers { status: 'updated' | 'up-to-date', from, to, version } — the
+      // connector's own contract, re-read version included. The first version of
+      // this handler tested `res.updated || res.ok`, keys that do NOT exist, so a
+      // SUCCESSFUL update fell through to the "could not self-update — reinstall"
+      // toast (bugfix card 8: "Plugin update is not working… even if the version is
+      // the version with a self-updating package"). Real failures never reach
+      // onSuccess — the hub returns 409/502 and onError below handles them.
+      const status = String(res?.status ?? '');
+      const version = res?.version ? ` (v${res.version})` : '';
+      if (status === 'updated') {
+        toast.success(`Connector updated${res?.from && res?.to ? ` ${res.from} → ${res.to}` : ''}${version}. Reload the table to use the new build.`);
+      } else if (status === 'up-to-date') {
+        // Already the newest build. If the banner still called it outdated, that flag
+        // was stale — the refetch below re-reads the site and clears it.
+        toast.success(`The connector is already the newest build${version}.`);
+      } else if (status === 'stale') {
+        // The site BELIEVES it is current but the hub serves a newer build — its update
+        // poll can't reach the hub. The hub's message names the exact remedy.
+        toast.warning(res?.message || 'The connector could not fetch the update from this hub — check the site can reach it, or reinstall once via Download connector.', { duration: 12000 });
+      } else {
+        toast.success(`Connector update finished${version}.`);
+      }
       void connectorStatusQuery.refetch();
     },
     onError: (e: any) => toast.error(e.message ?? 'Could not update the connector.'),
@@ -1592,7 +1629,12 @@ export function SEOModule() {
               }
               className="inline-flex items-center justify-center align-middle transition-opacity hover:opacity-80"
             >
-              <FeaturedThumb src={row.featuredImage || ''} hasImageId={hasImageId} />
+              <FeaturedThumb
+                src={row.featuredImage || ''}
+                hasImageId={hasImageId}
+                // Connected sites only: the hub proxy that survives a bot/hotlink wall.
+                proxySrc={isLocal ? '' : remoteThumbUrl(siteId as number, row.featuredImageId ?? 0, row.featuredImage || '')}
+              />
             </button>
           </TableCell>
         );
@@ -2150,7 +2192,7 @@ export function SEOModule() {
             {pendingCount} AI suggestion{pendingCount > 1 ? 's' : ''} pending
           </span>
           <span className="flex-1" />
-          <Button size="sm" className="h-7 gap-1.5 bg-green-600 hover:bg-green-700" onClick={acceptAllStaged}>
+          <Button size="sm" variant="success" className="h-7 gap-1.5" onClick={acceptAllStaged}>
             <Check className="w-3.5 h-3.5" /> Accept all &amp; save
           </Button>
           <Button variant="ghost" size="sm" className="h-7 gap-1.5" onClick={discardAllStaged}>

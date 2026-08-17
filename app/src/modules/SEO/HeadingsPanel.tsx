@@ -24,7 +24,8 @@
  */
 
 import { Fragment, useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react';
-import { Loader2, Sparkles, Check, X, RefreshCw, ChevronDown, CornerDownRight, Lock, Maximize2, Plus } from 'lucide-react';
+import { Loader2, Sparkles, ChevronDown, CornerDownRight, Lock, Maximize2, Plus } from 'lucide-react';
+import { StagedSuggestion } from './StagedSuggestion';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
@@ -641,20 +642,13 @@ export function HeadingRows({
                       ) : null}
                       <div className="flex-1 min-w-0">
                         {suggestion != null ? (
-                          <div className="space-y-1 rounded-md bg-accent border border-primary/20 p-1.5">
-                            <div className="text-xs text-foreground break-words whitespace-normal" title={suggestion}>{suggestion}</div>
-                            <div className="flex items-center gap-1">
-                              <button type="button" onClick={() => acceptSuggestion(n)} disabled={busy} title="Accept" className="inline-flex items-center gap-0.5 rounded bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-green-700 disabled:opacity-60">
-                                <Check className="w-3 h-3" /> Accept
-                              </button>
-                              <button type="button" onClick={() => rejectSuggestion(n.index)} disabled={busy} title="Reject" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-                                <X className="w-3 h-3" /> Reject
-                              </button>
-                              <button type="button" onClick={() => optimize(n)} disabled={busy} title="Re-generate" className="inline-flex items-center gap-0.5 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted disabled:opacity-60">
-                                {busy ? <Loader2 className="w-3 h-3 animate-spin text-primary" /> : <RefreshCw className="w-3 h-3" />} Re-generate
-                              </button>
-                            </div>
-                          </div>
+                          <StagedSuggestion
+                            suggestion={suggestion}
+                            busy={busy}
+                            onAccept={() => acceptSuggestion(n)}
+                            onReject={() => rejectSuggestion(n.index)}
+                            onRegenerate={() => optimize(n)}
+                          />
                         ) : !readOnly ? (
                           <HeadingText
                             value={n.text}

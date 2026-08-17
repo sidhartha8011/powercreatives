@@ -39,7 +39,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { templateVarsFor } from "./templateVars";
+import { templateVarsFor, isPromptOnlyModule } from "./templateVars";
 import { SlashVariableMenu, useSlashVariables } from "./SlashVariableMenu";
 import { TableRow, TableCell } from "@/components/ui/table";
 import {
@@ -423,10 +423,10 @@ export function TemplateRow({
 
 
       {/* 6. Subtype — inline visible Select (Reference/Tonality/Prompt/Preset) */}
-      {/* Hidden for video templates — categories are irrelevant for video */}
+      {/* Hidden for prompt-only modules (writer/video/seo/optimizer) — every entry there is the prompt */}
       <TableCell>
-        {template.module === "video" ? (
-          <span className="text-xs text-muted-foreground/50 italic">—</span>
+        {isPromptOnlyModule(template.module) ? (
+          <span className="text-xs text-muted-foreground/50 italic" title="Every entry in this module is a prompt">{template.module === "video" ? "—" : "Prompt"}</span>
         ) : (
           <Select
             value={subtype}

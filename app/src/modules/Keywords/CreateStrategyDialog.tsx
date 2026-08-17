@@ -149,7 +149,8 @@ const POST_VAR_RE = /\{\{\s*post_(title|content|link)\s*\}\}/;
 export function templateSourceFit(template: any): 'source' | 'keyword' {
   const entries = Array.isArray(template?.entries) ? template.entries : [];
   for (const e of entries) {
-    if ((e?.category ?? '') !== 'prompt') continue;
+    // Every writer entry is a prompt (the engine normalises the category on read),
+    // so an old row saved under 'reference_ad' is classified by its text too.
     if (POST_VAR_RE.test(String(e?.value ?? ''))) return 'source';
   }
   return 'keyword';
@@ -1067,36 +1068,58 @@ export function CreateStrategyDialog({
               </div>
             </div>
 
-            {/* Kept from the old summary line: when NOTHING fits this source the
-                Create button is blocked (it requires templateId), so say why. */}
-            {!templatesLoading && sourceTemplates.length === 0 && (
-              <div className="text-xs text-destructive">
-                No writer template is written for this source
-                {sourceMode === 'keywords'
-                  ? ' — keyword templates must not rely on the {{ post_* }} variables.'
-                  : ' — add one that uses {{ post_title }} / {{ post_content }} / {{ post_link }}.'}
-              </div>
-            )}
+            {/* Template fit, said about the PICK — not about the list. The old line
+                here reported existence ("No writer template is written for this
+                source") in red: nothing you choose in this dialog can change whether
+                such a template exists, so it stayed red whatever the user did and
+                read as a dead check (owner: "getting red no matter what I do").
+                Now: red only for the one thing that actually blocks Create (no
+                template picked); a picked template that is written for the OTHER
+                source gets a non-blocking amber note saying exactly what will happen;
+                a fitting pick says nothing. */}
+            {!templatesLoading && (() => {
+              const all = Array.isArray(templates) ? (templates as any[]) : [];
+              const picked = all.find((t) => String(t.id) === templateId);
+              const forFeed = sourceMode === 'rss' || sourceMode === 'social';
+              if (!picked) {
+                if (all.length === 0) return null; // the dropdown already says "No Writer templates found."
+                return (
+                  <p className="text-xs text-destructive">
+                    Select a template to continue.
+                    {sourceTemplates.length === 0 && (
+                      forFeed
+                        ? ' None of your Writer templates places {{ post_title }} / {{ post_content }} / {{ post_link }} — the ones listed are labelled; you can still use one, or add a reposting template under Templates → Writer.'
+                        : ' None of your Writer templates is written for keywords (they all place {{ post_* }} variables, which are empty here) — the ones listed are labelled; you can still use one, or add a keyword template under Templates → Writer.'
+                    )}
+                  </p>
+                );
+              }
+              if (templateFitsSource(picked, sourceMode)) return null;
+              return (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  {forFeed
+                    ? `“${picked.name}” is written for keywords — it does not place {{ post_title }} / {{ post_content }} / {{ post_link }}, so the fetched item will not be in the prompt. Pick a reposting template, or keep it if that is intended.`
+                    : `“${picked.name}” is written for RSS/Social — its {{ post_title }} / {{ post_content }} / {{ post_link }} come out empty for a keyword strategy. Pick a keyword template, or keep it if that is intended.`}
+                </p>
+              );
+            })()}
 
           </AccordionSection>
 
           {/* ② PUBLISHING — where finished articles go */}
           <AccordionSection title="Publishing" defaultOpen>
             <div className="space-y-3">
-              <Segmented
-                value={publishing}
-                onChange={setPublishing}
-                options={[
-                  { value: 'draft', label: 'Draft' },
-                  { value: 'auto', label: 'Automatic' },
-                ]}
-              />
-
+              {/* The Draft/Automatic toggle used to sit HERE, above the Target Site,
+                  unlabelled. Owner: "This should not be above the target site. This
+                  should probably be in the schedule, and it should be clear what
+                  status the produced posts should take on." It now lives under the
+                  Publishing schedule divider as "Post status" — same state, same
+                  payload. */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label
                     htmlFor="target-site"
-                    title="The site this strategy is for. When Publishing is Automatic, each generated article is published here."
+                    title="The site this strategy is for. With Post status = Publish, each generated article is published here."
                   >
                     Target Site
                   </Label>
@@ -1140,8 +1163,8 @@ export function CreateStrategyDialog({
               {missingSite && (
                 <p className="text-[0.8rem] text-destructive">
                   {(sites as any[]).length > 0
-                    ? 'Select a Target Site above to publish automatically.'
-                    : 'Connect a site in the Sites module to publish automatically.'}
+                    ? 'Select a Target Site above — Post status is set to Publish.'
+                    : 'Connect a site in the Sites module — Post status is set to Publish.'}
                 </p>
               )}
 
@@ -1152,6 +1175,32 @@ export function CreateStrategyDialog({
               <div className="flex items-center gap-2 pt-1">
                 <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Publishing schedule</Label>
                 <div className="flex-1 border-t border-border" />
+              </div>
+
+              {/* POST STATUS — what the produced posts become. 'auto' publishes to
+                  the target site (after approval when an approval mode is set —
+                  maybe_auto_publish runs on approval completion); 'draft' keeps
+                  every article as a Writer draft and never auto-publishes, whatever
+                  the schedule says (the draft-gate in maybe_auto_publish). */}
+              <div className="space-y-1.5">
+                <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Post status
+                </Label>
+                <Segmented
+                  value={publishing}
+                  onChange={setPublishing}
+                  options={[
+                    { value: 'auto', label: approvalMode !== 'none' ? 'Publish (after approval)' : 'Publish' },
+                    { value: 'draft', label: 'Set to draft' },
+                  ]}
+                />
+                <p className="text-[0.7rem] text-muted-foreground">
+                  {publishing === 'auto'
+                    ? approvalMode !== 'none'
+                      ? 'Each article publishes to the target site once it has been approved.'
+                      : 'Each article publishes to the target site as soon as it is written.'
+                    : 'Each article is kept as a draft in Writer — nothing goes live until you publish it yourself.'}
+                </p>
               </div>
               {sourceMode === 'keywords' ? (
                 <>
