@@ -89,6 +89,25 @@ class PCM_SEO_AI
             // resolve the chosen/default template for this section.
             self::seed_seo_templates();
             $tpl = self::seo_template_prompt($user_id, $section, $template_id);
+            // THE USER'S TEMPLATE FOLLOWS THE FIELD, NOT THE MODE (owner, 2026-08-17:
+            // "in template it is written 'write in chinese' and it writes in chinese
+            // when the field is empty but when I overwrite it starts writing in
+            // english again"). Templates are typed per section — meta_title_generate
+            // OR meta_title_optimize — and the resolver matches on type, so a template
+            // written for the field was invisible to its OTHER mode and the shipped
+            // English default ran there. Now: when THIS section resolves to nothing
+            // more than the shipped default (no user template, no pick), the user's
+            // own template for the SIBLING mode is used, framed for this mode. Only
+            // the user's OWN rows carry over — never a shipped default of the other
+            // mode, which would silently swap the built-in behaviour.
+            if (($tpl === null || $tpl === '' || $tpl === $default) && preg_match('/^(.+)_(generate|optimize)$/', $section, $m)) {
+                $sibling = self::seo_user_template_prompt($user_id, $m[1] . '_' . ($m[2] === 'generate' ? 'optimize' : 'generate'));
+                // The eligibility law still applies to the carried-over prompt: an envelope
+                // template can no more fill a scalar cell from the sibling mode than from its own.
+                if ($sibling !== null && $sibling !== '' && !(self::is_scalar_section($section) && self::prompt_demands_envelope($sibling))) {
+                    return self::frame_for_mode($sibling, $m[2]);
+                }
+            }
             if ($tpl !== null && $tpl !== '') {
                 return $tpl;
             }
@@ -105,6 +124,53 @@ class PCM_SEO_AI
             }
         }
         return $default;
+    }
+
+    /**
+     * The user's OWN template prompt for a section — starred first, else newest —
+     * ignoring the shipped (userId=0) rows entirely. Null when the user has none.
+     * Used for the sibling-mode carry-over: only a template the USER wrote should
+     * follow the field across modes.
+     */
+    public static function seo_user_template_prompt(int $user_id, string $section): ?string
+    {
+        global $wpdb;
+        $table = PCM_Schema::table('templates');
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT formData, isDefault FROM {$table} WHERE userId = %d AND module = 'seo' ORDER BY isDefault DESC, updatedAt DESC, id DESC",
+            $user_id
+        ), ARRAY_A);
+        foreach ((array) $rows as $r) {
+            $fd = json_decode((string) ($r['formData'] ?? ''), true);
+            if (!is_array($fd) || ($fd['type'] ?? '') !== $section) {
+                continue;
+            }
+            $prompt = self::seo_entry_prompt($fd);
+            if ($prompt !== null && trim($prompt) !== '') {
+                return $prompt;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Frame a template written for ONE mode so it works in the OTHER.
+     *
+     * The shipped generate/optimize defaults differ in exactly one substantive way:
+     * the optimize one hands the model the CURRENT value ("Current …: {{current_value}}")
+     * and asks it to improve it. So a user's generate-worded template ("Write it in
+     * Chinese…") is made optimize-capable by appending the current value when the
+     * template doesn't already reference it — and an optimize-worded template used
+     * on an EMPTY cell simply has nothing to reference (substitute_vars leaves
+     * {{current_value}} empty), which the model handles as "write it fresh".
+     */
+    public static function frame_for_mode(string $prompt, string $mode): string
+    {
+        if ($mode === 'optimize' && strpos($prompt, '{{current_value}}') === false) {
+            return rtrim($prompt) . "\n\nCurrent value: {{current_value}}\nImprove it — keep the same language and instructions above.";
+        }
+        return $prompt;
     }
 
     /**
@@ -394,9 +460,60 @@ class PCM_SEO_AI
      * @param array<string, string> $vars Prompt vars; 'site.lang' is the hint.
      * @return string Text to append to the template (never empty).
      */
-    public static function language_law(array $vars = array()): string
+    /**
+     * The language a template EXPLICITLY asks for, or '' when it names none.
+     *
+     * Owner (2026-08-17): "even if I write in the template to write in another
+     * language it doesn't work sometimes." The law below said "write in the SAME
+     * language as the existing content" and only added a soft trailing OVERRIDE
+     * clause — while {{current_value}} sat in the prompt in Swedish/English. Two
+     * competing instructions = a coin flip per call. Now the law itself flips: when
+     * the template names a language, the law REINFORCES that language instead of
+     * defaulting away from it.
+     *
+     * Matches "write in X", "in Chinese", "på svenska", "auf Deutsch", "en español",
+     * "language: X", "output in X", "respond in X", "svara på X" etc. Returns the
+     * language as written in the template (so the model sees the author's word).
+     */
+    public static function template_language(string $prompt): string
+    {
+        // Strip {{vars}} so a value like "{{site.lang}}" is not mistaken for a name.
+        $t = preg_replace('/\{\{[^}]*\}\}/', ' ', $prompt);
+        $langs = 'chinese|mandarin|cantonese|english|swedish|svenska|norwegian|norsk|danish|dansk|finnish|suomi|german|deutsch|french|français|francais|spanish|español|espanol|italian|italiano|portuguese|português|dutch|nederlands|polish|polski|russian|русский|japanese|日本語|korean|한국어|arabic|العربية|hindi|turkish|türkçe|greek|czech|hungarian|romanian|ukrainian|thai|vietnamese|indonesian|hebrew|简体中文|繁體中文|中文';
+        // Verbs in the languages our authors write templates in (EN/SV/DE/ES/FR/NO/DA).
+        $verbs = 'write|writing|written|answer|respond|reply|output|generate|create|produce|translate|compose'
+            . '|skriv|skriva|svara|översätt|schreib|schreibe|schreiben|antworte|übersetze'
+            . '|escribe|escribir|responde|traduce|écris|écrire|réponds|traduis|skriv|svar|oversett';
+        $patterns = array(
+            // "write … in Chinese", "skriv på svenska", "schreibe auf Deutsch", "escribe en español"
+            '/\b(?:' . $verbs . ')\b[^.\n]{0,40}?\b(?:in|into|på|auf|en|em|in\s+the)\s+(' . $langs . ')\b/iu',
+            // "Language: French" / "Språk: svenska"
+            '/\b(?:language|språk|sprache|langue|idioma|lingua)\s*[:=\-–]\s*(' . $langs . ')\b/iu',
+            // "in Chinese only" / "på svenska" standing alone as an instruction
+            '/\b(?:in|på|auf|en)\s+(' . $langs . ')\s+(?:language|only|please)?\b/iu',
+            '/\b(' . $langs . ')\s+(?:language|only)\b/iu',
+        );
+        foreach ($patterns as $p) {
+            if (preg_match($p, $t, $m)) {
+                return trim($m[1]);
+            }
+        }
+        return '';
+    }
+
+    public static function language_law(array $vars = array(), string $template = ''): string
     {
         $hint = trim((string) ($vars['site.lang'] ?? ''));
+        // The template names a language → the law REINFORCES it, no default that
+        // could compete with it, and no "same as existing content" that {{current_value}}
+        // would otherwise pull the answer back to.
+        $named = $template !== '' ? self::template_language($template) : '';
+        if ($named !== '') {
+            return "\n\nLANGUAGE (mandatory): the instructions above name the target language — {$named}."
+                . " Write your ENTIRE answer in {$named}, even if the existing content, page title,"
+                . " keywords or business details are in another language. Translate the meaning; keep"
+                . ' proper nouns, brand names and URLs exactly as they are. Do not answer in any other language.';
+        }
         return "\n\nLANGUAGE — default: write your ENTIRE answer in the"
             . ' SAME language as the existing content you were given'
             . ($hint !== '' ? " (the site's language is {$hint})" : '')
@@ -496,7 +613,7 @@ class PCM_SEO_AI
             $unanswerable = self::is_structured_envelope($raw) || self::is_refusal($raw);
             if ($value === '' && $unanswerable && $customized) {
                 // Retry with the shipped default — same section, same vars.
-                $retry  = self::substitute_vars($default_tpl . self::language_law($vars), $vars);
+                $retry  = self::substitute_vars($default_tpl . self::language_law($vars, $default_tpl), $vars);
                 $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $retry)), $opts);
                 $raw    = (string) ($result['content'] ?? '');
                 $value  = self::sanitize_ai_output($raw);
@@ -709,7 +826,8 @@ class PCM_SEO_AI
         $default = $prompts[$use][$mode];
         // Honor the user's Settings → Prompts → SEO override (falls back to default).
         $tpl     = self::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
-        $prompt  = self::substitute_vars($tpl . self::language_law($vars), $vars);
+        // The law reads the TEMPLATE: a named language is reinforced, not defaulted away.
+        $prompt  = self::substitute_vars($tpl . self::language_law($vars, $tpl), $vars);
         $max     = (int) ($prompts[$use]['max'] ?? 200);
 
         if (!class_exists('PCM_LLM')) {

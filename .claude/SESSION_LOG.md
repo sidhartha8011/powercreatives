@@ -14736,3 +14736,86 @@ kept. Suite 54/54, build clean, tsc 58, php -l clean incl. extracted
 connector. Zip rebuilt 659 / 3.48 MB — all six verified in-archive.
 
 Standing: connector on client sites must self-update for #5 to take effect.
+
+## 2026-08-17 — SEO Image column: broken-image glyphs (the site blocks its own images)
+
+Owner screenshot: every row's Image cell showed the browser's torn broken-image
+icon. PROBED the live site before touching code — massagegoteborg.nu's own
+thumbnail (URL taken from its /wp/v2/media) answers 403 Cloudflare for:
+  plain fetch · full Chrome UA · same-site Referer · complete browser header set
+while /wp-json answers 200. So the URLs the table stores are CORRECT; the site
+simply refuses to serve its images to any other origin. Neither the browser nor
+a hub-side proxy can render them (the proxy gets the same 403 — tested).
+
+Fix (app/src/modules/SEO/index.tsx): NEW module-scope <FeaturedThumb> replaces
+the inline <img>. It reports its own failure (onError) and falls back to a
+CLEAN placeholder instead of the broken glyph, with a tooltip naming the cause
+and the remedy ("the site refuses to serve it to other origins (bot protection
+or hotlink protection)… Click to choose another"). A new src resets the failed
+state (a fixed/changed image gets a fresh try). `referrerPolicy="no-referrer"`
+added: that genuinely rescues HOTLINK-protected sites (they allow an empty
+Referer, reject a cross-site one) — it cannot help a bot-challenge wall, and
+the fallback covers that honestly. Four distinct states now: image / blocked /
+set-but-unreadable / none, with blocked+unreadable solid and none dashed.
+
+Verified: NEW tests/standalone/seo_featured_thumb_test.mjs 19/19 — the state
+decision EXECUTED over all four cases, plus the source expressions it
+transcribes pinned (§3 ran a transcription; a sabotage of the component's own
+`blocked` derivation slipped through until those were added — negative control
+found it). Negative control 8/8 CAUGHT. seo_featured_image_test caught the
+move (its regex pinned the old inline ternary) — updated to assert the same
+meaning inside FeaturedThumb, 26/26. Suite 55/55, build clean, tsc 58. Zip
+rebuilt 659 / 3.48 MB — fallback + no-referrer verified in the bundle.
+
+NOT fixable from here: on a bot-walled site the picture itself cannot be shown
+anywhere outside that site. Whitelisting the hub (or disabling Cloudflare bot
+protection for /wp-content/uploads) is the only way to see real thumbnails
+there; other client sites are unaffected and still show their images.
+
+## 2026-08-17 — "Write in Chinese" works on empty cells, English on overwrite; named language "sometimes" ignored
+
+Owner: template says "write in chinese" → Chinese on an EMPTY cell, ENGLISH
+on overwrite; and "even if I write to use another language it doesn't work
+sometimes". Two precise mechanisms:
+
+1. THE TEMPLATE FOLLOWED THE MODE, NOT THE FIELD. SEO templates are typed per
+   section (meta_title_generate OR meta_title_optimize) and seo_template_prompt
+   matches on type (`($fd['type'] ?? '') !== $section → skip`). Empty cell →
+   generate → the user's Chinese template. Filled cell → optimize → no user row
+   of THAT type → the shipped English default. Fix (ai.php resolve_prompt):
+   when a section resolves to only the shipped default, the user's OWN template
+   for the SIBLING mode carries over, framed for this mode (frame_for_mode
+   appends "Current value: {{current_value}} — improve it, keep the same
+   language and instructions" for optimize; generate uses it as-is). Guarded:
+   user rows only (new seo_user_template_prompt reads `userId = %d` ONLY —
+   never a shipped default of the other mode); a real template/pick for THIS
+   section still wins; another user's rows never leak; the envelope
+   eligibility law still governs a carried-over prompt.
+
+2. THE LANGUAGE LAW COMPETED WITH THE TEMPLATE. It said "same language as the
+   existing content" with only a soft trailing OVERRIDE clause — while
+   {{current_value}} sat in the prompt in Swedish. Two instructions = a coin
+   flip per call: the "sometimes". Fix: language_law() now takes the template;
+   new template_language() detects a named language (verbs in EN/SV/DE/ES/FR/
+   NO/DA + "Language: X" + "in X only"; {{vars}} stripped first so
+   {{english}} can't masquerade), and when one is named the law becomes a
+   MANDATORY reinforcement of THAT language with no competing default. Both
+   generate paths + the heal retry pass their template in; site-level callers
+   unchanged.
+
+Verified: NEW tests/standalone/seo_template_language_test.php 43/43 — resolver
+EXECUTED against a scripted templates table (the exact bug: generate-typed
+Chinese template now resolves for optimize, framed; the mirror; user-only
+scoping; this-section-wins; pick-wins; other-user isolation; envelope still
+ineligible), frame_for_mode, the law flipping to mandatory-Chinese with an sv
+site hint vs unchanged default with no named language, detection breadth (10
+phrasings incl. Swedish/German/Spanish verbs) + precision (variables, "English
+Premier League", "French bakery" NOT detected). Negative control 10/10 CAUGHT
+after one falsifier was strengthened ({{site.lang}} passed for the wrong
+reason — added {{english}}/{{in Swedish}} variable cases so the strip guard is
+provable). Knock-ons: seo_generation_matrix's WPDB stub returned every row
+regardless of the SQL's userId scoping — that would have MASKED a scoping
+regression, so the stub now honours the WHERE it is given (38/38);
+seo_language_law (window + law signature, 43/43); seo_envelope_guard (retry
+law signature, 42/42). Suite 56/56, build clean, php -l clean. Zip rebuilt
+659 / 3.49 MB — both mechanisms verified in-archive.

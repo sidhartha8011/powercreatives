@@ -159,7 +159,8 @@ check('the generate path is locatable', $gen_at !== false, 'generate_field not f
 $gen = $gen_at === false ? '' : substr($aisrc, $gen_at, 3000);
 check('the generate path resolves a prompt for the section',
     preg_match('/\$tpl\s*=\s*self::resolve_prompt\(/', $gen) === 1, 'template never consulted');
-$rp = substr($aisrc, strpos($aisrc, 'function resolve_prompt'), 1400);
+// Window 1400 → 3400: resolve_prompt gained the sibling-mode carry-over (2026-08-17).
+$rp = substr($aisrc, strpos($aisrc, 'function resolve_prompt'), 3400);
 check('resolve_prompt asks the Templates module first',
     str_contains($rp, 'self::seo_template_prompt($user_id, $section, $template_id)'), 'templates bypassed');
 check('a resolved template short-circuits the shipped default',
@@ -171,8 +172,9 @@ check('the shipped default is only the last resort',
 // (Spelling changed 2026-08-15: the append is now inline — `$tpl . language_law()`
 // inside substitute_vars — because the retry path needs the same composition. The
 // ORDER is what matters: template first, law after.)
+// The law now also RECEIVES the template (to detect a named language) — still appended AFTER it.
 check('the law is APPENDED after the template, so "above" is true',
-    preg_match('/substitute_vars\(\$tpl \. self::language_law\(\$vars\), \$vars\)/', $gen) === 1,
+    preg_match('/substitute_vars\(\$tpl \. self::language_law\(\$vars, \$tpl\), \$vars\)/', $gen) === 1,
     'law prepended or reordered — "instructions above" would be meaningless');
 
 echo "\n" . str_repeat('-', 56) . "\n";

@@ -147,8 +147,18 @@ $ui = file_get_contents($ROOT . '/app/src/modules/SEO/index.tsx');
 check('an unresolvable-but-SET image is not shown as "none"',
     strpos($ui, 'const hasImageId = (row.featuredImageId ?? 0) > 0;') !== false
     && strpos($ui, 'A featured image is set on this page, but its URL could not be read') !== false, 'silently reads as empty');
-check('the three states are visually distinct (solid vs dashed vs image)',
-    preg_match('/row\.featuredImage \? \([\s\S]{0,260}?<img[\s\S]{0,200}?\) : hasImageId \? \([\s\S]{0,260}?border-border bg-muted[\s\S]{0,200}?\) : \([\s\S]{0,200}?border-dashed/', $ui) === 1, 'states collapsed');
+// The states moved into FeaturedThumb (2026-08-17) and gained a FOURTH — "the site
+// blocks the image", for URLs the browser cannot load (Cloudflare/hotlink). Same
+// meaning: an image, a solid placeholder when one EXISTS, a dashed one when none.
+// Details of the blocked state live in tests/standalone/seo_featured_thumb_test.mjs.
+$thumb_at = strpos($ui, 'function FeaturedThumb(');
+$thumb = substr($ui, (int) $thumb_at, 2200);
+check('the states are visually distinct (image vs solid vs dashed)',
+    $thumb_at !== false
+    && strpos($thumb, '<img') !== false
+    && preg_match("/blocked \|\| hasImageId \? 'border-border bg-muted' : 'border-dashed border-border'/", $thumb) === 1,
+    'states collapsed');
+check('the Image cell delegates to it', strpos($ui, '<FeaturedThumb src={row.featuredImage') !== false, 'cell not wired');
 check('sorting agrees with what the cell shows',
     strpos($ui, "featuredImage: (r) => (r.featuredImage || (r.featuredImageId ?? 0) > 0 ? 1 : 0)") !== false, 'sort disagrees with display');
 check('the client keeps featuredImageId on remote rows',

@@ -131,7 +131,8 @@ check('envelope is checked on the RAW output', strpos($inv, 'self::is_structured
 // (a customized prompt the model cannot answer for a scalar cell), same cure.
 check('a customized prompt retries with the shipped default',
     preg_match('/\$unanswerable = self::is_structured_envelope\(\$raw\) \|\| self::is_refusal\(\$raw\);[\s\S]{0,200}?\$unanswerable && \$customized[\s\S]{0,400}?substitute_vars\(\$default_tpl/', $inv) === 1, 'no self-heal');
-check('the retry keeps the language law', strpos($inv, '$default_tpl . self::language_law($vars)') !== false, 'law dropped on retry');
+// The law now also reads the template it is appended to (named-language detection).
+check('the retry keeps the language law', strpos($inv, '$default_tpl . self::language_law($vars, $default_tpl)') !== false, 'law dropped on retry');
 check('names Templates → SEO in the message',
     strpos($inv, 'check the template selected for this column in Templates') !== false);
 check('422 (bad configuration), not 502 (provider fault)',

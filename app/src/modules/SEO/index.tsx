@@ -338,6 +338,57 @@ const SELECT_COL_WIDTH = 44;
  * (bugfix card 7). Hoisted so the column ✦ run and the floating-bar run cannot
  * disagree (they did: the column run ignored metaFromHead).
  */
+/**
+ * The Image cell's thumbnail — with an honest fallback when the picture cannot load.
+ *
+ * Owner: "the images are showing like this" — every row in the SEO table carried the
+ * browser's torn broken-image glyph. The URLs are RIGHT; the client site refuses to
+ * serve them to anyone but itself. Proven live on massagegoteborg.nu (2026-08-17):
+ * its own thumbnail 403s a Cloudflare challenge for a plain fetch, a full Chrome
+ * user-agent, a same-site Referer, AND a complete browser header set — while
+ * /wp-json answers 200. So neither the browser nor a hub-side proxy can render it;
+ * the only honest options are a broken glyph or a clean placeholder that says why.
+ *
+ * `referrerPolicy="no-referrer"` is sent because the OTHER common blocker — classic
+ * hotlink protection — allows an empty Referer while rejecting a cross-site one, so
+ * this genuinely rescues images on those sites. It cannot help a bot-challenge wall.
+ */
+function FeaturedThumb({ src, hasImageId }: { src: string; hasImageId: boolean }) {
+  const [failed, setFailed] = useState(false);
+  // A new URL (image changed / different site) deserves a fresh attempt.
+  useEffect(() => { setFailed(false); }, [src]);
+
+  if (src && !failed) {
+    return (
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+        className="h-8 w-8 rounded object-cover"
+      />
+    );
+  }
+  const blocked = src !== '';   // there IS an image; the site just won't serve it here
+  return (
+    <span
+      title={
+        blocked
+          ? 'This page has a featured image, but the site refuses to serve it to other origins (bot protection or hotlink protection), so it cannot be previewed here. Click to choose another.'
+          : hasImageId
+            ? 'A featured image is set on this page, but its URL could not be read (the media may be restricted). Click to choose another.'
+            : 'Set featured image'
+      }
+      className={`flex h-8 w-8 items-center justify-center rounded border text-muted-foreground ${
+        blocked || hasImageId ? 'border-border bg-muted' : 'border-dashed border-border'
+      }`}
+    >
+      <ImageIcon className="h-4 w-4" />
+    </span>
+  );
+}
+
 function rowCellIsEmpty(r: SeoRow | undefined, field: string): boolean {
   if (!r) return true;
   if (field === 'metaTitle' && r.metaFromHead?.title) return true;
@@ -1541,13 +1592,7 @@ export function SEOModule() {
               }
               className="inline-flex items-center justify-center align-middle transition-opacity hover:opacity-80"
             >
-              {row.featuredImage ? (
-                <img src={row.featuredImage} alt="" loading="lazy" className="h-8 w-8 rounded object-cover" />
-              ) : hasImageId ? (
-                <span className="flex h-8 w-8 items-center justify-center rounded border border-border bg-muted text-muted-foreground"><ImageIcon className="h-4 w-4" /></span>
-              ) : (
-                <span className="flex h-8 w-8 items-center justify-center rounded border border-dashed border-border text-muted-foreground"><ImageIcon className="h-4 w-4" /></span>
-              )}
+              <FeaturedThumb src={row.featuredImage || ''} hasImageId={hasImageId} />
             </button>
           </TableCell>
         );

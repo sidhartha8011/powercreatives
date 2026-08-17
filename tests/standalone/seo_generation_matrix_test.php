@@ -46,7 +46,21 @@ class PCM_Schema { public static function table($n) { return 'wp_pcm_' . $n; } }
 class WPDB_Stub {
     public $rows = array();     // templates rows
     public function prepare($q, ...$a) { return json_encode(array($q, $a)); }
-    public function get_results($q, $t = null) { return $this->rows; }
+    // Honour the userId scoping the SQL asks for. seo_template_prompt reads
+    // `(userId = %d OR userId = 0)`; seo_user_template_prompt reads `userId = %d`
+    // ONLY. Returning every row regardless let the user-only lookup "find" the
+    // shipped userId=0 defaults — masking exactly the scoping it exists to enforce.
+    public function get_results($q, $t = null) {
+        list($sql, $args) = json_decode($q, true);
+        $uid = (int) ($args[0] ?? 0);
+        $rows = $this->rows;
+        if (strpos($sql, 'OR userId = 0') !== false) {
+            $rows = array_filter($rows, static fn($r) => (int) $r['userId'] === $uid || (int) $r['userId'] === 0);
+        } elseif (strpos($sql, 'WHERE userId = %d') !== false) {
+            $rows = array_filter($rows, static fn($r) => (int) $r['userId'] === $uid);
+        }
+        return array_values($rows);
+    }
     public function get_var($q) {
         // template_mode() lookup by id → formData; legacy override lookup → null.
         list($sql, $args) = json_decode($q, true);
@@ -93,7 +107,8 @@ $grab = static function (string $name) use ($src): string {
 $body = '';
 foreach (array('resolve_prompt', 'seed_seo_templates', 'seo_template_prompt', 'seo_entry_prompt', 'seo_section_label',
                'prompt_demands_envelope', 'is_scalar_section', 'template_mode', 'apply_template_mode',
-               'invoke_scalar_field', 'sanitize_ai_output', 'is_structured_envelope', 'is_refusal') as $m) {
+               'invoke_scalar_field', 'sanitize_ai_output', 'is_structured_envelope', 'is_refusal',
+               'seo_user_template_prompt', 'frame_for_mode', 'template_language') as $m) {
     $body .= $grab($m) . "\n";
 }
 // The shipped defaults: keep them tiny + clean, keyed exactly like get_default_prompts.

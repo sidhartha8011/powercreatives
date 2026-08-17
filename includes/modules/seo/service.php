@@ -2297,7 +2297,8 @@ class PCM_SEO_Service
         $mode    = PCM_SEO_AI::apply_template_mode($mode, (int) $user_id, $template_id, $use, (string) $current, $prompts[$use]);
         $default = $prompts[$use][$mode];
         $tpl     = PCM_SEO_AI::resolve_prompt($use . '_' . $mode, $default, $user_id, $template_id);
-        $prompt  = PCM_SEO_AI::substitute_vars($tpl . PCM_SEO_AI::language_law($vars), $vars);
+        // The law reads the TEMPLATE: a named language is reinforced, not defaulted away.
+        $prompt  = PCM_SEO_AI::substitute_vars($tpl . PCM_SEO_AI::language_law($vars, $tpl), $vars);
         $max     = (int) ($prompts[$use]['max'] ?? 200);
 
         if (!class_exists('PCM_LLM')) {
