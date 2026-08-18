@@ -2325,6 +2325,12 @@ class PCM_SEO_Service
             'post_type'                 => (string) ($row['type'] ?? ''),
             'page.type'                 => ($user_id && $post_id) ? self::get_page_type($user_id, (int) $site->id, $post_id) : '',
             'site.lang'                 => $site_lang,
+            // site.* = the CONNECTED site's identity (its name as registered here, its
+            // URL), never the hub's — mirrors PCM_Content_Vars::site_business() key-for-key.
+            'site.name'                 => !empty($site->name) ? (string) $site->name : $host,
+            'site.tagline'              => '',
+            'site.url'                  => $url,
+            'site.host'                 => $host,
             'website.url'               => $url,
             'today'                     => gmdate('Y-m-d'),
             'business.name'             => $name,

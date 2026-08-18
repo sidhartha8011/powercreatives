@@ -102,7 +102,15 @@ class PCM_Content_Vars
         }
 
         return array(
+            // The site.* namespace — "all site. variables" (owner card 13). site.name /
+            // site.tagline are THIS site's own identity (WordPress General Settings),
+            // deliberately separate from business.name / business.tagline, which the
+            // brand's Google Business Profile may override. website.url stays for compat.
             'site.lang'                 => $site_lang,
+            'site.name'                 => (string) get_bloginfo('name'),
+            'site.tagline'              => (string) get_bloginfo('description'),
+            'site.url'                  => $home,
+            'site.host'                 => $host,
             'website.url'               => $home,
             'today'                     => gmdate('Y-m-d'),
             'business.name'             => $business_name,

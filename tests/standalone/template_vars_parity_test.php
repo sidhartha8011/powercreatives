@@ -162,8 +162,11 @@ check('the Writer hint names the shared set',
     strpos($hint_flat, 'The site and business variables SEO templates use resolve here too') !== false);
 check('…and points at the "/" typeahead for the full list',
     strpos($hint_flat, 'in the value editor for the full list') !== false, 'no pointer to the typeahead');
-check('the hint still renders for writer prompts only',
-    strpos($hint, "category !== \"prompt\" || module === \"video\"") !== false);
+// 2026-08-18 (cards 5/13): writer is prompt-only — the hint renders for it whatever
+// category an old row was saved under; other modules keep the strict prompt gate.
+check('the hint renders for writer (any category) and for prompt entries only elsewhere',
+    strpos($hint, 'if (module !== "writer" && category !== "prompt") return null;') !== false
+    && strpos($hint, 'if (module === "video" || module === "seo" || module === "optimizer") return null;') !== false);
 
 echo "\n" . str_repeat('-', 60) . "\n";
 echo "  passed: {$PASS}   failed: {$FAIL}\n";

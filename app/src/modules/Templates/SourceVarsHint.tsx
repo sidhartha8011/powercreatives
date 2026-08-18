@@ -39,7 +39,11 @@ interface SourceVarsHintProps {
 }
 
 export function SourceVarsHint({ module, category, className }: SourceVarsHintProps) {
-  if (category !== "prompt" || module === "video" || module === "seo" || module === "optimizer") return null;
+  // Writer is prompt-only: every entry is a prompt whatever category an old row was
+  // saved under, so the hint shows for it regardless (cards 5/13). Other modules keep
+  // the strict rule.
+  if (module !== "writer" && category !== "prompt") return null;
+  if (module === "video" || module === "seo" || module === "optimizer") return null;
 
   const code = (v: string) => (
     <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem]">{v}</code>
@@ -79,9 +83,10 @@ export function SourceVarsHint({ module, category, className }: SourceVarsHintPr
       <p>
         The site and business variables SEO templates use resolve here too —{" "}
         {code("{{business.name}}")}, {code("{{business.phone}}")}, {code("{{business.address}}")},{" "}
-        {code("{{business.category}}")}, {code("{{site.lang}}")}, {code("{{today}}")} and the rest of the{" "}
-        {code("{{business.*}}")} set (from the brand’s Google Business Profile). Type “/” in the value
-        editor for the full list. Any of them resolves to nothing when that detail isn’t set.
+        {code("{{business.category}}")}, {code("{{site.name}}")}, {code("{{site.url}}")}, {code("{{site.lang}}")},{" "}
+        {code("{{today}}")} and the rest of the {code("{{site.*}}")} / {code("{{business.*}}")} set (from
+        this site and the brand’s Google Business Profile). Type “/” in the value editor for the full list.
+        Any of them resolves to nothing when that detail isn’t set.
       </p>
     </div>
   );

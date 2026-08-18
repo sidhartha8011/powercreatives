@@ -128,6 +128,7 @@ class PCM_Activator
         // on the first page load after the seeds file changes. Cheap (one stat
         // + one autoloaded option) and idempotent; see maybe_seed().
         PCM_Template_Seeds::maybe_seed();
+        PCM_Template_Seeds::maybe_normalize_writer_entries();
 
         if (version_compare($installed_version, PCM_DB_VERSION, '<')) {
             PCM_Schema::create_tables();

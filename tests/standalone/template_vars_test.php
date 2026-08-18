@@ -203,7 +203,9 @@ check('every token has a real description', $desc_problems === array(), $desc_pr
 // Templates/Writer-Templates card. Counted through the ...SITE_BUSINESS_VARS spread.
 // 112 → 113 (2026-08-18, cards 5/13): Writer gained {{ primary_keyword }} — SEO's name for the
 // item keyword, substituted by build_prompt() as a plain value (alias of {{ keyword }}).
-check('description count matches token count', $total_desc === 113, $total_desc);
+// 113 → 121 (2026-08-18, card 13 "all site. variables"): the shared map gained site.name /
+// site.tagline / site.url / site.host — composed by BOTH writer and seo (+4 each).
+check('description count matches token count', $total_desc === 121, $total_desc);
 
 echo "\n4c. The menu renders the description and can scroll sideways\n";
 $menu = file_get_contents($ROOT . '/app/src/modules/Templates/SlashVariableMenu.tsx');

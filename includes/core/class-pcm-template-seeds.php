@@ -72,6 +72,51 @@ class PCM_Template_Seeds
     }
 
     /**
+     * One-time DATA fix (owner cards 5/13): every stored WRITER template's entries
+     * become category 'prompt'.
+     *
+     * The Templates dialog used to save writer entries under its dropdown default
+     * ('reference_ad'). A writer template has no other kind of entry — its entries ARE
+     * the prompt — yet every consumer keyed on 'prompt': the strategy engine ignored
+     * the template's text at generation and the editor offered no "/" variables for
+     * it. The strategy loader now normalises on read; this makes the STORED rows
+     * consistent too, so the Templates list shows "Prompt", the hint line renders and
+     * nothing anywhere depends on a stale category. Idempotent, flagged by an option
+     * (autoload off) so it costs one option read per request after the first run.
+     *
+     * @return int Rows rewritten.
+     */
+    public static function maybe_normalize_writer_entries(): int
+    {
+        if (!function_exists('get_option') || get_option('pcm_writer_entries_prompt', '') === '1') {
+            return 0;
+        }
+        global $wpdb;
+        $table = PCM_Schema::table('templates');
+        $rows  = $wpdb->get_results("SELECT id, formData FROM {$table} WHERE module = 'writer'");
+        $fixed = 0;
+        foreach ((array) $rows as $row) {
+            $form = json_decode((string) $row->formData, true);
+            if (!is_array($form) || !isset($form['entries']) || !is_array($form['entries'])) {
+                continue;
+            }
+            $changed = false;
+            foreach ($form['entries'] as $i => $e) {
+                if (is_array($e) && (string) ($e['category'] ?? '') !== 'prompt') {
+                    $form['entries'][$i]['category'] = 'prompt';
+                    $changed = true;
+                }
+            }
+            if ($changed) {
+                $wpdb->update($table, array('formData' => wp_json_encode($form)), array('id' => (int) $row->id));
+                $fixed++;
+            }
+        }
+        update_option('pcm_writer_entries_prompt', '1', false);
+        return $fixed;
+    }
+
+    /**
      * Insert a template only if no template with the same name+module already exists.
      *
      * @param array $template Template data.

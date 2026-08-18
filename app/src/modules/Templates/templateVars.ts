@@ -85,7 +85,11 @@ export interface TemplateVar {
  */
 const SITE_BUSINESS_VARS: Record<string, string> = {
   '{{site.lang}}': 'Language to write in — the brand’s content language, falling back to the site locale.',
-  '{{website.url}}': 'The site’s URL.',
+  '{{site.name}}': 'The site’s name (WordPress → Settings → General → Site Title).',
+  '{{site.tagline}}': 'The site’s tagline (Settings → General → Tagline).',
+  '{{site.url}}': 'The site’s home URL.',
+  '{{site.host}}': 'The site’s bare hostname — no scheme, no path.',
+  '{{website.url}}': 'The site’s URL (same as {{site.url}}, kept for older templates).',
   '{{today}}': 'Today’s date (YYYY-MM-DD).',
   '{{business.name}}': 'Business name — the brand’s Google Business Profile name, else the brand, else the site.',
   '{{business.tagline}}': 'Business tagline.',

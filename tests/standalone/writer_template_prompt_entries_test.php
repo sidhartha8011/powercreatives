@@ -107,6 +107,56 @@ check('strategy dialog fit classifier reads EVERY writer entry (an old reference
 check('Writer still composes the shared site+business vocabulary', preg_match('/const WRITER_VARS[\s\S]*?\.\.\.SITE_BUSINESS_VARS,\s*\};/', $tv) === 1);
 check('…and build_prompt() still merges PCM_Content_Vars::site_business', strpos($svc, 'PCM_Content_Vars::site_business($brand ? (int) ($brand->id ?? 0) : null, null)') !== false);
 
+// ── D. Stored rows are normalised once (not only on read) ───────────────────
+echo "\n4. maybe_normalize_writer_entries(): the STORED writer rows become prompts, once\n";
+function get_option($k, $d = '') { return $GLOBALS['opts'][$k] ?? $d; }
+function update_option($k, $v, $autoload = null) { $GLOBALS['opts'][$k] = $v; return true; }
+function wp_json_encode($v) { return json_encode($v); }
+class WPDB_Norm {
+    public $rows = array(); public $updates = array(); public $queries = array();
+    public function get_results($q) { $this->queries[] = $q; return array_values(array_map(static fn($r) => (object) array('id' => $r['id'], 'formData' => $r['formData']), array_filter($this->rows, static fn($r) => $r['module'] === 'writer'))); }
+    public function update($t, $data, $where) { $this->updates[] = array($where['id'], $data['formData']); foreach ($this->rows as $i => $r) { if ($r['id'] === $where['id']) { $this->rows[$i]['formData'] = $data['formData']; } } return 1; }
+}
+$seedsrc = file_get_contents($ROOT . '/includes/core/class-pcm-template-seeds.php');
+$ns = strpos($seedsrc, 'public static function maybe_normalize_writer_entries('); $nstart = strrpos(substr($seedsrc, 0, (int)$ns), "\n") + 1;
+$ne = strpos($seedsrc, "\n    /**", (int)$ns);
+eval('class NormHost { ' . substr($seedsrc, $nstart, (int)$ne - $nstart) . ' }');
+$GLOBALS['opts'] = array();
+$GLOBALS['wpdb'] = new WPDB_Norm();
+$GLOBALS['wpdb']->rows = array(
+    array('id' => 21, 'module' => 'writer', 'formData' => json_encode(array('type' => 'article', 'entries' => array(array('key' => 'k', 'category' => 'reference_ad', 'label' => 'A', 'value' => 'text A'))))),
+    array('id' => 22, 'module' => 'writer', 'formData' => json_encode(array('type' => 'article', 'entries' => array(array('key' => 'k', 'category' => 'prompt', 'label' => 'B', 'value' => 'text B'))))),
+    array('id' => 23, 'module' => 'copy',   'formData' => json_encode(array('type' => 'ad', 'entries' => array(array('key' => 'k', 'category' => 'reference_ad', 'label' => 'C', 'value' => 'text C'))))),
+);
+$n = NormHost::maybe_normalize_writer_entries();
+check('exactly the writer rows that needed it are rewritten (1 of 2 writer rows; copy untouched)', $n === 1 && count($GLOBALS['wpdb']->updates) === 1 && $GLOBALS['wpdb']->updates[0][0] === 21, $GLOBALS['wpdb']->updates);
+check('the rewritten row is prompt now, value/label/type intact', json_decode($GLOBALS['wpdb']->rows[0]['formData'], true) === array('type' => 'article', 'entries' => array(array('key' => 'k', 'category' => 'prompt', 'label' => 'A', 'value' => 'text A'))), $GLOBALS['wpdb']->rows[0]['formData']);
+check('the query is scoped to writer rows', strpos($GLOBALS['wpdb']->queries[0], "module = 'writer'") !== false, $GLOBALS['wpdb']->queries);
+check('flagged done (autoload off) — a second call is a no-op', ($GLOBALS['opts']['pcm_writer_entries_prompt'] ?? '') === '1' && NormHost::maybe_normalize_writer_entries() === 0 && count($GLOBALS['wpdb']->updates) === 1);
+check('wired into maybe_upgrade() (runs on every install, no schema bump needed)', strpos(file_get_contents($ROOT . '/includes/class-pcm-activator.php'), 'PCM_Template_Seeds::maybe_normalize_writer_entries();') !== false);
+
+// ── E. "all site. variables" — the site.* namespace, EXECUTED through the shared builder ──
+echo "\n5. site.* namespace — shared builder (writer + local SEO) and the remote SEO map agree\n";
+function home_url($p = '/') { return 'https://acme.test/'; }
+function wp_parse_url($u, $c = -1) { return parse_url($u, $c); }
+function get_bloginfo($k) { return $k === 'name' ? 'Acme Site' : 'Acme tagline'; }
+function get_locale() { return 'en_US'; }
+class WPDB_Vars { public function prepare($q, ...$a) { return $q; } public function get_row($q) { return null; } }
+$GLOBALS['wpdb'] = new WPDB_Vars();
+require $ROOT . '/includes/core/class-pcm-content-vars.php';
+$v = PCM_Content_Vars::site_business(null, '');
+check('site.name / site.tagline / site.url / site.host resolve from THIS site', $v['site.name'] === 'Acme Site' && $v['site.tagline'] === 'Acme tagline' && $v['site.url'] === 'https://acme.test/' && $v['site.host'] === 'acme.test', $v);
+check('website.url kept for older templates (same value as site.url)', $v['website.url'] === $v['site.url']);
+check('keys() advertises them (the contract cannot drift from the map)', array_slice(PCM_Content_Vars::keys(), 0, 6) === array('site.lang', 'site.name', 'site.tagline', 'site.url', 'site.host', 'website.url'), PCM_Content_Vars::keys());
+$seo = file_get_contents($ROOT . '/includes/modules/seo/service.php');
+check('the REMOTE SEO var map carries the same site.* keys, from the CONNECTED site (never the hub)',
+    preg_match("/'site\.name'\s*=>\s*!empty\(\\\$site->name\) \? \(string\) \\\$site->name : \\\$host,\s*\r?\n\s*'site\.tagline'\s*=>\s*'',\s*\r?\n\s*'site\.url'\s*=>\s*\\\$url,\s*\r?\n\s*'site\.host'\s*=>\s*\\\$host,/", $seo) === 1, 'remote map lacks site.*');
+foreach (array('{{site.name}}', '{{site.tagline}}', '{{site.url}}', '{{site.host}}') as $tok) {
+    check("typeahead offers $tok to BOTH writer and seo (via the shared SITE_BUSINESS_VARS)", strpos($tv, "'$tok':") !== false && preg_match('/const WRITER_VARS[\s\S]*?\.\.\.SITE_BUSINESS_VARS/', $tv) === 1 && preg_match('/const SEO_VARS[\s\S]*?\.\.\.SITE_BUSINESS_VARS/', $tv) === 1);
+}
+$hint = file_get_contents($ROOT . '/app/src/modules/Templates/SourceVarsHint.tsx');
+check('the writer hint line renders whatever category an old row carries, and names site.*', strpos($hint, 'if (module !== "writer" && category !== "prompt") return null;') !== false && strpos($hint, '{code("{{site.name}}")}') !== false);
+
 echo "\n" . str_repeat('-', 60) . "\n";
 echo "  passed: {$PASS}   failed: {$FAIL}\n";
 exit($FAIL > 0 ? 1 : 0);
