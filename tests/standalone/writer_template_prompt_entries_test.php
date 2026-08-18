@@ -87,6 +87,59 @@ check('renders through the same whitespace-tolerant engine as {{ keyword }}', $o
 $ref = RenderHost::referenced_vars('Only {{ primary_keyword }} here.', array_keys($vars));
 check('referenced_vars sees primary_keyword (the bridge then adds keyword)', in_array('primary_keyword', $ref, true) && !in_array('keyword', $ref, true), $ref);
 
+// ── B2. SEO's page-level names Writer can honestly resolve ─────────────────
+echo "\n2b. Writer offers the ENTIRE SEO vocabulary (owner: \"all the variables including meta and everything\") — every token substituted, empties named\n";
+$tv = file_get_contents($ROOT . '/app/src/modules/Templates/templateVars.ts');
+check('build_prompt adds supporting_keyword / post_type / page.type / name / facts as PLAIN values',
+    preg_match("/\\\$vars \+= array\(\s*\r?\n\s*'supporting_keyword' => count\(\\\$keywords\) > 1 \? implode\(', ', array_slice\(\\\$keywords, 1\)\) : '',\s*\r?\n\s*'post_type'\s*=> 'post',[\s\S]*?'page\.type'\s*=> 'blog',[\s\S]*?'name'\s*=> \(string\) \(\\\$vars\['business\.name'\] \?\? ''\),\s*\r?\n\s*'facts'\s*=> self::business_facts\(\\\$vars\),/", $svc) === 1, 'page-level names missing');
+check('…and they are NOT fragments (never auto-appended, no blank-line collapse)', preg_match("/\\\$fragment_vars\s*=\s*array\('keyword', 'brand_context', 'research', 'output_format', 'media_instructions'\)/", $svc) === 1);
+eval('class FactsHost { ' . $slice('public static function business_facts(') . ' }');
+$facts = FactsHost::business_facts(array('business.name' => 'Klinik AB', 'business.website' => 'https://klinik.se', 'business.category' => 'Dentist', 'business.address' => '', 'business.phone' => '+46 8 1', 'business.hours' => '', 'business.rating' => '4.9', 'business.description' => ''));
+check('{{ facts }} = SEO’s facts block shape, only the details that are set', $facts === "Business name: Klinik AB\nWebsite: https://klinik.se\nNiche / category: Dentist\nPhone: +46 8 1\nAverage rating: 4.9", $facts);
+check('{{ facts }} is empty when no business is known (never a header with nothing under it)', FactsHost::business_facts(array()) === '');
+$vars2 = array('keyword' => 'a', 'supporting_keyword' => 'b, c', 'post_type' => 'post', 'page.type' => 'blog', 'name' => 'Klinik AB', 'facts' => $facts);
+$out2 = RenderHost::render_template_vars('K:{{ keyword }} S:{{ supporting_keyword }} T:{{post_type}} P:{{ page.type }} N:{{name}}', $vars2, array('keyword'));
+check('all five render through the Writer engine (spaced or tight, dotted key included)', $out2 === 'K:a S:b, c T:post P:blog N:Klinik AB', $out2);
+foreach (array('{{ supporting_keyword }}', '{{ post_type }}', '{{ page.type }}', '{{ name }}', '{{ facts }}') as $tok) {
+    check("typeahead offers $tok to Writer", preg_match('/const WRITER_VARS[\s\S]*?' . preg_quote("'$tok':", '/') . '/', $tv) === 1, 'not offered');
+}
+// FULL PARITY (owner, round 4: "make all the variables available in writer tab, all the
+// variables including meta and everything"): EVERY SEO token is offered to Writer AND is a
+// key build_prompt substitutes — so an SEO prompt pasted into a Writer template never leaks
+// a literal {{token}}. Values a new article cannot have resolve to '' and SAY so.
+$writer_block = substr($tv, strpos($tv, 'const WRITER_VARS'), strpos($tv, 'const SEO_VARS') - strpos($tv, 'const WRITER_VARS'));
+$seo_block    = substr($tv, strpos($tv, 'const SEO_VARS'), strpos($tv, 'const COPY_VARS') - strpos($tv, 'const SEO_VARS'));
+preg_match_all("/'\{\{\s*([a-z_.|]+)\s*\}\}'/", $seo_block, $mm);
+$seo_keys = array_values(array_unique($mm[1]));
+preg_match_all("/'\{\{\s*([a-z_.|]+)\s*\}\}'/", $writer_block, $mw);
+$writer_keys = array_values(array_unique($mw[1]));
+check('SEO vocabulary found (its >= 20 OWN literals; the shared 20 arrive via the SITE_BUSINESS_VARS spread both lists compose)', count($seo_keys) >= 20 && preg_match('/const SEO_VARS[\s\S]*?\.\.\.SITE_BUSINESS_VARS/', $tv) === 1, count($seo_keys));
+$missing_ui = array_values(array_diff($seo_keys, $writer_keys));
+check('every SEO token is offered to Writer (typeahead parity — nothing missing)', $missing_ui === array(), $missing_ui);
+$bp = substr($svc, strpos($svc, 'private static function build_prompt('), strpos($svc, '// ── System prompt from the template', strpos($svc, 'private static function build_prompt(')) - strpos($svc, 'private static function build_prompt('));
+$missing_php = array();
+foreach ($seo_keys as $k) {
+    $shared = in_array($k, array('site.lang','site.name','site.tagline','site.url','site.host','website.url','today'), true) || strpos($k, 'business.') === 0;
+    if ($shared) { continue; } // merged from PCM_Content_Vars::site_business
+    if (strpos($bp, "'" . $k . "'") === false) { $missing_php[] = $k; }
+}
+check('…and every one of them is a key build_prompt substitutes (no literal leak)', $missing_php === array(), $missing_php);
+$vars3 = array('meta_title' => '', 'topic' => 'tandimplantat', 'keywords_bullet' => "- Naturally weave in the target keywords (no keyword stuffing).\n", 'corpus' => '');
+$out3 = RenderHost::render_template_vars('T:[{{ meta_title }}] S:{{topic}} B:{{ keywords_bullet }}C:[{{ corpus }}]', $vars3, array());
+check('an SEO-style prompt renders in Writer: empty ones vanish, topic = keyword, the keywords bullet is real', $out3 === "T:[] S:tandimplantat B:- Naturally weave in the target keywords (no keyword stuffing).\nC:[]", $out3);
+// The SOURCE expressions, not a hand-built map: what has a value, and what is honestly ''.
+check('topic = the item keyword, keywords_bullet = SEO’s exact bullet whenever a keyword exists (source expressions)',
+    preg_match("/'topic'\s*=> \\\$keyword_text,/", $bp) === 1
+    && preg_match("/'keywords_bullet'\s*=> \\\$keyword_text !== '' \? \"- Naturally weave in the target keywords \(no keyword stuffing\)\.\\\\n\" : '',/", $bp) === 1, 'topic/keywords_bullet lost their values');
+// Every SEO-only key build_prompt maps to a literal '' must SAY so in the typeahead — per token.
+preg_match_all("/^\s*'([a-z_.]+)'\s*=> '',/m", $bp, $me);
+$empties = array_values(array_diff(array_unique($me[1]), array('title'))); // title is real in the image prompt (documented there)
+$silent = array();
+foreach ($empties as $k) {
+    if (!preg_match("/'\{\{ " . preg_quote($k, '/') . " \}\}': 'Empty (?:here|for a new article)/", $writer_block)) { $silent[] = $k; }
+}
+check('every literal-empty SEO key is described as EMPTY in the Writer typeahead (' . count($empties) . ' of them) — no silent lies', count($empties) >= 12 && $silent === array(), $silent);
+
 // ── C. The editor ───────────────────────────────────────────────────────────
 echo "\n3. Writer is a PROMPT-ONLY module in the editor\n";
 $tv  = file_get_contents($ROOT . '/app/src/modules/Templates/templateVars.ts');

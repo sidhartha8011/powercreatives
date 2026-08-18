@@ -205,7 +205,11 @@ check('every token has a real description', $desc_problems === array(), $desc_pr
 // item keyword, substituted by build_prompt() as a plain value (alias of {{ keyword }}).
 // 113 → 121 (2026-08-18, card 13 "all site. variables"): the shared map gained site.name /
 // site.tagline / site.url / site.host — composed by BOTH writer and seo (+4 each).
-check('description count matches token count', $total_desc === 121, $total_desc);
+// 121 → 126 (card 13 round 3): Writer gained SEO's page-level names it can honestly resolve —
+// supporting_keyword, post_type, page.type, name, facts (build_prompt plain values).
+// 126 → 141 (card 13 round 4, owner: "all the variables including meta and everything"): Writer now
+// carries the ENTIRE SEO vocabulary (+15 SEO-only names, resolved or honestly empty in build_prompt).
+check('description count matches token count', $total_desc === 141, $total_desc);
 
 echo "\n4c. The menu renders the description and can scroll sideways\n";
 $menu = file_get_contents($ROOT . '/app/src/modules/Templates/SlashVariableMenu.tsx');

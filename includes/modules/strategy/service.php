@@ -3363,6 +3363,37 @@ class PCM_Strategy_Service
     }
 
     /**
+     * {{ facts }} for Writer — the business facts block SEO templates get, built from
+     * the SHARED site+business vocabulary (so it can never disagree with the
+     * {{business.*}} tokens beside it). Same labels as SEO's llm-info facts block;
+     * only present details are listed; '' when nothing is known.
+     *
+     * @param array<string,string> $vars The merged prompt vars (business.* keys read).
+     */
+    public static function business_facts(array $vars): string
+    {
+        $g = static fn(string $k): string => trim((string) ($vars[$k] ?? ''));
+        if ($g('business.name') === '') {
+            return '';
+        }
+        $out = 'Business name: ' . $g('business.name') . "\n";
+        foreach (array(
+            'business.website'     => 'Website',
+            'business.category'    => 'Niche / category',
+            'business.address'     => 'Address',
+            'business.phone'       => 'Phone',
+            'business.hours'       => 'Opening hours',
+            'business.rating'      => 'Average rating',
+            'business.description' => 'About',
+        ) as $k => $label) {
+            if ($g($k) !== '') {
+                $out .= $label . ': ' . $g($k) . "\n";
+            }
+        }
+        return rtrim($out, "\n");
+    }
+
+    /**
      * Whether a template's prompt references ANY source variable. Drives the
      * rider suppression in generate_next_item(): a template that places the post
      * itself must not also get the hardcoded sentence appended, or the two
@@ -5651,6 +5682,42 @@ class PCM_Strategy_Service
         + (class_exists('PCM_Content_Vars')
             ? PCM_Content_Vars::site_business($brand ? (int) ($brand->id ?? 0) : null, null)
             : array());
+        // SEO's PAGE-LEVEL names, for everything a strategy article technically HAS
+        // (owner card 13, "all the variables that it can have, technically, just like
+        // the SEO"). Plain values. Deliberately NOT offered: meta_title / meta_description /
+        // meta_keywords / current_value (a NEW article has none yet), and the llm-info
+        // fragments (topic, why, corpus, key_pages, *_bullet, area_*) — those come from
+        // the SEO Business/llm-info FORM, not from anything a strategy item carries.
+        // Offering a token that always resolves to '' would be a lie in the typeahead.
+        $vars += array(
+            'supporting_keyword' => count($keywords) > 1 ? implode(', ', array_slice($keywords, 1)) : '',
+            'post_type'          => 'post',   // strategy articles publish as WordPress posts
+            'page.type'          => 'blog',   // SEO's page-intent vocabulary: a strategy article is a blog article
+            'name'               => (string) ($vars['business.name'] ?? ''),
+            'facts'              => self::business_facts($vars),
+            // FULL PARITY with the SEO vocabulary (owner, 2026-08-18: "make all the
+            // variables available in writer tab, all the variables including meta and
+            // everything"). Every SEO token is a KEY here so an SEO prompt pasted into a
+            // Writer template never leaks a literal {{token}}. Resolved where a strategy
+            // article has the value; EMPTY where only an existing page or the SEO
+            // Business/llm-info form could supply it (a new article has no meta yet).
+            'title'              => '',   // the model writes the title — known only afterwards
+            'meta_title'         => '',
+            'meta_description'   => '',
+            'meta_keywords'      => '',
+            'current_value'      => '',   // SEO optimize-mode's existing value; nothing to optimise yet
+            'topic'              => $keyword_text, // the subject to write about
+            'why'                => '',
+            'key_pages'          => '',
+            'corpus'             => '',
+            'corpus_note'        => '',
+            'keywords_bullet'    => $keyword_text !== '' ? "- Naturally weave in the target keywords (no keyword stuffing).\n" : '',
+            'strengths_bullet'   => '',
+            'years_bullet'       => '',
+            'area_bullet'        => '',
+            'area_section'       => '',
+            'area_serves_clause' => '',
+        );
 
         // ── System prompt from the template's prompt entries. Concatenate every
         //     prompt entry so a variable referenced in ANY of them suppresses
