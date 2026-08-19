@@ -132,6 +132,8 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/llm-info',       'remote_llminfo_save',  array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/llm-info/build', 'remote_llminfo_build', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/llm-info/keywords', 'remote_llminfo_keywords', array(), 'manage_options'),
+            // THE LIVE CHECK — fetch the public AI files and explain each answer (card 17).
+            array('POST', '/seo/sites/(?P<id>\d+)/ai/verify', 'remote_ai_verify', array(), 'manage_options'),
             // Saved views (per-user column/filter configs).
             array('GET',    '/seo/views',                'views_list'),
             array('POST',   '/seo/views',                'views_create'),
@@ -151,6 +153,7 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/ai-readiness/save-llms',  'air_save_llms', array(), 'manage_options'),
             array('POST', '/seo/ai-readiness/site-desc',  'air_gen_site_desc', array(), 'manage_options'),
             array('POST', '/seo/ai-readiness/delete-all', 'air_delete_all', array(), 'manage_options'),
+            array('POST', '/seo/ai-readiness/verify',     'air_verify', array(), 'manage_options'),
             array('GET',  '/seo/llm-info',                'llminfo_get',   array(), 'manage_options'),
             array('POST', '/seo/llm-info',                'llminfo_save',  array(), 'manage_options'),
             array('POST', '/seo/llm-info/build',          'llminfo_build', array(), 'manage_options'),
@@ -1244,11 +1247,23 @@ class PCM_REST_SEO extends PCM_REST_Base
         $params   = $request->get_json_params() ?: array();
         $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
         $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
-        $result   = PCM_SEO_Service::remote_ai_site_desc($site, $model, $user ? (int) $user->id : null, $provider);
+        $tpl      = !empty($params['templateId']) ? absint($params['templateId']) : null;
+        $result   = PCM_SEO_Service::remote_ai_site_desc($site, $model, $user ? (int) $user->id : null, $provider, $tpl);
         if ($result instanceof WP_Error) {
             return $result;
         }
         return $this->success($result);
+    }
+
+    /** POST /seo/sites/{id}/ai/verify — fetch the connected site's public AI files and explain each answer. */
+    public function remote_ai_verify(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(array('files' => PCM_SEO_Service::remote_ai_verify($site), 'checkedAt' => current_time('mysql')));
     }
 
     /** POST /seo/sites/{id}/content/{post}/schema — set a connected post's schema types. */
@@ -2200,7 +2215,8 @@ class PCM_REST_SEO extends PCM_REST_Base
         $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
         $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
         $user     = $this->get_current_pcm_user();
-        $result   = PCM_SEO_AIReadiness::summarize($id, $model, $user ? (int) $user->id : null, $provider);
+        $tpl      = !empty($params['templateId']) ? absint($params['templateId']) : null;
+        $result   = PCM_SEO_AIReadiness::summarize($id, $model, $user ? (int) $user->id : null, $provider, $tpl);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -2222,7 +2238,8 @@ class PCM_REST_SEO extends PCM_REST_Base
         $model    = isset($params['model']) ? sanitize_text_field((string) $params['model']) : null;
         $provider = isset($params['provider']) ? sanitize_text_field((string) $params['provider']) : null;
         $user     = $this->get_current_pcm_user();
-        $result   = PCM_SEO_AIReadiness::gen_site_description($model, $user ? (int) $user->id : null, $provider);
+        $tpl      = !empty($params['templateId']) ? absint($params['templateId']) : null;
+        $result   = PCM_SEO_AIReadiness::gen_site_description($model, $user ? (int) $user->id : null, $provider, $tpl);
         if ($result instanceof WP_Error) {
             return $result;
         }
@@ -2234,6 +2251,17 @@ class PCM_REST_SEO extends PCM_REST_Base
     {
         PCM_SEO_AIReadiness::delete_all();
         return $this->success(array('deleted' => true));
+    }
+
+    /** POST /seo/ai-readiness/verify — fetch this site's public AI files and explain each answer. */
+    public function air_verify(WP_REST_Request $request): WP_REST_Response
+    {
+        $extra = array();
+        foreach (PCM_SEO_AIReadiness::query_posts() as $p) {
+            $extra['md'] = PCM_SEO_AIReadiness::md_url((int) $p->ID);
+            break;
+        }
+        return $this->success(array('files' => PCM_SEO_AIReadiness::verify_public_files(home_url(''), $extra), 'checkedAt' => current_time('mysql')));
     }
 
     /** GET /seo/llm-info — current /llm-info/ settings + public URL. */
@@ -2278,8 +2306,10 @@ class PCM_REST_SEO extends PCM_REST_Base
             'area'      => isset($p['area']) ? sanitize_text_field((string) $p['area']) : $cur['area'],
             'strengths' => isset($p['strengths']) ? sanitize_textarea_field((string) $p['strengths']) : $cur['strengths'],
             'pages'     => PCM_SEO_Service::local_content_corpus(),
+            'language'  => (string) get_bloginfo('language'),
         );
-        $html = PCM_SEO_Service::build_llm_info($ctx, $model, $user ? (int) $user->id : null, $provider);
+        $tpl  = !empty($p['templateId']) ? absint($p['templateId']) : null;
+        $html = PCM_SEO_Service::build_llm_info($ctx, $model, $user ? (int) $user->id : null, $provider, $tpl);
         if ($html instanceof WP_Error) {
             return $html;
         }
@@ -2345,7 +2375,8 @@ class PCM_REST_SEO extends PCM_REST_Base
             'area'      => isset($p['area']) ? sanitize_text_field((string) $p['area']) : '',
             'strengths' => isset($p['strengths']) ? sanitize_textarea_field((string) $p['strengths']) : '',
         );
-        $result = PCM_SEO_Service::remote_llminfo_build($site, $inputs, $model, (int) $user->id, $provider);
+        $tpl    = !empty($p['templateId']) ? absint($p['templateId']) : null;
+        $result = PCM_SEO_Service::remote_llminfo_build($site, $inputs, $model, (int) $user->id, $provider, $tpl);
         return $result instanceof WP_Error ? $result : $this->success($result);
     }
 

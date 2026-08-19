@@ -822,7 +822,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteAiSiteDesc": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/ai/site-desc`, body: { model: input.model, provider: input.provider } }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/ai/site-desc`, body: { model: input.model, provider: input.provider, templateId: input.templateId } }),
     },
     "seo.remoteSetSchema": {
         endpoint: "seo/sites",
@@ -860,7 +860,7 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.remoteLlmInfoBuild": {
         endpoint: "seo/sites",
         method: "POST",
-        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/llm-info/build`, body: { keywords: input.keywords, years: input.years, area: input.area, strengths: input.strengths, model: input.model, provider: input.provider } }),
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/llm-info/build`, body: { keywords: input.keywords, years: input.years, area: input.area, strengths: input.strengths, model: input.model, provider: input.provider, templateId: input.templateId } }),
     },
     "seo.remoteLlmInfoKeywords": {
         endpoint: "seo/sites",
@@ -877,6 +877,13 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
     "seo.airSaveLlms": { endpoint: "seo/ai-readiness/save-llms", method: "POST" },
     "seo.airGenSiteDesc": { endpoint: "seo/ai-readiness/site-desc", method: "POST" },
     "seo.airDeleteAll": { endpoint: "seo/ai-readiness/delete-all", method: "POST" },
+    // THE LIVE CHECK — fetch the public AI files (robots / llms.txt / llm-info / one .md) and explain each answer.
+    "seo.airVerify": { endpoint: "seo/ai-readiness/verify", method: "POST" },
+    "seo.remoteAiVerify": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/ai/verify`, body: {} }),
+    },
     // Schema (per-post)
     "seo.getSchema": {
         endpoint: "seo/content",

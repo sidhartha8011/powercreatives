@@ -417,6 +417,17 @@ class PCM_SEO_AI
     /** Human label for a section key, e.g. `meta_title_optimize` → "Meta Title — Optimize". */
     private static function seo_section_label(string $section): string
     {
+        // The AI Readiness documents get spoken names — "Llm Info Page — Generate"
+        // told nobody what it was (owner card 17: "There is no Templates for
+        // generating these documents in Templates").
+        $named = array(
+            'llm_info_page_generate'       => 'AI Readiness — /llm-info/ page',
+            'site_ai_description_generate' => 'AI Readiness — llms.txt site description',
+            'air_page_summary_generate'    => 'AI Readiness — page summary (.md / llms.txt line)',
+        );
+        if (isset($named[$section])) {
+            return $named[$section];
+        }
         $mode = '';
         if (str_ends_with($section, '_generate')) {
             $mode = 'Generate';

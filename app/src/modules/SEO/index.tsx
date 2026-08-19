@@ -49,9 +49,7 @@ import { ColumnHead } from '@/components/ui/column-head';
 import { CELL_PILL_NEUTRAL } from '@/components/ui/table-cell-recipes';
 import { ViewsToolbar } from './ViewsToolbar';
 import { buildFilterDefs, type FilterDef, type FilterOption } from './seoFilters';
-import { AIReadinessPanel } from './AIReadinessPanel';
-import { RemoteAIReadinessPanel } from './RemoteAIReadinessPanel';
-import { LlmInfoSection } from './LlmInfoEditor';
+import { AiReadinessStudio } from './AiReadinessStudio';
 import { SiteSettingsPanel } from './SiteSettingsPanel';
 import { RemoteSiteSettingsPanel } from './RemoteSiteSettingsPanel';
 import { BusinessPanel } from './BusinessPanel';
@@ -1840,18 +1838,13 @@ export function SEOModule() {
         {/* Section content */}
         <div className="min-w-0 flex-1">
       {tab === 'air' ? (
-        // /llm-info/ (AI overview page) renders FIRST and independently of the AI-Readiness
-        // status load, so it stays usable even when llms.txt/status fails (e.g. older connector).
+        // ONE studio for this site and every connected site (card 17 remake): three
+        // files (/llm-info/, llms.txt + page .md, robots.txt), each with Generate +
+        // Publish, and a live check that fetches them as a crawler would.
         isLocal ? (
-          <div className="space-y-8">
-            <LlmInfoSection />
-            <AIReadinessPanel />
-          </div>
+          <AiReadinessStudio siteName="this site" />
         ) : typeof siteId === 'number' ? (
-          <div className="space-y-8">
-            <LlmInfoSection siteId={siteId} />
-            <RemoteAIReadinessPanel siteId={siteId} siteName={activeSite?.name || activeSite?.url || 'this site'} />
-          </div>
+          <AiReadinessStudio siteId={siteId} siteName={activeSite?.name || activeSite?.url || 'this site'} />
         ) : (
           <RemoteSitePlaceholder siteName={activeSite?.name || activeSite?.url || 'this site'} siteUrl={activeSite?.url} section={SECTION_LABEL[tab]} />
         )

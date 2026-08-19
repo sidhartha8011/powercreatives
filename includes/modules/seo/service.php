@@ -1832,21 +1832,66 @@ class PCM_SEO_Service
      */
     public static function remote_ai_posts(object $site): array
     {
+        // LIGHT read (id/title/link only, published, pages then posts) — the full content
+        // listing (every type, _embed, meta, head fields) is the right thing for the SEO
+        // table and the wrong thing here: on a slow / bot-walled site it ran past the
+        // proxy timeout and the AI Readiness panel showed "No published content" →
+        // owner card 17: "it does not list any .md files".
+        self::ensure_sites_service();
         $out = array();
-        foreach (self::remote_list_content($site) as $r) {
-            if (($r['status'] ?? '') !== 'publish') {
-                continue;
+        foreach (array('page' => '/wp/v2/pages', 'post' => '/wp/v2/posts') as $type => $route) {
+            for ($page = 1; $page <= 5; $page++) {
+                $res = PCM_Sites_Service::remote_rest($site, 'GET', $route, array(
+                    'per_page' => 100,
+                    'page'     => $page,
+                    'status'   => 'publish',
+                    '_fields'  => 'id,title,link',
+                    'orderby'  => $type === 'page' ? 'menu_order' : 'date',
+                    'order'    => $type === 'page' ? 'asc' : 'desc',
+                ));
+                if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300 || !is_array($res['body'] ?? null)) {
+                    break;
+                }
+                $got = 0;
+                foreach ($res['body'] as $item) {
+                    if (!is_array($item)) {
+                        continue;
+                    }
+                    $got++;
+                    $permalink = (string) ($item['link'] ?? '');
+                    $title     = html_entity_decode((string) ($item['title']['rendered'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $out[]     = array(
+                        'id'     => (int) ($item['id'] ?? 0),
+                        'title'  => $title !== '' ? $title : '(untitled)',
+                        'type'   => $type,
+                        'status' => 'publish',
+                        'mdUrl'  => $permalink !== '' ? rtrim($permalink, '/') . '.md' : '',
+                    );
+                }
+                if ($got < 100) {
+                    break;
+                }
             }
-            $permalink = (string) ($r['permalink'] ?? '');
-            $out[]     = array(
-                'id'     => (int) ($r['id'] ?? 0),
-                'title'  => ($r['title'] ?? '') !== '' ? (string) $r['title'] : '(untitled)',
-                'type'   => (string) ($r['type'] ?? 'post'),
-                'status' => (string) ($r['status'] ?? ''),
-                'mdUrl'  => $permalink !== '' ? rtrim($permalink, '/') . '.md' : '',
-            );
         }
         return $out;
+    }
+
+    /**
+     * The live check for a CONNECTED site (see PCM_SEO_AIReadiness::verify_public_files):
+     * fetch robots.txt, llms.txt, /llm-info/ and one page's .md from the site's public
+     * origin and explain each answer.
+     */
+    public static function remote_ai_verify(object $site): array
+    {
+        $base  = rtrim((string) $site->url, '/');
+        $extra = array();
+        foreach (self::remote_ai_posts($site) as $p) {
+            if (($p['mdUrl'] ?? '') !== '') {
+                $extra['md'] = $p['mdUrl'];
+                break;
+            }
+        }
+        return PCM_SEO_AIReadiness::verify_public_files($base, $extra);
     }
 
     /**
@@ -1854,7 +1899,7 @@ class PCM_SEO_Service
      *
      * @return array{description:string}|\WP_Error
      */
-    public static function remote_ai_site_desc(object $site, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    public static function remote_ai_site_desc(object $site, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
     {
         if (!class_exists('PCM_LLM')) {
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
@@ -1870,14 +1915,15 @@ class PCM_SEO_Service
         }
         $name    = ($site->name ?? '') !== '' ? $site->name : (string) $site->url;
         $default = (string) (PCM_SEO_AI::field_prompts()['site_ai_description']['generate'] ?? '');
-        $tpl     = PCM_SEO_AI::resolve_prompt('site_ai_description_generate', $default, $user_id);
+        $tpl     = PCM_SEO_AI::resolve_prompt('site_ai_description_generate', $default, $user_id, $template_id);
         // The site's own page titles below are the language authority; the brand's
         // scraped language is the hint. See PCM_SEO_AI::language_law().
         $tpl    .= PCM_SEO_AI::language_law(array(
             'site.lang' => (string) (PCM_SEO_Business::business_record_for_site((int) ($site->id ?? 0))['fields']['language'] ?? ''),
         ));
         $prompt  = PCM_SEO_AI::substitute_vars($tpl, array(
-            'site_name' => $name,
+            'site_name' => $name,      // the shipped prompt's name (seeded rows carry it)
+            'site.name' => $name,      // the shared vocabulary's name
             'key_pages' => implode("\n", $titles),
         ));
         try {
@@ -1943,7 +1989,7 @@ class PCM_SEO_Service
      * @param array $ctx  { name, url, keywords, years, area, strengths, category, rating, reviews, address }
      * @return string|\WP_Error  Sanitized HTML body content.
      */
-    public static function build_llm_info(array $ctx, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    public static function build_llm_info(array $ctx, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
     {
         if (!class_exists('PCM_LLM')) {
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
@@ -1955,7 +2001,7 @@ class PCM_SEO_Service
         }
         // The business facts assembled below carry the site's own wording, which
         // is the language authority. See PCM_SEO_AI::language_law().
-        $prompt = self::llm_info_prompt($ctx, $user_id)
+        $prompt = self::llm_info_prompt($ctx, $user_id, $template_id)
             . PCM_SEO_AI::language_law(array('site.lang' => (string) ($ctx['language'] ?? '')));
         try {
             $opts = array('max_tokens' => 1400, 'web' => PCM_LLM::web_default());
@@ -1965,7 +2011,7 @@ class PCM_SEO_Service
             if (!empty($provider)) {
                 $opts['provider'] = $provider;
             }
-            $result = PCM_LLM::invoke(array(array('role' => 'user', 'content' => $prompt)), $opts);
+            $result = self::invoke_with_web_fallback(array(array('role' => 'user', 'content' => $prompt)), $opts);
             $html   = trim((string) ($result['content'] ?? ''));
             $html   = trim(preg_replace('#^```[a-z]*\s*|\s*```$#i', '', $html)); // strip stray code fences
             if ($html === '') {
@@ -1974,6 +2020,32 @@ class PCM_SEO_Service
             return wp_kses_post($html);
         } catch (\Throwable $e) {
             return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
+        }
+    }
+
+    /**
+     * Web-enabled first, plain second. The provider's web tool is the better result
+     * (it reads the live site) but it is also the newer, stricter path — a model
+     * without web-tool support, or a tool outage, must not turn "Generate" into a
+     * dead button (owner card 17: "Generate summary does not seem to work for a new
+     * site"). When the web-enabled call fails, the SAME prompt runs once more without
+     * it; only a second failure surfaces.
+     *
+     * @throws \Throwable the plain call's error (the web error is logged).
+     */
+    public static function invoke_with_web_fallback(array $messages, array $opts): array
+    {
+        if (empty($opts['web'])) {
+            return PCM_LLM::invoke($messages, $opts);
+        }
+        try {
+            return PCM_LLM::invoke($messages, $opts);
+        } catch (\Throwable $e) {
+            if (function_exists('error_log')) {
+                error_log('[PCM SEO] web-enabled generation failed, retrying without web: ' . $e->getMessage());
+            }
+            $opts['web'] = false;
+            return PCM_LLM::invoke($messages, $opts);
         }
     }
 
@@ -2065,7 +2137,7 @@ class PCM_SEO_Service
     }
 
     /** The persuasive, truthful /llm-info/ prompt — only emits guidance for facts that are present. */
-    private static function llm_info_prompt(array $ctx, ?int $user_id = null): string
+    private static function llm_info_prompt(array $ctx, ?int $user_id = null, ?int $template_id = null): string
     {
         $g         = static fn ($k) => trim((string) ($ctx[$k] ?? ''));
         $name      = $g('name') !== '' ? $g('name') : 'the business';
@@ -2124,7 +2196,7 @@ class PCM_SEO_Service
         // conditional clause below becomes an empty-when-absent fragment var,
         // same convention as the strategy module's {{output_format}} etc.
         $default = (string) (PCM_SEO_AI::field_prompts()['llm_info_page']['generate'] ?? '');
-        $tpl     = PCM_SEO_AI::resolve_prompt('llm_info_page_generate', $default, $user_id);
+        $tpl     = PCM_SEO_AI::resolve_prompt('llm_info_page_generate', $default, $user_id, $template_id);
         return PCM_SEO_AI::substitute_vars($tpl, array(
             'facts'              => $facts,
             'corpus'             => $corpus,
@@ -2232,8 +2304,14 @@ class PCM_SEO_Service
     }
 
     /** Generate /llm-info/ HTML for a connected site (not saved — the caller saves on accept). */
-    public static function remote_llminfo_build(object $site, array $inputs, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    public static function remote_llminfo_build(object $site, array $inputs, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
     {
+        // The linked brand's language (when any) is the hint for the language law; the
+        // corpus itself stays the authority.
+        $lang = '';
+        if (class_exists('PCM_SEO_Business')) {
+            $lang = (string) (PCM_SEO_Business::business_record_for_site((int) ($site->id ?? 0))['fields']['language'] ?? '');
+        }
         $html = self::build_llm_info(array(
             'name'      => ($site->name ?? '') !== '' ? $site->name : (string) $site->url,
             'url'       => (string) $site->url,
@@ -2241,8 +2319,9 @@ class PCM_SEO_Service
             'years'     => (string) ($inputs['years'] ?? ''),
             'area'      => (string) ($inputs['area'] ?? ''),
             'strengths' => (string) ($inputs['strengths'] ?? ''),
+            'language'  => $lang,
             'pages'     => self::remote_content_corpus($site),
-        ), $model, $user_id, $provider);
+        ), $model, $user_id, $provider, $template_id);
         if ($html instanceof WP_Error) {
             return $html;
         }

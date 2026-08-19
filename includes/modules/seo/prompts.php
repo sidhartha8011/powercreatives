@@ -200,6 +200,22 @@ return array(
             . "- Be truthful and specific. Omit anything not provided. Output ONLY the HTML body content.",
     ),
 
+    // ── AI Readiness per-page summary — the one-line description after each
+    // page in llms.txt (and stored with the page's .md). Previously a hardcoded
+    // string in PCM_SEO_AIReadiness::summarize(); now a Templates (module=seo)
+    // row the user can pick/edit (owner card 17: "all needs to be exposed in the
+    // templates so the user can choose other templates"). ──
+    'air_page_summary' => array(
+        'max'      => 120,
+        'generate' => "Write a concise, factual description (20-35 words) for this page in a directory listing. "
+            . "CRITICAL: Write in the SAME language as the content below — do NOT translate, match the language exactly. "
+            . "Write as if hand-crafted by the site owner — conversational, authentic, not templated. "
+            . "Start with what the page offers (answer-first). Use specific details like prices, locations, or services when available. "
+            . "Do NOT start with 'This page', 'A page about', or 'An article about'. Do NOT use quotes around the output. "
+            . "Return ONLY the description text — no quotes, labels, prefixes, comments, symbols, or markdown.\n\n"
+            . "Page title: {{title}}\n\nContent:\n{{corpus}}",
+    ),
+
     // ── Section-revise human-editor contract — previously baked directly into
     // remote_optimize_section()'s $vars['topic'] value (invisible/unremovable
     // by any template); now its own editable prompt. No vars. ──

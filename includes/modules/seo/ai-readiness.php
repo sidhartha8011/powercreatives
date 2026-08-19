@@ -331,7 +331,7 @@ class PCM_SEO_AIReadiness
      *
      * @return array{summary:string}|\WP_Error
      */
-    public static function summarize(int $post_id, ?string $model = null, ?int $user_id = null, ?string $provider = null)
+    public static function summarize(int $post_id, ?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
     {
         if (!class_exists('PCM_LLM')) {
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
@@ -345,15 +345,14 @@ class PCM_SEO_AIReadiness
         }
         $post   = get_post($post_id);
         $title  = $post ? $post->post_title : '';
-        $slug   = $post ? $post->post_name : '';
         $body   = mb_substr(wp_strip_all_tags($md), 0, 2000);
-        $prompt = "Write a concise, factual description (20-35 words) for this page in a directory listing. "
-            . "CRITICAL: Write in the SAME language as the content below — do NOT translate, match the language exactly. "
-            . "Write as if hand-crafted by the site owner — conversational, authentic, not templated. "
-            . "Start with what the page offers (answer-first). Use specific details like prices, locations, or services when available. "
-            . "Do NOT start with 'This page', 'A page about', or 'An article about'. Do NOT use quotes around the output. "
-            . "Return ONLY the description text — no quotes, labels, prefixes, comments, symbols, or markdown.\n\n"
-            . "Page title: {$title}\nURL slug: {$slug}\n\nContent:\n{$body}";
+        // The prompt is a Templates (module=seo) row — type air_page_summary_generate —
+        // the user's pick/edit wins, the shipped default is the fallback (card 17).
+        // {{title}} / {{corpus}} — the SEO vocabulary's own names (the page's title, its text).
+        $prompt = self::resolve_section_prompt('air_page_summary', $user_id, $template_id, array(
+            'title'  => $title,
+            'corpus' => $body,
+        ));
         try {
             $opts = array('max_tokens' => 120);
             if (!empty($model)) {
@@ -539,7 +538,7 @@ class PCM_SEO_AIReadiness
      *
      * @return array{description:string}|\WP_Error
      */
-    public static function gen_site_description(?string $model = null, ?int $user_id = null, ?string $provider = null)
+    public static function gen_site_description(?string $model = null, ?int $user_id = null, ?string $provider = null, ?int $template_id = null)
     {
         if (!class_exists('PCM_LLM')) {
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
@@ -550,9 +549,13 @@ class PCM_SEO_AIReadiness
             $titles[] = '- ' . html_entity_decode($pg->post_title, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         }
         $name   = get_bloginfo('name');
-        $prompt = "Write a concise 1-2 sentence description of this website for an AI/LLM index file (llms.txt). "
-            . "Factual, answer-first, no marketing fluff. Plain text only — no quotes, labels, or markdown.\n\n"
-            . "Site name: {$name}\nKey pages:\n" . implode("\n", $titles);
+        // Same template the connected-site generator uses (site_ai_description_generate)
+        // — one prompt, both scopes, user-editable under Templates → SEO (card 17).
+        $prompt = self::resolve_section_prompt('site_ai_description', $user_id, $template_id, array(
+            'site_name' => $name,      // the shipped prompt's name (seeded rows carry it)
+            'site.name' => $name,      // the shared vocabulary's name
+            'key_pages' => implode("\n", $titles),
+        ), (string) get_bloginfo('language'));
         try {
             $opts = array('max_tokens' => 120);
             if (!empty($model)) {
@@ -570,6 +573,183 @@ class PCM_SEO_AIReadiness
         } catch (\Throwable $e) {
             return new WP_Error('pcm_seo_generate_failed', $e->getMessage(), array('status' => 502));
         }
+    }
+
+    /**
+     * Resolve one of the AI-Readiness prompts through the SEO Templates layer —
+     * the user's picked/edited template (Templates → SEO → "AI Readiness — …")
+     * or the shipped default — then fill its {{vars}} and append the language law.
+     *
+     * @param string      $use         prompts.php key (air_page_summary | site_ai_description).
+     * @param int|null    $user_id     PCM user id (null → shipped default).
+     * @param int|null    $template_id Explicit template pick (null → the section default).
+     * @param array       $vars        {{key}} → value.
+     * @param string      $site_lang   Language hint for the language law ('' = none).
+     */
+    public static function resolve_section_prompt(string $use, ?int $user_id, ?int $template_id, array $vars, string $site_lang = ''): string
+    {
+        $default = class_exists('PCM_SEO_AI') ? (string) (PCM_SEO_AI::field_prompts()[$use]['generate'] ?? '') : '';
+        $tpl     = class_exists('PCM_SEO_AI') ? PCM_SEO_AI::resolve_prompt($use . '_generate', $default, $user_id, $template_id) : $default;
+        $prompt  = class_exists('PCM_SEO_AI') ? PCM_SEO_AI::substitute_vars($tpl, $vars) : $tpl;
+        if (class_exists('PCM_SEO_AI')) {
+            $prompt .= PCM_SEO_AI::language_law(array('site.lang' => $site_lang), $tpl);
+        }
+        return $prompt;
+    }
+
+    /**
+     * THE LIVE CHECK (owner card 17: "it does not work on the remote site … the pages
+     * return 404 … Check why it is not creating any files"). Fetches each AI-Readiness
+     * file from its PUBLIC URL exactly as a crawler would and reports what came back,
+     * with a plain-language reason. Pure over the fetcher so it is testable; used for
+     * the local site (home_url) and connected sites (site url) alike.
+     *
+     * @param string        $base   Site origin, e.g. https://example.com
+     * @param array         $extra  Optional: ['md' => one page's .md URL to sample]
+     * @param callable|null $fetch  fn(string $url): array{status:int, body:string, headers:array}
+     * @return array<int, array{key:string,label:string,url:string,status:int,ok:bool,state:string,note:string}>
+     */
+    public static function verify_public_files(string $base, array $extra = array(), ?callable $fetch = null): array
+    {
+        $base  = rtrim($base, '/');
+        $fetch = $fetch ?: static function (string $url): array {
+            $res = wp_remote_get($url, array(
+                'timeout'     => 15,
+                'redirection' => 3,
+                'sslverify'   => false,
+                // A crawler-ish UA, NOT the WP default — some hosts special-case WordPress/x.y.
+                'user-agent'  => 'Mozilla/5.0 (compatible; PowerCreatives-AIReadinessCheck/1.0; +https://powercreatives.com)',
+            ));
+            if (is_wp_error($res)) {
+                return array('status' => 0, 'body' => $res->get_error_message(), 'headers' => array());
+            }
+            $h = array();
+            foreach ((array) wp_remote_retrieve_headers($res) as $k => $v) {
+                $h[strtolower((string) $k)] = is_array($v) ? implode(', ', $v) : (string) $v;
+            }
+            return array('status' => (int) wp_remote_retrieve_response_code($res), 'body' => (string) wp_remote_retrieve_body($res), 'headers' => $h);
+        };
+        $files = array(
+            array('key' => 'robots',  'label' => 'robots.txt',          'url' => $base . '/robots.txt'),
+            array('key' => 'llms',    'label' => 'llms.txt',            'url' => $base . '/llms.txt'),
+            array('key' => 'llminfo', 'label' => '/llm-info/',          'url' => $base . '/llm-info/'),
+        );
+        if (!empty($extra['md'])) {
+            $files[] = array('key' => 'md', 'label' => 'page .md', 'url' => (string) $extra['md']);
+        }
+        $out = array();
+        foreach ($files as $f) {
+            $r      = $fetch($f['url']);
+            $status = (int) ($r['status'] ?? 0);
+            $body   = (string) ($r['body'] ?? '');
+            $ctype  = strtolower((string) (($r['headers'] ?? array())['content-type'] ?? ''));
+            $server = strtolower((string) (($r['headers'] ?? array())['server'] ?? ''));
+            $state  = 'missing';
+            $note   = '';
+            $ok     = false;
+            $challenge = $status === 403 && (stripos($body, 'Just a moment') !== false || stripos($body, 'cf-chl') !== false || stripos($body, 'challenge') !== false || $server === 'cloudflare');
+            if ($status === 0) {
+                $state = 'unreachable';
+                $note  = 'Could not reach the site: ' . ($body !== '' ? $body : 'no response') . '.';
+            } elseif ($challenge) {
+                $state = 'blocked';
+                $note  = 'The site’s bot protection (Cloudflare challenge) blocks this URL for non-browser visitors — AI crawlers get the same wall. Allow-list /llms.txt, /llm-info/ and *.md in the firewall.';
+            } elseif ($status === 403) {
+                $state = 'blocked';
+                $note  = 'The server refuses this URL (403) — a firewall or security plugin is blocking it.';
+            } elseif ($status === 404) {
+                $state = 'missing';
+                $note  = $f['key'] === 'robots'
+                    ? 'No robots.txt is served.'
+                    : ($f['key'] === 'md'
+                        ? 'Not served yet — turn on “Serve llms.txt + page .md” and Save; if it stays 404 the connector on this site is outdated.'
+                        : 'Not served yet — generate it and turn on “Publish”; if it stays 404 after publishing, the connector on this site is outdated.');
+            } elseif ($status >= 500) {
+                $state = 'error';
+                $note  = "The site returned a server error ({$status}) for this URL.";
+            } elseif ($status >= 200 && $status < 300) {
+                if ($f['key'] === 'robots') {
+                    $blocked = self::robots_blocks_ai_crawlers($body);
+                    $ok      = $blocked === array();
+                    $state   = $ok ? 'live' : 'warn';
+                    $note    = $ok ? 'AI crawlers are allowed.' : ('robots.txt blocks AI crawlers: ' . implode(', ', $blocked) . ' — remove those Disallow rules so AI search can read the site.');
+                } elseif ($f['key'] === 'llminfo') {
+                    $is_html = strpos($ctype, 'text/html') !== false;
+                    $looks   = $is_html && stripos($body, '<main') !== false && stripos($body, 'Overview</title>') !== false;
+                    $ok      = $looks;
+                    $state   = $looks ? 'live' : 'warn';
+                    $note    = $looks ? 'Live — served as the AI overview page.' : 'A page answers here, but it is not the generated overview (the theme’s own page or a 200-OK “not found” page). Generate + Publish again.';
+                } elseif ($f['key'] === 'llms') {
+                    $ok    = strpos($ctype, 'text/plain') !== false || str_starts_with(ltrim($body), '#');
+                    $state = $ok ? 'live' : 'warn';
+                    $note  = $ok ? 'Live — ' . max(0, substr_count($body, "\n- [")) . ' page link(s) in the index.' : 'A page answers here but it is not a plain-text llms.txt (the theme’s 200 “not found” page?).';
+                } else {
+                    $ok    = strpos($ctype, 'markdown') !== false || str_starts_with(ltrim($body), '#');
+                    $state = $ok ? 'live' : 'warn';
+                    $note  = $ok ? 'Live — the page is served as Markdown.' : 'A page answers here but it is not Markdown.';
+                }
+            } else {
+                $state = 'warn';
+                $note  = "Unexpected response ({$status}).";
+            }
+            $out[] = array('key' => $f['key'], 'label' => $f['label'], 'url' => $f['url'], 'status' => $status, 'ok' => $ok, 'state' => $state, 'note' => $note);
+        }
+        return $out;
+    }
+
+    /** Which well-known AI crawlers a robots.txt DISALLOWS at root. Pure. */
+    public static function robots_blocks_ai_crawlers(string $robots): array
+    {
+        $bots    = array('GPTBot', 'ChatGPT-User', 'OAI-SearchBot', 'ClaudeBot', 'anthropic-ai', 'PerplexityBot', 'Google-Extended', 'CCBot', 'Applebot-Extended', 'Bytespider');
+        $blocked = array();
+        $agents  = array();
+        $in_rules = false; // a directive has followed the current User-agent line(s)
+        foreach (preg_split('/\r?\n/', $robots) as $line) {
+            $line = trim(preg_replace('/#.*$/', '', $line));
+            if ($line === '') {
+                continue;
+            }
+            if (preg_match('/^user-agent\s*:\s*(.+)$/i', $line, $m)) {
+                // Consecutive User-agent lines share one group; a User-agent AFTER rules
+                // starts a NEW group (robots.txt grouping), so the agents reset here.
+                if ($in_rules) {
+                    $agents   = array();
+                    $in_rules = false;
+                }
+                $agents[] = trim($m[1]);
+                continue;
+            }
+            $in_rules = true;
+            if (preg_match('/^disallow\s*:\s*(.*)$/i', $line, $m)) {
+                $path = trim($m[1]);
+                if ($path === '/' ) {
+                    foreach ($agents as $a) {
+                        foreach ($bots as $b) {
+                            if (strcasecmp($a, $b) === 0 && !in_array($b, $blocked, true)) {
+                                $blocked[] = $b;
+                            }
+                        }
+                        if ($a === '*') {
+                            // A blanket "Disallow: /" for everyone blocks the AI crawlers too —
+                            // unless a bot has its own group (handled by its own group above).
+                            foreach ($bots as $b) {
+                                if (!in_array($b, $blocked, true) && !self::robots_has_own_group($robots, $b)) {
+                                    $blocked[] = $b;
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            // Any other directive (Allow/Sitemap/Crawl-delay) belongs to the current group.
+        }
+        return $blocked;
+    }
+
+    private static function robots_has_own_group(string $robots, string $bot): bool
+    {
+        return (bool) preg_match('/^user-agent\s*:\s*' . preg_quote($bot, '/') . '\s*$/im', $robots);
     }
 }
 
