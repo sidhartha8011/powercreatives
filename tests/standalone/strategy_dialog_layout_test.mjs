@@ -54,14 +54,17 @@ const pub = src.slice(pubStart, contentStart);
 check('Publishing region is locatable', pubStart !== -1 && contentStart > pubStart, { pubStart, contentStart });
 check('the schedule sub-header lives inside Publishing', pub.includes('>Publishing schedule</Label>'), 'schedule elsewhere');
 check('the release-mode toggle is inside Publishing',
-  pub.includes("label: 'As posts arrive'") && pub.includes("label: 'On a schedule'"), 'toggle elsewhere');
+  // Card 15 spec wording (2026-08-18): "How should posts be released? [As content arrives] [On a schedule]"
+  pub.includes("label: 'As content arrives'") && pub.includes("label: 'On a schedule'") && pub.includes('How should posts be released?'), 'toggle elsewhere');
 check('Stop publishing lives inside Publishing', pub.includes('>Stop publishing</Label>'), 'duration elsewhere');
 check('Stop publishing is GATED to as-posts-arrive (scheduled mode keeps its own Ends)',
   /\{sourceMode !== 'keywords' && !socialScheduled && \(/.test(pub), 'always visible — "which one wins" returns');
-check('duration options relabelled for the new home (Never / On a date / After N articles)',
-  pub.includes("label: 'Never'") && pub.includes("label: 'On a date'") && pub.includes("label: 'After N articles'"),
+check('duration options relabelled for the new home (Never / On a date / After N posts — card 15 spec)',
+  pub.includes("label: 'Never'") && pub.includes("label: 'On a date'") && pub.includes("label: 'After N posts'"),
   'old Ongoing/Until labels');
-check('cadence + queue note kept', pub.includes('id="rss-per-week"') && pub.includes('never flooded'), 'cadence lost');
+// Card 15 spec: "Publishing limit — Publish up to [3] posts per [week]. Extra posts are queued until capacity is
+// available." + the Summary line "Publishes automatically, up to 3 posts per week. Extra posts are queued. Runs indefinitely."
+check('cadence + queue note kept (spec wording)', pub.includes('id="rss-per-week"') && pub.includes('Publishing limit') && pub.includes('Extra posts are queued until capacity is available.') && pub.includes("'Runs indefinitely.'"), 'cadence lost');
 check('recurrence + start date kept for scheduled mode', pub.includes('<RecurrenceEditor') && pub.includes('Leave blank to start today.'), 'schedule fields lost');
 
 console.log('\n4. Content is three labelled groups, in order');
@@ -81,8 +84,8 @@ check('auto-interlink is in Linking', between(gL, gR, 'id="auto-interlink"'));
 check('research depth checkboxes are in Research',
   between(gR, -1, 'id="research-landscape"') && between(gR, -1, 'id="research-gaps"'));
 check('the research model select is in Research', between(gR, -1, 'id="research-model"'));
-check('research checkboxes keep their explainer sublabels',
-  content.includes('what currently ranks') && content.includes('what rivals miss'), 'sublabels lost');
+check('research checkboxes keep their explainer sublabels (card 15 spec wording)',
+  content.includes('Review what currently ranks') && content.includes('Identify what competing articles miss') && content.includes('Find real questions and chart-ready statistics'), 'sublabels lost');
 
 console.log('\n5. A move, not a rewrite — payload contract and controls intact');
 for (const id of ['manual-primary', 'manual-supporting', 'source-template', 'source-model',

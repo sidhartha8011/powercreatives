@@ -1227,7 +1227,8 @@ class PCM_SEO_Local
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
         }
         try {
-            $opts = array('max_tokens' => $max);
+            // Web only for the multi-line SECTION rewrites — a one-line heading has nothing to browse for.
+            $opts = array('max_tokens' => $max, 'web' => !$single_line && PCM_LLM::web_default());
             if (!empty($model))    { $opts['model'] = $model; }
             if (!empty($provider)) { $opts['provider'] = $provider; }
             // The caller's user owns the API keys — without this, key lookup

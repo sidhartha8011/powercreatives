@@ -115,8 +115,21 @@ class PCM_REST_Templates extends PCM_REST_Base
         // a fork un-hid the shared original, so the same section appeared twice and it was pot luck
         // which one you then edited. Section is what fork_shared_template(), clear_other_defaults()
         // and seo_template_prompt() all key on; this makes the list agree with them.
+        //
+        // ONLY where `type` IS a section: SEO and Optimizer resolve their per-section
+        // override by formData.type === $section (seo_template_prompt, optimizer
+        // service.php:905). Everywhere else `type` is a plain CATEGORY shared by many
+        // templates ('article', 'scene', 'social_ads'…) — treating it as a section made
+        // "Duplicate" on a seeded Writer template hide EVERY seeded writer template of
+        // that type (owner card 14: "I clicked Duplicate on a Writer template, and it
+        // deleted all others"). Name-based hiding (an owned copy with the same name)
+        // still applies to every module.
         $results = $results ?: array();
-        $section_of = static function ($r) {
+        $section_modules = array('seo', 'optimizer');
+        $section_of = static function ($r) use ($section_modules) {
+            if (!in_array((string) $r->module, $section_modules, true)) {
+                return '';
+            }
             $fd = json_decode((string) $r->formData, true);
             return (is_array($fd) && !empty($fd['type'])) ? (string) $fd['type'] : '';
         };

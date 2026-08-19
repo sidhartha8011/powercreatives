@@ -93,7 +93,7 @@ class PCM_Article_Review
             ),
         );
 
-        $result = PCM_LLM::invoke_json($messages, $schema, array('user_id' => $user_id));
+        $result = PCM_LLM::invoke_json($messages, $schema, array('user_id' => $user_id, 'web' => PCM_LLM::web_default()));
         $rows   = (is_array($result) && isset($result['suggestions']) && is_array($result['suggestions']))
             ? $result['suggestions']
             : array();

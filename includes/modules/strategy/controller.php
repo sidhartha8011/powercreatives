@@ -122,6 +122,10 @@ class PCM_REST_Strategy extends PCM_REST_Base
             );
         }
 
+        // A manual scan is the owner's "look again" — a strategy wrongly parked at
+        // 'completed' is put back to watching first, so the scan (and the watcher
+        // afterwards) can act on it.
+        PCM_Strategy_Service::revive_completed_watchers();
         $result = PCM_Strategy_Service::scan_strategy_now($strategy_id, (int)$pcm_user->id);
         return $this->success($result);
     }
@@ -133,6 +137,13 @@ class PCM_REST_Strategy extends PCM_REST_Base
     public function list_strategies(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
         $pcm_user = $this->get_current_pcm_user();
+        // A feed strategy parked at 'completed' by an older build (owner card 14:
+        // "it can't say completed if it's not completed") must not sit there until
+        // the next cron scan happens to revive it — the LIST is what the owner is
+        // looking at. Idempotent, one LIKE query; update_strategy() busts the list
+        // cache, so the read below sees the revived rows.
+        require_once __DIR__ . '/service.php';
+        PCM_Strategy_Service::revive_completed_watchers();
         $strategies = PCM_DB::get_user_strategies((int)$pcm_user->id);
 
         // Attach each strategy's items so the Strategies page can render them
@@ -458,7 +469,12 @@ class PCM_REST_Strategy extends PCM_REST_Base
         // (completed/errored items keep their history). Only meaningful while
         // the strategy is actually in schedule mode — the mode may be changing
         // in this same request, so prefer the incoming value.
-        if ($schedule_changed) {
+        // Card 14: the cadence dialog asks the user whether the UNPUBLISHED (planned)
+        // posts should be recalculated onto the new cadence — `reschedulePending`
+        // (bool). Absent = the long-standing behaviour (always reschedule), so the
+        // older row controls keep working unchanged.
+        $reschedule_pending = !array_key_exists('reschedulePending', $params) || !empty($params['reschedulePending']);
+        if ($schedule_changed && $reschedule_pending) {
             $mode = $update['publishingMode'] ?? (string)($existing_strategy->publishingMode ?? '');
             if ($mode === 'schedule') {
                 $sc = json_decode((string)$update['config'], true)['scheduleConfig'] ?? array();
@@ -603,6 +619,10 @@ class PCM_REST_Strategy extends PCM_REST_Base
         }
         if (array_key_exists('siteId', $fields)) {
             $config['siteId'] = !empty($fields['siteId']) ? absint($fields['siteId']) : 0;
+        }
+        // Web-enabled generation opt-out (card 14) — absent = on (see PCM_Strategy_Service::web_enabled()).
+        if (array_key_exists('webEnabled', $fields)) {
+            $config['webEnabled'] = (bool)$fields['webEnabled'];
         }
         if (array_key_exists('featuredImages', $fields)) {
             $config['featuredImages'] = (bool)$fields['featuredImages'];

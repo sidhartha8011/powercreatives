@@ -950,7 +950,7 @@ class PCM_SEO_AI
             return new WP_Error('pcm_seo_no_llm', __('AI provider is unavailable.', 'power-creatives'), array('status' => 500));
         }
         try {
-            $opts = array('max_tokens' => (int) ($prompts['content']['max'] ?? 4096));
+            $opts = array('max_tokens' => (int) ($prompts['content']['max'] ?? 4096), 'web' => PCM_LLM::web_default());
             if (!empty($model)) {
                 $opts['model'] = $model;
             }

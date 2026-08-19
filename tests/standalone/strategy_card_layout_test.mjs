@@ -38,7 +38,14 @@ const at = (needle, from = 0) => {
 
 const header = at('Strategy header.');
 const identity = at('flex flex-wrap items-center gap-x-3 gap-y-1.5');
-const controls = at('Controls — UP in the header row');
+// 2026-08-19: the cluster (11 controls wide by now) still lives INSIDE the header block, but
+// breaks to its own full-width line (basis-full) instead of sharing the identity row — the two
+// flex children could both shrink, crushing the name/badges and painting the controls over the
+// meta line ("the UI is overlapping"). Same tokens, same gating; the header is one row taller.
+const controls = at('Controls — on their OWN full-width row');
+check('the controls cluster forces its own line inside the header (basis-full, light top rule)',
+  SRC.includes('className="flex flex-wrap items-center gap-x-2 gap-y-1.5 basis-full pt-2 mt-1"') && !SRC.includes('justify-end gap-x-2 gap-y-1.5 ml-auto min-w-0'), 'controls share the identity row again');
+check('the identity line wraps its badges rather than crushing them', SRC.includes('<div className="flex flex-wrap items-center gap-2">') && SRC.includes('rounded-full shrink-0 whitespace-nowrap'), 'badges can crush');
 const progress = at('Progress — belongs beside');
 const icons = at('Icon utilities');
 const generation = at('Line 3 — GENERATION');
@@ -66,7 +73,7 @@ console.log('\n3. Still expand-gated — a collapsed card is one identity row');
 for (const [label, line] of [['controls', controls], ['generation', generation]]) {
   // The gate wraps the cluster, so it can sit just BEFORE the comment (as the
   // generation cluster's does) or just after it — search a window either way.
-  const near = LINES.slice(line - 4, line + 10);
+  const near = LINES.slice(line - 4, line + 14); // the controls comment is 12 lines long since 2026-08-19
   check(`${label}: gated within a few lines of its comment`,
     near.some((l) => l.includes('expandedId === strategy.id &&')), { line });
 }

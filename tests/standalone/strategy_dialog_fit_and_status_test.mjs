@@ -77,7 +77,7 @@ const pub = between('<AccordionSection title="Publishing"', '<AccordionSection t
 const iSite = pub.indexOf('htmlFor="target-site"');
 const iDivider = pub.indexOf('>Publishing schedule</Label>');
 const iStatus = pub.search(/>\s*Post status\s*<\/Label>/); // the rendered label, not the comment/tooltip mentions
-const iWhen = pub.indexOf('When to publish');
+const iWhen = pub.indexOf('How should posts be released?'); // card 15 spec wording (was 'When to publish')
 check('Target Site comes first', iSite > 0 && iSite < iDivider, { iSite, iDivider });
 check('Post status sits UNDER the schedule divider, before When to publish', iDivider < iStatus && iStatus < iWhen, { iDivider, iStatus, iWhen });
 check('the toggle is no longer above the Target Site', !/value=\{publishing\}[\s\S]*?htmlFor="target-site"/.test(pub));

@@ -1958,7 +1958,7 @@ class PCM_SEO_Service
         $prompt = self::llm_info_prompt($ctx, $user_id)
             . PCM_SEO_AI::language_law(array('site.lang' => (string) ($ctx['language'] ?? '')));
         try {
-            $opts = array('max_tokens' => 1400);
+            $opts = array('max_tokens' => 1400, 'web' => PCM_LLM::web_default());
             if (!empty($model)) {
                 $opts['model'] = $model;
             }

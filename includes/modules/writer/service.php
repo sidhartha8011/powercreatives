@@ -111,6 +111,10 @@ class PCM_Writer_Service
         // PCM_SSE::start(600) already prevents timeouts via set_time_limit()
         // and X-Accel-Buffering: no headers.
 
+        // Web-enabled by default (owner card 14) — the writer may read the site / sources it cites.
+        if (!array_key_exists('web', $invoke_args)) {
+            $invoke_args['web'] = PCM_LLM::web_default();
+        }
         $result = PCM_LLM::invoke_json($messages, self::article_schema($image_count), $invoke_args);
         
         // Enrich manifest entries with the user's requested style/model for downstream consumers

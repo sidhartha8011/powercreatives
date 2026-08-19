@@ -77,6 +77,18 @@ class PCM_LLM
      *   parse_response(); a NON-empty refusal is terminal, not retryable.
      * @throws \RuntimeException On API key missing, HTTP error, or parse failure.
      */
+    /**
+     * Site-wide default for the `web` option (owner card 14: "every call we do should
+     * be web-enabled"): ON unless the kill-switch option `pcm_llm_web_search` is '0'.
+     * Long-form, site-reading generations pass this; short scalar fields (a title, a
+     * meta description, ×500 in a bulk run) deliberately do not — nothing to browse
+     * for, and the web tools bill per call.
+     */
+    public static function web_default(): bool
+    {
+        return !(function_exists('get_option') && (string) get_option('pcm_llm_web_search', '1') === '0');
+    }
+
     public static function invoke(array $messages, array $options = array()): array
     {
         // Resolve model — handle both null and empty string gracefully.
@@ -143,6 +155,39 @@ class PCM_LLM
         // Other providers: silently ignored (can be extended per-provider later).
         if (!empty($tools) && $provider === 'google') {
             $payload['tools'] = $tools;
+        }
+
+        // ── WEB-ENABLED generation (owner card 14: "the best way is if the model
+        //    actually has web enabled so it can actually read site stuff … every
+        //    call we do should be web-enabled"). `web => true` turns on each
+        //    provider's OWN live-web tool, so the model can open {{website.url}},
+        //    the source post, competitors — instead of writing from memory:
+        //      · OpenAI    → the Responses API with the `web_search_preview` tool
+        //                    (chat/completions has no web tool for ordinary models)
+        //      · Anthropic → the `web_search_20250305` server tool on /v1/messages
+        //      · Google    → native generateContent with `google_search` grounding
+        //                    (the OpenAI-compatible endpoint cannot ground)
+        //    Streaming callers keep the plain path (the web tools stream
+        //    differently and nothing here streams long-form articles). Any other
+        //    provider ignores the flag rather than failing the call. ──
+        $web = !empty($options['web']) && !is_callable($on_chunk);
+        if ($web && $provider === 'openai') {
+            return self::invoke_openai_responses($payload, $api_key, $options);
+        }
+        if ($web && $provider === 'google') {
+            // The grounded path takes the ORIGINAL messages; response_format cannot
+            // ride along with grounding, so JSON comes from the prompt — invoke_json()'s
+            // tiers already tolerate that (its parser accepts fenced/prose-wrapped JSON).
+            $grounded = self::invoke_with_grounding($messages, array(
+                'model'      => $model,
+                'max_tokens' => $max_tokens,
+                'user_id'    => $user_id,
+                'timeout'    => (int) ($options['timeout'] ?? 300),
+            ));
+            return $grounded + array('finish_reason' => '', 'refusal' => '');
+        }
+        if ($web && $provider === 'anthropic') {
+            $payload['web'] = true; // to_anthropic_format() turns this into the server tool
         }
 
         // Enable streaming if callback provided
@@ -1879,7 +1924,124 @@ class PCM_LLM
             $anthropic_payload['stream'] = true;
         }
 
+        // Web-enabled generation: Anthropic's server-side web search tool. The model
+        // decides when to search; results come back as extra content blocks that
+        // parse_response() skips (it joins the text blocks only). Bounded per call.
+        if (!empty($payload['web'])) {
+            $anthropic_payload['tools'] = array(
+                array('type' => 'web_search_20250305', 'name' => 'web_search', 'max_uses' => 5),
+            );
+        }
+
         return $anthropic_payload;
+    }
+
+    /**
+     * OpenAI *Responses* API call with the `web_search_preview` tool — the
+     * transport for web-enabled generation on OpenAI (chat/completions has no web
+     * tool for ordinary models). Same in/out contract as blocking_request(): the
+     * OpenAI-compatible payload built by invoke() goes in, the parse_response()
+     * shape comes out; errors are RuntimeExceptions carrying the API body so
+     * invoke_json()'s tier logic (json_schema → json_object → prompt-only) keeps
+     * working — a rejected `text.format` is re-worded so that classifier sees it.
+     *
+     * @param array  $payload OpenAI-compatible payload from invoke().
+     * @param string $api_key OpenAI key.
+     * @param array  $options invoke() options (timeout).
+     * @return array parse_response() shape.
+     * @throws \RuntimeException On transport/API/parse failure.
+     */
+    private static function invoke_openai_responses(array $payload, string $api_key, array $options = array()): array
+    {
+        $instructions = '';
+        $input        = array();
+        foreach ((array) ($payload['messages'] ?? array()) as $msg) {
+            $content = is_string($msg['content'] ?? null) ? $msg['content'] : wp_json_encode($msg['content'] ?? '');
+            if (($msg['role'] ?? '') === 'system') {
+                $instructions .= ($instructions !== '' ? "\n" : '') . $content;
+                continue;
+            }
+            $input[] = array('role' => ($msg['role'] ?? 'user') === 'assistant' ? 'assistant' : 'user', 'content' => $content);
+        }
+        $body = array(
+            'model'             => (string) $payload['model'],
+            'input'             => $input,
+            'tools'             => array(array('type' => 'web_search_preview')),
+            'max_output_tokens' => (int) ($payload['max_completion_tokens'] ?? $payload['max_tokens'] ?? self::DEFAULT_MAX_TOKENS),
+        );
+        if ($instructions !== '') {
+            $body['instructions'] = $instructions;
+        }
+        // response_format (chat shape) → text.format (Responses shape).
+        $rf = is_array($payload['response_format'] ?? null) ? $payload['response_format'] : array();
+        if (($rf['type'] ?? '') === 'json_schema' && is_array($rf['json_schema'] ?? null)) {
+            $js = $rf['json_schema'];
+            $body['text'] = array('format' => array(
+                'type'   => 'json_schema',
+                'name'   => (string) ($js['name'] ?? 'response'),
+                'schema' => $js['schema'] ?? array('type' => 'object'),
+                'strict' => !empty($js['strict']),
+            ));
+        } elseif (($rf['type'] ?? '') === 'json_object') {
+            $body['text'] = array('format' => array('type' => 'json_object'));
+        }
+
+        $timeout = max(30, (int) ($options['timeout'] ?? 300));
+        if (function_exists('set_time_limit')) {
+            @set_time_limit($timeout + 30);
+        }
+        $response = wp_remote_post('https://api.openai.com/v1/responses', array(
+            'body'      => wp_json_encode($body),
+            'headers'   => array('Content-Type' => 'application/json', 'Authorization' => 'Bearer ' . $api_key),
+            'timeout'   => $timeout,
+            'sslverify' => true,
+        ));
+        if (is_wp_error($response)) {
+            throw new \RuntimeException(sprintf('LLM API request failed: %s', $response->get_error_message()));
+        }
+        $status = (int) wp_remote_retrieve_response_code($response);
+        $raw    = (string) wp_remote_retrieve_body($response);
+        if ($status < 200 || $status >= 300) {
+            $msg = substr($raw, 0, 1000);
+            // Let invoke_json()'s format classifier recognise a rejected output format
+            // under the Responses API's own parameter name.
+            if (stripos($msg, 'text.format') !== false || stripos($msg, "'format'") !== false) {
+                $msg = 'response_format not supported by this model via web-enabled generation: ' . $msg;
+            }
+            throw new \RuntimeException(sprintf('LLM API error %d: %s', $status, $msg));
+        }
+        $data = json_decode($raw, true);
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($data)) {
+            throw new \RuntimeException('LLM API returned non-JSON response');
+        }
+        // output[] = tool calls + one or more message items; the text is the joined
+        // output_text parts of the message items. A refusal part carries its reason.
+        $content = '';
+        $refusal = '';
+        foreach ((array) ($data['output'] ?? array()) as $item) {
+            if (($item['type'] ?? '') !== 'message') {
+                continue;
+            }
+            foreach ((array) ($item['content'] ?? array()) as $part) {
+                if (($part['type'] ?? '') === 'output_text' && isset($part['text'])) {
+                    $content .= (string) $part['text'];
+                } elseif (($part['type'] ?? '') === 'refusal' && isset($part['refusal'])) {
+                    $refusal = (string) $part['refusal'];
+                }
+            }
+        }
+        $finish = (string) ($data['status'] ?? '');
+        if ($finish === 'incomplete' && (($data['incomplete_details']['reason'] ?? '') === 'max_output_tokens')) {
+            $finish = 'length';
+        }
+        return array(
+            'content'       => $content,
+            'usage'         => $data['usage'] ?? null,
+            'model'         => (string) ($data['model'] ?? $payload['model']),
+            'finish_reason' => $finish,
+            'refusal'       => $refusal,
+            'raw'           => $data,
+        );
     }
 
     // ========================================
@@ -1981,11 +2143,18 @@ class PCM_LLM
                 $content = $message['content'];
             }
         }
-        // Anthropic format: content[0].text. Reached only when the OpenAI
+        // Anthropic format: content[] blocks. Reached only when the OpenAI
         // content key is absent — a real OpenAI string reply stays in the
-        // branch above and never falls through to here.
-        elseif (isset($data['content'][0]['text'])) {
-            $content = $data['content'][0]['text'];
+        // branch above and never falls through to here. ALL text blocks are
+        // joined: a web-enabled reply interleaves server_tool_use /
+        // web_search_tool_result blocks with several text blocks, and reading
+        // only content[0] would drop most of the article.
+        elseif (isset($data['content']) && is_array($data['content'])) {
+            foreach ($data['content'] as $block) {
+                if (is_array($block) && (($block['type'] ?? 'text') === 'text') && isset($block['text']) && is_string($block['text'])) {
+                    $content .= $block['text'];
+                }
+            }
         }
 
         // Anthropic surfaces a decline as stop_reason='refusal' with no body in

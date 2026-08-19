@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { KeywordPicker, AccordionSection } from '@/components/shared';
 import { cn } from '@/lib/utils';
 import { trpc } from '@/lib/trpc';
@@ -1205,8 +1206,9 @@ export function CreateStrategyDialog({
               {sourceMode === 'keywords' ? (
                 <>
                   <div className="space-y-1.5">
+                    {/* Owner spec (card 15): "How should posts be released?" */}
                     <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
-                      When to publish
+                      How should posts be released?
                     </Label>
                     <Segmented
                       value={trigger}
@@ -1255,14 +1257,15 @@ export function CreateStrategyDialog({
               ) : (
                 <>
                   <div className="space-y-1.5">
+                    {/* Owner spec (card 15): "How should posts be released? [As content arrives] [On a schedule]" */}
                     <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
-                      When to publish
+                      How should posts be released?
                     </Label>
                     <Segmented
                       value={socialScheduled ? 'scheduled' : 'immediate'}
                       onChange={(v) => setSocialScheduled(v === 'scheduled')}
                       options={[
-                        { value: 'immediate', label: 'As posts arrive' },
+                        { value: 'immediate', label: 'As content arrives' },
                         { value: 'scheduled', label: 'On a schedule' },
                       ]}
                     />
@@ -1271,8 +1274,10 @@ export function CreateStrategyDialog({
                   {!socialScheduled ? (
                     <>
                       <div className="space-y-1.5">
-                        <Label htmlFor="rss-per-week">Posting cadence</Label>
+                        {/* Owner spec: "Publishing limit — Publish up to [3] posts per [week]" */}
+                        <Label htmlFor="rss-per-week">Publishing limit</Label>
                         <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Publish up to</span>
                           <Input
                             id="rss-per-week"
                             type="number"
@@ -1295,10 +1300,17 @@ export function CreateStrategyDialog({
                           </Select>
                         </div>
                       </div>
+                      <p className="text-xs text-muted-foreground">Extra posts are queued until capacity is available.</p>
+                      {/* Owner spec — the Summary line: "Publishes automatically, up to 3 posts per week.
+                          Extra posts are queued. Runs indefinitely." (or the stop rule). */}
                       <div className="rounded-md border border-border bg-muted/20 p-2.5 text-xs text-foreground text-pretty">
-                        New {sourceMode === 'social' ? 'posts' : 'feed items'} publish up to{' '}
-                        <span className="font-medium">{rssPerWeek}</span> per {rssCadenceUnit}. Anything extra queues for the
-                        next free slot — your site is never flooded.
+                        {publishing === 'auto' ? 'Publishes automatically' : 'Saves each article as a draft'}, up to{' '}
+                        <span className="font-medium">{rssPerWeek}</span> post{rssPerWeek === 1 ? '' : 's'} per {rssCadenceUnit}. Extra posts are queued.{' '}
+                        {durationMode === 'until' && durationEndDate
+                          ? <>Stops on <span className="font-medium">{durationEndDate}</span>.</>
+                          : durationMode === 'limit'
+                            ? <>Stops after <span className="font-medium">{durationMaxArticles}</span> posts.</>
+                            : 'Runs indefinitely.'}
                       </div>
                     </>
                   ) : (
@@ -1346,7 +1358,7 @@ export function CreateStrategyDialog({
                   options={[
                     { value: 'ongoing', label: 'Never' },
                     { value: 'until', label: 'On a date' },
-                    { value: 'limit', label: 'After N articles' },
+                    { value: 'limit', label: 'After N posts' },
                   ]}
                 />
                 {durationMode === 'until' && (
@@ -1366,7 +1378,7 @@ export function CreateStrategyDialog({
                 )}
                 {durationMode === 'limit' && (
                   <div className="space-y-1.5">
-                    <Label htmlFor="duration-max">Maximum articles</Label>
+                    <Label htmlFor="duration-max">After how many posts</Label>
                     <Input
                       id="duration-max"
                       type="number"
@@ -1469,10 +1481,23 @@ export function CreateStrategyDialog({
                   together … consolidate into three groups inside one Content
                   section". Everything kept, nothing renamed in the payload — the
                   toggles gate their settings exactly as before. */}
+              {/* Owner spec (card 15): "Use toggle for respective addition — toggle on
+                  visuals, toggle on research, then underneath you have the settings
+                  properly." Each group header carries its switch; the settings render
+                  only while the group is on. Same state, same payload: the Visuals
+                  switch is featuredImages || inContentMedia (off clears both, on
+                  restores the featured image); the Research switch is "any pass". */}
               <div className="flex items-center gap-2 pt-1">
                 <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Visuals</Label>
                 <div className="flex-1 border-t border-border" />
+                <Switch
+                  id="visuals-on"
+                  aria-label="Visuals on/off"
+                  checked={featuredImages || inContentMedia}
+                  onCheckedChange={(on) => { if (on) { setFeaturedImages(true); } else { setFeaturedImages(false); setInContentMedia(false); } }}
+                />
               </div>
+              {(featuredImages || inContentMedia) && (
               <div className="space-y-2">
                 <div className="space-y-2">
                   <div
@@ -1485,7 +1510,7 @@ export function CreateStrategyDialog({
                       onCheckedChange={(c) => setFeaturedImages(c as boolean)}
                     />
                     <Label htmlFor="featured-images" className="cursor-pointer font-medium leading-none">
-                      Generate featured images
+                      Generate featured image
                     </Label>
                   </div>
 
@@ -1499,14 +1524,13 @@ export function CreateStrategyDialog({
                       onCheckedChange={(c) => setInContentMedia(c as boolean)}
                     />
                     <Label htmlFor="in-content-media" className="cursor-pointer font-medium leading-none">
-                      In-content images &amp; charts
+                      Include in-content images &amp; charts
                     </Label>
                   </div>
 
-                  {/* (Image model moved up to the prompt/model grid at the top of Content.) */}
-
                   {inContentMedia && (
                     <div className="ml-6 flex items-center gap-3 text-sm">
+                      <span className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">In-content visuals</span>
                       <span className="font-medium text-muted-foreground">Type:</span>
                       <Select value={mediaType} onValueChange={setMediaType}>
                         <SelectTrigger className="w-32">
@@ -1531,12 +1555,16 @@ export function CreateStrategyDialog({
                   )}
 
                   {inContentMedia && (
-                    <div className="ml-6">
+                    <div className="ml-6 space-y-1">
+                      <Label htmlFor="media-guidance" className="text-xs">
+                        Visual instructions <span className="font-normal text-muted-foreground">Optional</span>
+                      </Label>
                       <Input
+                        id="media-guidance"
                         value={mediaGuidance}
                         onChange={(e) => setMediaGuidance(e.target.value)}
                         maxLength={500}
-                        placeholder="Optional: what should the images show / what data should the charts present? e.g. “clean product photos; charts comparing yearly market growth”"
+                        placeholder="What should images show / what data should charts present?"
                         className="h-8 text-xs bg-card"
                         title="Creative direction passed to the writer: image subjects/style and the data charts should visualize."
                       />
@@ -1591,25 +1619,22 @@ export function CreateStrategyDialog({
 
                 </div>
               </div>
+              )}
 
               <div className="flex items-center gap-2 pt-1">
                 <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Linking</Label>
                 <div className="flex-1 border-t border-border" />
+                <Switch
+                  id="auto-interlink"
+                  aria-label="Auto-interlink after generation"
+                  checked={autoInterlink}
+                  onCheckedChange={(on) => setAutoInterlink(!!on)}
+                />
               </div>
               <div className="space-y-2">
-                  <div
-                    className="flex items-center space-x-2"
-                    title="Automatically inject internal links between articles when content is generated."
-                  >
-                    <Checkbox
-                      id="auto-interlink"
-                      checked={autoInterlink}
-                      onCheckedChange={(c) => setAutoInterlink(c as boolean)}
-                    />
-                    <Label htmlFor="auto-interlink" className="cursor-pointer font-medium leading-none">
-                      Auto-Interlink after generation
-                    </Label>
-                  </div>
+                  <Label htmlFor="auto-interlink" className="cursor-pointer font-medium leading-none" title="Automatically inject internal links between articles when content is generated.">
+                    Auto-interlink after generation
+                  </Label>
 
                   {autoInterlink && (
                     <div className="ml-6 flex items-center justify-between gap-4 p-3 bg-muted/20 border rounded-md text-sm">
@@ -1644,9 +1669,17 @@ export function CreateStrategyDialog({
               <div className="flex items-center gap-2 pt-1">
                 <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Research</Label>
                 <div className="flex-1 border-t border-border" />
+                <Switch
+                  id="research-on"
+                  aria-label="Research on/off"
+                  checked={researchLandscape || researchQuestions || researchGaps}
+                  onCheckedChange={(on) => { if (on) { setResearchLandscape(true); } else { setResearchLandscape(false); setResearchQuestions(false); setResearchGaps(false); } }}
+                />
               </div>
+              {(researchLandscape || researchQuestions || researchGaps) && (
               <div className="space-y-2">
             <div className="space-y-2.5">
+              <Label className="text-xs font-medium text-muted-foreground">Research depth</Label>
               <div
                 className="flex items-start space-x-2"
                 title="Summarize what currently ranks for the topic before writing."
@@ -1659,7 +1692,7 @@ export function CreateStrategyDialog({
                 />
                 <Label htmlFor="research-landscape" className="cursor-pointer font-medium leading-tight">
                   Search landscape
-                  <span className="block text-xs font-normal text-muted-foreground">what currently ranks</span>
+                  <span className="block text-xs font-normal text-muted-foreground">Review what currently ranks</span>
                 </Label>
               </div>
 
@@ -1675,7 +1708,7 @@ export function CreateStrategyDialog({
                 />
                 <Label htmlFor="research-questions" className="cursor-pointer font-medium leading-tight">
                   Questions &amp; data
-                  <span className="block text-xs font-normal text-muted-foreground">real questions + chart-ready statistics</span>
+                  <span className="block text-xs font-normal text-muted-foreground">Find real questions and chart-ready statistics</span>
                 </Label>
               </div>
 
@@ -1691,7 +1724,7 @@ export function CreateStrategyDialog({
                 />
                 <Label htmlFor="research-gaps" className="cursor-pointer font-medium leading-tight">
                   Competitor gaps
-                  <span className="block text-xs font-normal text-muted-foreground">what rivals miss</span>
+                  <span className="block text-xs font-normal text-muted-foreground">Identify what competing articles miss</span>
                 </Label>
               </div>
 
@@ -1704,7 +1737,7 @@ export function CreateStrategyDialog({
                     htmlFor="research-model"
                     title="Which model runs the research passes. Leave unset to use the default."
                   >
-                    Research Model
+                    Research model
                   </Label>
                   <Select value={researchModelId} onValueChange={setResearchModelId}>
                     <SelectTrigger id="research-model" className="w-full">
@@ -1728,6 +1761,7 @@ export function CreateStrategyDialog({
               )}
             </div>
               </div>
+              )}
             </div>
           </AccordionSection>
 

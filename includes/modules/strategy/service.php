@@ -823,6 +823,7 @@ class PCM_Strategy_Service
             if ($provider !== '') {
                 $llm_options['provider'] = $provider;
             }
+            $llm_options['web'] = self::web_enabled($strategy);
             $result = PCM_LLM::invoke_json($messages, self::article_schema(), $llm_options);
 
             // A6: in-content images & charts — replace [IMAGE_N] tokens with
@@ -1468,6 +1469,7 @@ class PCM_Strategy_Service
             if ($provider !== '') {
                 $llm_options['provider'] = $provider;
             }
+            $llm_options['web'] = self::web_enabled($strategy);
             $result = PCM_LLM::invoke_json($messages, self::article_schema(), $llm_options);
 
             // ── 6. Create article ──
@@ -1997,6 +1999,12 @@ class PCM_Strategy_Service
             && (time() - (int) get_option('pcm_keepalive_beat', 0)) > 120) {
             self::spawn_keepalive();
         }
+
+        // Self-heal (card 14): source strategies that an earlier build marked
+        // 'completed' after their first batch are invisible to the watcher
+        // queries below. Put every one whose duration rule has NOT ended it back
+        // to 'in_progress' before this pass, so it is scanned again from now on.
+        self::revive_completed_watchers();
 
         // Social strategies ride the SAME per-strategy watcher pass — their
         // converted rssFeeds are fetched every pass, and their Apify-watched
@@ -2691,6 +2699,56 @@ class PCM_Strategy_Service
      * @param int   $item_count The strategy's current TOTAL item count.
      * @return bool True when the watcher must skip this strategy.
      */
+    /**
+     * Revive RSS/Social strategies wrongly parked at 'completed' (see
+     * recompute_counters()): any whose duration rule has not ended them goes back
+     * to 'in_progress' so the watcher queries pick them up again. Idempotent,
+     * bounded by the number of completed source rows; safe to run every pass.
+     *
+     * @return int Strategies revived.
+     */
+    public static function revive_completed_watchers(): int
+    {
+        global $wpdb;
+        if (!is_object($wpdb ?? null) || !method_exists($wpdb, 'get_results') || !method_exists($wpdb, 'esc_like') || !class_exists('PCM_Schema')) {
+            return 0;
+        }
+        $table = PCM_Schema::table('strategies');
+        $rows  = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE status = 'completed' AND (config LIKE %s OR config LIKE %s)",
+            '%' . $wpdb->esc_like('"sourceMode":"rss"') . '%',
+            '%' . $wpdb->esc_like('"sourceMode":"social"') . '%'
+        ));
+        $revived = 0;
+        foreach ((array) $rows as $row) {
+            if (!self::still_watching($row)) {
+                continue;
+            }
+            PCM_DB::update_strategy((int) $row->id, (int) $row->userId, array('status' => 'in_progress'));
+            $revived++;
+        }
+        return $revived;
+    }
+
+    /**
+     * Is this a source-driven (RSS/Social) strategy whose watcher should still run?
+     * True = it must not be marked 'completed' (the watchers skip completed rows).
+     * False for keyword strategies and for a source strategy whose duration rule
+     * has ended it. Pure over the row + a count — unit-testable.
+     */
+    public static function still_watching(object $strategy): bool
+    {
+        $config = !empty($strategy->config) ? json_decode((string) $strategy->config, true) : null;
+        if (!is_array($config) || !in_array((string) ($config['sourceMode'] ?? ''), array('rss', 'social'), true)) {
+            return false;
+        }
+        $count = (int) ($strategy->totalItems ?? 0);
+        if (class_exists('PCM_DB') && method_exists('PCM_DB', 'count_strategy_items')) {
+            $count = (int) PCM_DB::count_strategy_items((int) $strategy->id);
+        }
+        return !self::rss_duration_blocked($config, $count);
+    }
+
     public static function rss_duration_blocked(array $config, int $item_count): bool
     {
         $duration = is_array($config['duration'] ?? null) ? $config['duration'] : array();
@@ -3081,6 +3139,27 @@ class PCM_Strategy_Service
             return null;
         }
         return function_exists('esc_url_raw') ? esc_url_raw($url) : $url;
+    }
+
+    /**
+     * Web-enabled generation for this strategy's articles (owner card 14: "every
+     * call we do should be web-enabled"). ON by default so the model can read the
+     * client site ({{website.url}}), the source post and competitors instead of
+     * writing from memory. Per-strategy opt-out: config.webEnabled === false. Global
+     * kill-switch: option `pcm_llm_web_search` = '0' (no UI — an operator lever).
+     * The LLM layer maps it to each provider's own web tool and ignores it where
+     * the provider has none, so enabling it can never fail a generation by itself.
+     */
+    public static function web_enabled(object $strategy): bool
+    {
+        if (function_exists('get_option') && (string) get_option('pcm_llm_web_search', '1') === '0') {
+            return false;
+        }
+        $config = !empty($strategy->config) ? json_decode((string) $strategy->config, true) : null;
+        if (is_array($config) && array_key_exists('webEnabled', $config)) {
+            return (bool) $config['webEnabled'];
+        }
+        return true;
     }
 
     /**
@@ -4122,6 +4201,20 @@ class PCM_Strategy_Service
         // one item still calls this method).
         $previous = PCM_DB::get_strategy($strategy_id, $user_id);
         $was_completed = $previous && (string)($previous->status ?? '') === 'completed';
+
+        // A WATCHED SOURCE IS NEVER "DONE" WHILE IT IS STILL WATCHING. An RSS/Social
+        // strategy set to "2 per day, continually" published its first two items and
+        // was marked 'completed' — and get_rss_strategies()/get_social_strategies()
+        // skip completed strategies, so it silently stopped watching the feed and
+        // never posted again (owner card 14: "It posted two immediately and set
+        // itself to completed … seemingly it will not [publish tomorrow]"). Every
+        // current item being published just means the queue is drained for now;
+        // the strategy stays live ('in_progress' — the UI reads it as watching)
+        // until its duration rule actually ends it (an 'until' date passed, a
+        // 'limit' reached). Keyword strategies are unaffected.
+        if ($status === 'completed' && $previous && self::still_watching($previous)) {
+            $status = 'in_progress';
+        }
 
         // D2: a paused strategy stays paused across counter recomputes — an item
         // completing/erroring under a pause must not silently resume the strategy

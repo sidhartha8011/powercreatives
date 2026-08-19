@@ -213,6 +213,74 @@ function summarizeRecurrence(r: ScheduleRecurrence): string {
   return parts.join(' · ');
 }
 
+/**
+ * THE POSTING CADENCE, in words — what the row's cadence pill shows (owner card 14:
+ * "There is nowhere I can see the actual posting cadence here, so we should have a
+ * little pill showing how often it's posting"). One rule for every strategy shape:
+ *   schedule mode      → the recurrence ("Daily", "Weekly · Mon, Thu", "Every 2 weeks")
+ *   RSS/Social, arrive → the backpressure cap ("2 per day", "3 per week")
+ *   Keywords, manual   → "On demand"
+ */
+/**
+ * Client mirror of PCM_Strategy_Service::still_watching(): a source (RSS/Social)
+ * strategy keeps watching unless its duration rule has ended it — 'until' with a past
+ * end date, or 'limit' reached by totalItems. Ongoing/absent = still watching.
+ */
+export function stillWatching(config: any, totalItems: number): boolean {
+  if (!config || !['rss', 'social'].includes(String(config.sourceMode ?? ''))) return false;
+  const d = config.duration ?? {};
+  const mode = String(d.mode ?? 'ongoing');
+  if (mode === 'until') {
+    const end = String(d.endDate ?? '');
+    if (end && new Date(end + 'T23:59:59').getTime() < Date.now()) return false;
+  }
+  if (mode === 'limit') {
+    const max = Number(d.maxArticles ?? 0) || 0;
+    if (max > 0 && Number(totalItems || 0) >= max) return false;
+  }
+  return true;
+}
+
+export function describeCadence(publishingMode: string | undefined, config: any): string {
+  if (publishingMode === 'schedule') {
+    return summarizeRecurrence(recurrenceFromConfig(config?.scheduleConfig ?? {}));
+  }
+  const src = config?.sourceMode === 'rss' || config?.sourceMode === 'social';
+  if (src) {
+    const c = config?.rssCadence ?? {};
+    const n = Math.max(1, Number(c.perWeek ?? 3) || 3);
+    const unit = ['day', 'week', 'month'].includes(String(c.unit ?? '')) ? String(c.unit) : 'week';
+    return `${n} per ${unit}`;
+  }
+  return 'On demand';
+}
+
+/** Trailing-window length of an as-posts-arrive cadence, in days (mirrors rss_cadence_window_days). */
+function cadenceWindowDays(config: any): number {
+  const unit = String(config?.rssCadence?.unit ?? 'week');
+  return unit === 'day' ? 1 : unit === 'month' ? 30 : 7;
+}
+
+/**
+ * When the NEXT as-posts-arrive slot opens, from the items already created in the
+ * trailing window (the same rule the watcher applies: cap − items created in the
+ * window). Null = a slot is open right now (the next feed item posts on the next
+ * scan). Owner card 14: "it should plan the next posts ahead".
+ */
+export function nextArrivalSlot(config: any, items: Array<{ createdAt?: string }>, now: Date = new Date()): Date | null {
+  const cap = Math.max(1, Number(config?.rssCadence?.perWeek ?? 3) || 3);
+  const windowMs = cadenceWindowDays(config) * 86400 * 1000;
+  const since = now.getTime() - windowMs;
+  const inWindow = items
+    .map((it) => (it.createdAt ? new Date(String(it.createdAt).replace(' ', 'T')).getTime() : NaN))
+    .filter((t) => Number.isFinite(t) && t >= since)
+    .sort((a, b) => a - b);
+  if (inWindow.length < cap) return null;
+  // The oldest in-window item ages out first; that moment frees one slot.
+  const opens = inWindow[inWindow.length - cap] + windowMs;
+  return opens > now.getTime() ? new Date(opens) : null;
+}
+
 // ── Status indicator — reusable across Strategies + Approvals ──
 /**
  * Item/strategy status pill.
@@ -225,10 +293,11 @@ function summarizeRecurrence(r: ScheduleRecurrence): string {
  * NB the design tokens are counter-intuitively named: `statusColors.ready` is GREEN and
  * `statusColors.published` is BLUE, so the mapping below is deliberate, not swapped.
  */
-function StatusBadge({ status, published }: { status: string; published?: boolean }) {
+function StatusBadge({ status, published, watching }: { status: string; published?: boolean; /** A live RSS/Social strategy: its watcher keeps planning the next posts — never "completed" while it runs. */ watching?: boolean }) {
   const config: Record<string, { icon: React.ReactNode; label: string; color: string; bg: string }> = {
     pending:      { icon: <Clock className="w-3 h-3" />, label: 'Pending', color: statusColors.draft.text, bg: statusColors.draft.bg },
     in_progress:  { icon: <Loader2 className="w-3 h-3 animate-spin" />, label: 'In Progress', color: colors.primary, bg: colors.primaryLight },
+    watching:     { icon: <Rss className="w-3 h-3" />, label: 'Watching feed', color: colors.primary, bg: colors.primaryLight },
     completed:    { icon: <CheckCircle2 className="w-3 h-3" />, label: 'Completed', color: statusColors.ready.text, bg: statusColors.ready.bg },
     publishedOk:  { icon: <CheckCircle2 className="w-3 h-3" />, label: 'Published', color: statusColors.ready.text, bg: statusColors.ready.bg },
     written:      { icon: <FileText className="w-3 h-3" />, label: 'Written', color: statusColors.published.text, bg: statusColors.published.bg },
@@ -243,12 +312,15 @@ function StatusBadge({ status, published }: { status: string; published?: boolea
   const isDone = status === 'completed' || status === 'complete';
   const key = isDone && published !== undefined
     ? (published ? 'publishedOk' : 'written')
-    : status;
+    // A live feed strategy is "watching" whatever its stored status says — including a
+    // 'completed' left behind by an older build (owner card 14: "it can't say completed
+    // if it's not completed"). The caller decides `watching` from the duration rule.
+    : (watching && (status === 'in_progress' || status === 'pending' || isDone) ? 'watching' : status);
   const c = config[key] ?? config.pending;
 
   return (
     <span
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap"
       style={{ fontSize: typography.xs, fontWeight: typography.medium, color: c.color, backgroundColor: c.bg }}
     >
       {c.icon}
@@ -701,24 +773,50 @@ export function StrategiesModule() {
   // is replaced WHOLE inside the config merge (the merge is shallow), so the
   // existing startDate must be carried along — the backend then redistributes
   // the PENDING items' due dates from the new recurrence.
-  const [recurrenceDialog, setRecurrenceDialog] = useState<{ strategyId: number; value: ScheduleRecurrence } | null>(null);
-  const handleRecurrenceSave = useCallback((
-    strategyId: number,
-    r: ScheduleRecurrence,
-    existingStartDate: string,
-    currentMode?: string,
-  ) => {
-    updateStrategyMutation.mutate({
-      id: strategyId,
-      // Saving a recurrence on a Draft/Auto-publish strategy also switches it to
-      // 'schedule' — otherwise the schedule would be stored but never honoured, since
-      // the engine only paces publishing in schedule mode. Already-scheduled
-      // strategies are left alone (no needless mode write).
-      ...(currentMode === 'schedule' ? {} : { publishingMode: 'schedule' }),
-      config: { scheduleConfig: { ...recurrenceToConfig(r), startDate: existingStartDate || '' } },
-    });
-    setRecurrenceDialog(null);
-  }, [updateStrategyMutation]);
+  // Card 14: ONE cadence dialog for every strategy shape — mode (as posts arrive /
+  // on a schedule / on demand), the cadence itself, and whether the UNPUBLISHED
+  // (planned) posts get recalculated onto it before Save.
+  type CadenceMode = 'arrive' | 'schedule' | 'ondemand';
+  const [cadenceDialog, setCadenceDialog] = useState<{
+    strategyId: number; mode: CadenceMode; value: ScheduleRecurrence; perWeek: number; unit: string; reschedule: boolean;
+  } | null>(null);
+  const handleCadenceSave = useCallback((d: NonNullable<typeof cadenceDialog>) => {
+    const list: Strategy[] = Array.isArray(strategies) ? strategies : [];
+    const strategy = list.find((s) => s.id === d.strategyId);
+    const cfg = parseStrategyConfig(strategy?.config);
+    const isSource = cfg.sourceMode === 'rss' || cfg.sourceMode === 'social';
+    // Leaving schedule mode: the strategy's Post status decides publish vs draft.
+    const offScheduleMode = cfg.publishing === 'auto' ? 'publish' : 'draft';
+    if (d.mode === 'schedule') {
+      updateStrategyMutation.mutate({
+        id: d.strategyId,
+        // Saving a recurrence on a Draft/Auto-publish strategy also switches it to
+        // 'schedule' — otherwise the schedule would be stored but never honoured.
+        ...(strategy?.publishingMode === 'schedule' ? {} : { publishingMode: 'schedule' }),
+        config: {
+          scheduleConfig: { ...recurrenceToConfig(d.value), startDate: cfg.scheduleConfig?.startDate || '' },
+          ...(isSource ? {} : { trigger: 'scheduled' }),
+        },
+        // The checkbox: recalculate the unpublished (planned) posts onto the new cadence.
+        reschedulePending: d.reschedule,
+      });
+    } else if (d.mode === 'arrive') {
+      updateStrategyMutation.mutate({
+        id: d.strategyId,
+        ...(strategy?.publishingMode === 'schedule' ? { publishingMode: offScheduleMode } : {}),
+        config: { rssCadence: { perWeek: d.perWeek, unit: d.unit } },
+        reschedulePending: false,
+      });
+    } else {
+      updateStrategyMutation.mutate({
+        id: d.strategyId,
+        ...(strategy?.publishingMode === 'schedule' ? { publishingMode: offScheduleMode } : {}),
+        config: { trigger: 'manual' },
+        reschedulePending: false,
+      });
+    }
+    setCadenceDialog(null);
+  }, [updateStrategyMutation, strategies]);
 
   // Per-item due-date edit (pending items on schedule-mode strategies).
   const updateItemMutation = trpc.strategy.updateItem.useMutation({
@@ -1290,6 +1388,13 @@ export function StrategiesModule() {
             // Social strategies may also carry converted rssFeeds (free-platform accounts);
             // show the de-duplicated union on the link line.
             const socialFeedLinks: string[] = isSocial ? Array.from(new Set([...socialLinks, ...rssFeeds])) : [];
+            // Card 14 — the source strategy PLANS ahead: how many feed items wait in its
+            // queue and when the next as-posts-arrive slot opens (null = open now).
+            const isSource = isRss || isSocial;
+            const queued: number = isSource && Array.isArray(config.rssQueue) ? config.rssQueue.length : 0;
+            const nextSlot: Date | null = isSource && strategy.publishingMode !== 'schedule'
+              ? nextArrivalSlot(config, (strategy.items ?? []) as any[])
+              : null;
             return (
             <div
               key={strategy.id}
@@ -1323,11 +1428,11 @@ export function StrategiesModule() {
 
                 {/* Name + meta */}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span style={{ fontSize: typography.body, fontWeight: typography.semibold, color: colors.text }} className="truncate">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span style={{ fontSize: typography.body, fontWeight: typography.semibold, color: colors.text }} className="truncate max-w-full">
                       {strategy.name}
                     </span>
-                    <StatusBadge status={strategy.status} />
+                    <StatusBadge status={strategy.status} watching={isSource && stillWatching(config, Number(strategy.totalItems) || 0)} />
                     {/* Source badge — tells RSS/Social from Keyword strategies at a glance;
                         RSS/Social carry their link list in the tooltip. */}
                     <span
@@ -1347,6 +1452,28 @@ export function StrategiesModule() {
                       {isRss ? <Rss className="w-3 h-3" /> : isSocial ? <Share2 className="w-3 h-3" /> : <Search className="w-3 h-3" />}
                       {isRss ? 'RSS' : isSocial ? 'Social' : 'Keywords'}
                     </span>
+                    {/* THE CADENCE PILL — in the ALWAYS-visible identity row (owner card 14:
+                        "nowhere I can see the actual posting cadence … a little pill showing
+                        how often it's posting; when the user clicks it, they can see it and
+                        change it"). The expanded controls carry the same pill; this one is
+                        what you see with the row collapsed. */}
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full shrink-0 border transition-colors hover:bg-accent"
+                      style={{ fontSize: typography.xs, fontWeight: typography.medium, color: colors.textSecondary, borderColor: colors.border, background: colors.bgSurface }}
+                      title={`Posting cadence: ${describeCadence(strategy.publishingMode, config)} — click to change it`}
+                      onClick={(e) => { e.stopPropagation(); setCadenceDialog({
+                        strategyId: strategy.id,
+                        mode: strategy.publishingMode === 'schedule' ? 'schedule' : (isSource ? 'arrive' : 'ondemand'),
+                        value: recurrenceFromConfig(config.scheduleConfig ?? {}),
+                        perWeek: Math.max(1, Number(config.rssCadence?.perWeek ?? 3) || 3),
+                        unit: ['day', 'week', 'month'].includes(String(config.rssCadence?.unit ?? '')) ? String(config.rssCadence.unit) : 'week',
+                        reschedule: true,
+                      }); }}
+                    >
+                      <CalendarClock className="w-3 h-3" />
+                      {describeCadence(strategy.publishingMode, config)}
+                    </button>
                     {config.parentKeyword && (
                       <span title="Has a parent (hub) article" className="shrink-0">
                         <Crown className="w-3.5 h-3.5 shrink-0 text-amber-500" />
@@ -1376,6 +1503,16 @@ export function StrategiesModule() {
                         <span style={{ color: colors.danger }}> · {strategy.failedItems} failed</span>
                       )}
                       <span> · {new Date(strategy.createdAt).toLocaleDateString()}</span>
+                      {isSource && (
+                        <span title="Feed items waiting in the queue — they become posts as slots open on the cadence">
+                          {' '}· {queued} queued
+                        </span>
+                      )}
+                      {isSource && strategy.publishingMode !== 'schedule' && (
+                        <span title={nextSlot ? 'When the next post can go out on the current cadence' : 'A slot is open now — the next feed item posts on the next scan'}>
+                          {' '}· next slot: {nextSlot ? nextSlot.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'open now'}
+                        </span>
+                      )}
                     </span>
                     {isRss && rssFeeds.length > 0 && (
                       <span className="flex items-center gap-1 min-w-0" title={rssFeeds.join('\n')}>
@@ -1393,14 +1530,23 @@ export function StrategiesModule() {
                     )}
                   </div>
                 </div>
-                {/* Controls — UP in the header row (design note 2026-08-08): they fill
-                    the empty space beside the title instead of a padded strip below, so
-                    the expanded card stays short. ml-auto pushes them right; on narrower
-                    screens the whole cluster wraps to its own line. Same h-7/text-xs
+                {/* Controls — on their OWN full-width row under the identity line when
+                    expanded (2026-08-19). They used to share the identity row (ml-auto,
+                    min-w-0) — fine with four controls, but the cluster is eleven wide
+                    now (mode · site · approval · cadence · Generate All · Generate ·
+                    Scan now · Interlinks · Pause · progress · icons) and both flex
+                    children could shrink, so the name/badges were crushed to nothing
+                    and the controls painted over the meta line ("the UI is
+                    overlapping"). basis-full guarantees the break; the header grows by
+                    one row and every element keeps its natural width. Same h-7/text-xs
                     tokens as the per-item Inherit selects. Still expand-gated — a
                     collapsed card remains one clean identity row (owner pick (a)). */}
                 {expandedId === strategy.id && (
-                  <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5 ml-auto min-w-0" onClick={(e) => e.stopPropagation()}>
+                  <div
+                    className="flex flex-wrap items-center gap-x-2 gap-y-1.5 basis-full pt-2 mt-1"
+                    style={{ borderTop: `1px solid ${colors.borderLight}` }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
 
                     {/* Publishing Mode — inline-editable (AutoPress row parity).
                         Switching an existing draft strategy to Auto-publish makes
@@ -1492,31 +1638,29 @@ export function StrategiesModule() {
                       </Select>
                     </div>
 
-                    {/* Edit schedule — ALWAYS available. This used to render only when
-                        publishingMode was already 'schedule', which was a catch-22: you
-                        could not set a schedule on a Draft/Auto-publish strategy because
-                        the only way in was hidden until it already had one. Saving a
-                        recurrence now also switches the strategy into schedule mode (see
-                        handleRecurrenceSave), so the button always does something. */}
-                    <div className="w-32 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    {/* THE CADENCE PILL (owner card 14): always shows how often this
+                        strategy posts — the recurrence, the as-posts-arrive cap ("2 per
+                        day"), or "On demand" — and opens the cadence dialog to change it,
+                        with the option to recalculate the unpublished (planned) posts. It
+                        used to read "Set schedule" for every non-scheduled strategy, so an
+                        RSS strategy's real cadence was visible nowhere. */}
+                    <div className="w-36 shrink-0" onClick={(e) => e.stopPropagation()}>
                       <Button
                         variant="outline"
                         size="sm"
                         className="h-7 w-full justify-start text-xs font-normal bg-card overflow-hidden"
-                        title={strategy.publishingMode === 'schedule'
-                          ? 'Edit the posting schedule'
-                          : 'Set a posting schedule — this switches the strategy to Scheduled'}
-                        onClick={() => setRecurrenceDialog({
+                        title={`Posting cadence: ${describeCadence(strategy.publishingMode, config)} — click to change it`}
+                        onClick={() => setCadenceDialog({
                           strategyId: strategy.id,
+                          mode: strategy.publishingMode === 'schedule' ? 'schedule' : (isSource ? 'arrive' : 'ondemand'),
                           value: recurrenceFromConfig(config.scheduleConfig ?? {}),
+                          perWeek: Math.max(1, Number(config.rssCadence?.perWeek ?? 3) || 3),
+                          unit: ['day', 'week', 'month'].includes(String(config.rssCadence?.unit ?? '')) ? String(config.rssCadence.unit) : 'week',
+                          reschedule: true,
                         })}
                       >
                         <CalendarClock className="w-3.5 h-3.5 shrink-0" />
-                        <span className="truncate">
-                          {strategy.publishingMode === 'schedule'
-                            ? summarizeRecurrence(recurrenceFromConfig(config.scheduleConfig ?? {}))
-                            : 'Set schedule'}
-                        </span>
+                        <span className="truncate">{describeCadence(strategy.publishingMode, config)}</span>
                       </Button>
                     </div>
 
@@ -2422,38 +2566,98 @@ export function StrategiesModule() {
         onDone={refetch}
       />
 
-      {/* Posting schedule (recurrence) editor — replaces the old bare
-          frequency Select on the strategy row. */}
-      <Dialog open={recurrenceDialog !== null} onOpenChange={(o) => { if (!o) setRecurrenceDialog(null); }}>
-        <DialogContent className="sm:max-w-[420px]">
+      {/* THE CADENCE DIALOG (card 14) — opened from the row's cadence pill. */}
+      <Dialog open={cadenceDialog !== null} onOpenChange={(o) => { if (!o) setCadenceDialog(null); }}>
+        <DialogContent className="sm:max-w-[440px]">
           <DialogHeader>
-            <DialogTitle>Posting schedule</DialogTitle>
+            <DialogTitle>Posting cadence</DialogTitle>
           </DialogHeader>
-          {recurrenceDialog && (
-            <RecurrenceEditor
-              value={recurrenceDialog.value}
-              onChange={(next) => setRecurrenceDialog({ strategyId: recurrenceDialog.strategyId, value: next })}
-            />
-          )}
+          {cadenceDialog && (() => {
+            const d = cadenceDialog;
+            const strategy = strategyList.find((s) => s.id === d.strategyId);
+            const cfg = parseStrategyConfig(strategy?.config);
+            const isSource = cfg.sourceMode === 'rss' || cfg.sourceMode === 'social';
+            const items = (strategy?.items ?? []) as any[];
+            const unpublished = items.filter((it) => it?.status === 'pending').length;
+            const modes: { value: CadenceMode; label: string }[] = isSource
+              ? [{ value: 'arrive', label: 'As posts arrive' }, { value: 'schedule', label: 'On a schedule' }]
+              : [{ value: 'ondemand', label: 'On demand' }, { value: 'schedule', label: 'On a schedule' }];
+            const set = (patch: Partial<typeof d>) => setCadenceDialog({ ...d, ...patch });
+            return (
+              <div className="space-y-4">
+                <div className="inline-flex rounded-md border border-border bg-muted/40 p-0.5" role="tablist" aria-label="Cadence mode">
+                  {modes.map((m) => (
+                    <button
+                      key={m.value}
+                      type="button"
+                      role="tab"
+                      aria-selected={d.mode === m.value}
+                      onClick={() => set({ mode: m.value })}
+                      className={`rounded px-3 py-1 text-xs font-medium transition-colors ${d.mode === m.value ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+
+                {d.mode === 'arrive' && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={21}
+                        value={d.perWeek}
+                        onChange={(e) => set({ perWeek: Math.min(21, Math.max(1, parseInt(e.target.value, 10) || 1)) })}
+                        className="w-20 h-8 text-xs bg-card"
+                        aria-label="Posts per period"
+                      />
+                      <span className="text-xs text-muted-foreground">posts per</span>
+                      <Select value={d.unit} onValueChange={(v) => set({ unit: v })}>
+                        <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="day">day</SelectItem>
+                          <SelectItem value="week">week</SelectItem>
+                          <SelectItem value="month">month</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      New feed items publish up to <span className="font-medium text-foreground">{d.perWeek}</span> per {d.unit}; anything extra queues for the next free slot.
+                      {Array.isArray(cfg.rssQueue) && cfg.rssQueue.length > 0 && <> {cfg.rssQueue.length} queued now.</>}
+                    </p>
+                  </div>
+                )}
+
+                {d.mode === 'schedule' && (
+                  <>
+                    <RecurrenceEditor value={d.value} onChange={(next) => set({ value: next })} />
+                    {/* The owner's toggle: recalculate the planned-but-unpublished posts BEFORE Save. */}
+                    <label className="flex items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs cursor-pointer">
+                      <Checkbox checked={d.reschedule} onCheckedChange={(v) => set({ reschedule: !!v })} className="mt-0.5" />
+                      <span>
+                        <span className="font-medium text-foreground">Also reschedule the unpublished posts</span>
+                        <span className="block text-muted-foreground">
+                          {unpublished > 0
+                            ? `${unpublished} planned post${unpublished === 1 ? '' : 's'} get${unpublished === 1 ? 's' : ''} new dates on this cadence when you save. Published posts are never touched.`
+                            : 'No planned posts right now — new ones will follow this cadence.'}
+                        </span>
+                      </span>
+                    </label>
+                  </>
+                )}
+
+                {d.mode === 'ondemand' && (
+                  <p className="text-xs text-muted-foreground">Articles generate only when you click Generate in this list.</p>
+                )}
+              </div>
+            );
+          })()}
           <DialogFooter className="pt-4 border-t">
-            <Button variant="outline" size="sm" onClick={() => setRecurrenceDialog(null)}>
+            <Button variant="outline" size="sm" onClick={() => setCadenceDialog(null)}>
               Cancel
             </Button>
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => {
-                if (!recurrenceDialog) return;
-                const strategy = strategyList.find((s) => s.id === recurrenceDialog.strategyId);
-                const existingStartDate = parseStrategyConfig(strategy?.config).scheduleConfig?.startDate || '';
-                handleRecurrenceSave(
-                  recurrenceDialog.strategyId,
-                  recurrenceDialog.value,
-                  existingStartDate,
-                  strategy?.publishingMode,
-                );
-              }}
-            >
+            <Button variant="default" size="sm" onClick={() => { if (cadenceDialog) handleCadenceSave(cadenceDialog); }}>
               Save
             </Button>
           </DialogFooter>
