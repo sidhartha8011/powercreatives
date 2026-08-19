@@ -89,6 +89,13 @@ class PCM_Settings
         // a hardcoded 4-day literal in ClientStatusToolbar; the frontend reads it
         // as pcmConfig.approvalsReviewWindowDays and renders nothing when it is 0.
         'approvals_review_window_days' => 0,
+
+        // ── LLM: web-enabled generation (owner card 14) ──────────────
+        // Whether long-form writing calls (strategy posts, Writer, SEO rewrites,
+        // article review) may use the provider's web tool to read the live web
+        // while writing. Settings → Model Registry → "Web-enabled generation".
+        // Read by PCM_LLM::web_default(); per-strategy opt-out is config.webEnabled.
+        'llm_web_search' => true,
     );
 
     /**

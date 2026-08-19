@@ -119,7 +119,11 @@ check('the watcher queries still skip completed rows (so the status law is what 
 echo "\n3. Cadence pill + dialog + reschedulePending + planning ahead\n";
 $ctl = file_get_contents($ROOT . '/includes/modules/strategy/controller.php');
 check('PATCH honours reschedulePending: absent → legacy always-reschedule; false → leave the planned dates alone',
-    preg_match("/\\\$reschedule_pending = !array_key_exists\('reschedulePending', \\\$params\) \|\| !empty\(\\\$params\['reschedulePending'\]\);\s*\r?\n\s*if \(\\\$schedule_changed && \\\$reschedule_pending\) \{/", $ctl) === 1, 'flag not honoured');
+    preg_match("/\\\$reschedule_pending = !array_key_exists\('reschedulePending', \\\$params\) \|\| !empty\(\\\$params\['reschedulePending'\]\);[\s\S]{0,260}?if \(\\\$schedule_changed && \\\$reschedule_pending\) \{/", $ctl) === 1, 'flag not honoured');
+// Round 3 (owner: "this feature is not implemented … a flickering thing appears and disappears"):
+check('the PATCH reports what it did — rescheduled (schedule mode) and replanned (as-content-arrives) counts', strpos($ctl, '$strategy->rescheduled = $rescheduled;') !== false && strpos($ctl, '$strategy->replanned   = $replanned;') !== false && strpos($ctl, '$rescheduled = PCM_Strategy_Service::reschedule_pending_items(') !== false, 'no counts in the response');
+check('as-content-arrives + toggle → the queue is re-planned under the new limit right away (rssCadence change, non-schedule mode)', strpos($ctl, "\$cadence_changed = is_array(\$params['config'] ?? null) && array_key_exists('rssCadence', (array) \$params['config']);") !== false && strpos($ctl, 'if ($cadence_changed && $reschedule_pending) {') !== false && strpos($ctl, '$replanned = PCM_Strategy_Service::replan_queue_now($strategy_id, (int)$pcm_user->id);') !== false, 'no arrive-mode replan');
+check('replan_queue_now() = one ordinary watcher pass for THIS strategy, social never forced (no paid Apify call)', preg_match('/public static function replan_queue_now\(int \$strategy_id, int \$user_id\): int[\s\S]{0,500}?return \(int\) self::scan_rss_strategy\(\$strategy, false\);/', $svc) === 1, 'replan missing / forced');
 $ui = file_get_contents($ROOT . '/app/src/modules/Strategies/index.tsx');
 // Execute describeCadence + nextArrivalSlot (TS → JS via node)
 $js = "const src = require('fs').readFileSync(process.argv[2], 'utf8');\n"
@@ -127,7 +131,7 @@ $js = "const src = require('fs').readFileSync(process.argv[2], 'utf8');\n"
     . "let block = src.slice(start, end).replace(/export function/g, 'function');\n"
     . "block = block.replace(/\\(publishingMode: string \\| undefined, config: any\\): string/, '(publishingMode, config)')\n"
     . "  .replace(/\\(config: any\\): number/, '(config)')\n"
-    . "  .replace(/\\(config: any, items: Array<\\{ createdAt\\?: string \\}>, now: Date = new Date\\(\\)\\): Date \\| null/, '(config, items, now = new Date())');\n"
+    . "  .replace(/\\(config: any, items: Array<\\{ createdAt\\?: string; scheduledDate\\?: string; status\\?: string \\}>, now: Date = new Date\\(\\)\\): Date \\| null/, '(config, items, now = new Date())');\n"
     . "function summarizeRecurrence(r){ return 'REC:' + JSON.stringify(r); } function recurrenceFromConfig(c){ return c; }\n"
     . "eval(block);\n"
     . "const out = {};\n"
@@ -152,9 +156,12 @@ check('nextArrivalSlot: 1 of 2 slots used → a slot is open now (null)', array_
 check('nextArrivalSlot: both slots used → opens when the OLDEST in-window item ages out (09:00 + 1 day, in that TZ)', isset($out['slotFull']) && $out['slotFull'] !== null && strpos($out['slotFull'], '2026-08-19') === 0, $out);
 check('nextArrivalSlot: yesterday’s items aged out → open now', array_key_exists('slotAged', $out) && $out['slotAged'] === null, $out);
 check('the row shows the cadence pill (describeCadence) where "Set schedule" used to be', strpos($ui, "title={`Posting cadence: \${describeCadence(strategy.publishingMode, config)} — click to change it`}") !== false && strpos($ui, "'Set schedule'") === false);
-check('the row plans ahead: "N queued · next slot: …" for source strategies', strpos($ui, "{' '}· {queued} queued") !== false && strpos($ui, "· next slot: {nextSlot ? nextSlot.toLocaleString(") !== false);
+check('the row plans ahead: "N queued · N planned · next slot/post: …" for source strategies', strpos($ui, "{' '}· {queued} queued") !== false && strpos($ui, "{' '}· {planned} planned") !== false && strpos($ui, "· next{planned > 0 ? ' post' : ' slot'}: {nextSlot ? nextSlot.toLocaleString(") !== false);
 check('the dialog offers the modes per strategy shape and the reschedule checkbox before Save', strpos($ui, "[{ value: 'arrive', label: 'As posts arrive' }, { value: 'schedule', label: 'On a schedule' }]") !== false && strpos($ui, "[{ value: 'ondemand', label: 'On demand' }, { value: 'schedule', label: 'On a schedule' }]") !== false && strpos($ui, 'Also reschedule the unpublished posts') !== false);
-check('Save sends reschedulePending = the checkbox for schedule mode, false otherwise', preg_match("/reschedulePending: d\.reschedule,/", $ui) === 1 && substr_count($ui, 'reschedulePending: false,') === 2);
+check('Save sends reschedulePending = the toggle for BOTH schedule and as-posts-arrive modes; false for on-demand', substr_count($ui, 'reschedulePending: d.reschedule,') === 2 && substr_count($ui, 'reschedulePending: false,') === 1);
+check('the toggle renders in every mode that has something to re-plan (not schedule-only), with mode-specific copy', strpos($ui, "{d.mode !== 'ondemand' && (") !== false && strpos($ui, "{d.mode === 'schedule' ? 'Also reschedule the unpublished posts' : 'Also apply the new limit to the queued posts now'}") !== false, 'toggle still schedule-only');
+check('Save waits for the server: own mutation (no generic toast), Saving… state, dialog closes only on success', strpos($ui, "const cadenceMutation = trpc.strategy.update.useMutation({") !== false && strpos($ui, "const res: any = await cadenceMutation.mutateAsync(payload);") !== false && strpos($ui, "{cadenceMutation.isPending ? 'Saving…' : 'Save'}") !== false && preg_match("/toast\.success\(what \+ tail, \{ duration: 6000 \}\);\s*\r?\n\s*setCadenceDialog\(null\);/", $ui) === 1 && strpos($ui, "toast.error(err?.message ?? 'Could not save the cadence.');") !== false, 'save still fire-and-forget');
+check('…and the one toast SAYS what happened to the unpublished posts (counts from the server)', strpos($ui, "moved onto the new dates.") !== false && strpos($ui, "released under the new limit.") !== false && strpos($ui, "const rescheduled = Number(res?.rescheduled ?? 0) || 0;") !== false && strpos($ui, "const replanned = Number(res?.replanned ?? 0) || 0;") !== false);
 // Round 2 (owner: "these issues are not fixed"): the badge takes the DURATION-AWARE client mirror of
 // still_watching(), and a still-watching feed reads "Watching feed" even while the DB row is a stale
 // 'completed' from an older build.
@@ -173,7 +180,7 @@ check('parked feed strategies are revived on the LIST fetch (before the cached r
 \s*\$strategies = PCM_DB::get_user_strategies/', $ctl) === 1 && preg_match('/PCM_Strategy_Service::revive_completed_watchers\(\);\s*?
 \s*\$result = PCM_Strategy_Service::scan_strategy_now/', $ctl) === 1, 'revive missing on list/scan-now');
 $llm2 = file_get_contents($ROOT . '/includes/core/llm/class-pcm-llm.php');
-check('PCM_LLM::web_default() = the shared kill-switch read', preg_match("/public static function web_default\(\): bool\s*\{\s*return !\(function_exists\('get_option'\) && \(string\) get_option\('pcm_llm_web_search', '1'\) === '0'\);/", $llm2) === 1);
+check('PCM_LLM::web_default() = the shared kill-switch read + the Settings switch', preg_match("/public static function web_default\(\): bool\s*\{\s*if \(function_exists\('get_option'\) && \(string\) get_option\('pcm_llm_web_search', '1'\) === '0'\) \{\s*return false;[\s\S]*?PCM_Settings::get\('llm_web_search', true\)/", $llm2) === 1);
 foreach (array(
     'includes/modules/seo/ai.php'                          => "'web' => PCM_LLM::web_default()",
     'includes/modules/seo/service.php'                     => "array('max_tokens' => 1400, 'web' => PCM_LLM::web_default())",
@@ -229,6 +236,37 @@ check('web_enabled: per-strategy opt-out (config.webEnabled=false)', WebHost::we
 $GLOBALS['opts']['pcm_llm_web_search'] = '0';
 check('web_enabled: global kill-switch option', WebHost::web_enabled((object) array('config' => '')) === false);
 check('the config sanitizer accepts webEnabled (so a toggle can be saved)', strpos($ctl, "\$config['webEnabled'] = (bool)\$fields['webEnabled'];") !== false);
+
+echo "
+5. Web-enabled generation is FINDABLE: Settings switch + per-strategy controls (owner: 'where did you make this? I can't find it')
+";
+// PCM_LLM::web_default() EXECUTED against a PCM_Settings stub — the Settings switch is the source of truth.
+class PCM_LLM_Settings_Stub { public static $v = true; public static function get($k, $d = null) { return $k === 'llm_web_search' ? self::$v : $d; } }
+$wd = $slice_of($llm, 'public static function web_default(');
+$wd = str_replace('PCM_Settings::get(', 'PCM_LLM_Settings_Stub::get(', str_replace("class_exists('PCM_Settings')", 'true', $wd));
+eval('class WebDefaultHost { ' . $wd . ' }');
+$GLOBALS['opts'] = array();
+check('web_default(): Settings switch on (default) → web on', WebDefaultHost::web_default() === true);
+PCM_LLM_Settings_Stub::$v = false;
+check('web_default(): Settings switch OFF → web off', WebDefaultHost::web_default() === false);
+PCM_LLM_Settings_Stub::$v = '0';
+check('web_default(): a stringly "0" also reads as off', WebDefaultHost::web_default() === false);
+PCM_LLM_Settings_Stub::$v = true; $GLOBALS['opts']['pcm_llm_web_search'] = '0';
+check('web_default(): the operator kill-switch option still wins', WebDefaultHost::web_default() === false);
+$GLOBALS['opts'] = array();
+check('the Settings default declares llm_web_search = true (absent = on)', preg_match("/'llm_web_search' => true,/", file_get_contents($ROOT . '/includes/core/class-pcm-settings.php')) === 1);
+check('strategy web_enabled() defers to the Settings switch (off everywhere when off)', preg_match("/if \(class_exists\('PCM_LLM'\) && !PCM_LLM::web_default\(\)\) \{\s*?
+\s*return false;/", $svc) === 1);
+check('POST /settings stores llm_web_search as a real boolean', strpos(file_get_contents($ROOT . '/includes/modules/settings/controller.php'), "\$params['llm_web_search'] = filter_var(\$params['llm_web_search'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? true;") !== false);
+$wss = file_get_contents($ROOT . '/app/src/modules/Settings/WebSearchSection.tsx');
+$sidx = file_get_contents($ROOT . '/app/src/modules/Settings/index.tsx');
+check('Settings → Model Registry renders the "Web-enabled generation" switch (saves llm_web_search via settings.update)', strpos($sidx, '<WebSearchSection />') !== false && strpos($wss, 'Web-enabled generation') !== false && strpos($wss, 'trpc.settings.update.useMutation') !== false && strpos($wss, 'saveMutation.mutate({ llm_web_search: !!on })') !== false);
+check('…reads absent-as-on', strpos($wss, "const enabled = settings.llm_web_search !== false && settings.llm_web_search !== 0 && settings.llm_web_search !== '0';") !== false);
+$dlg = file_get_contents($ROOT . '/app/src/modules/Keywords/CreateStrategyDialog.tsx');
+check('strategy dialog: "Web access" switch, default ON, loaded from config.webEnabled, sent as webEnabled', strpos($dlg, 'id="web-enabled"') !== false && strpos($dlg, 'const [webEnabled, setWebEnabled] = useState(true);') !== false && strpos($dlg, 'if (cfg.webEnabled !== undefined) setWebEnabled(cfg.webEnabled !== false);') !== false && preg_match('/
+\s+webEnabled,?
+\s+inContentMedia,/', $dlg) === 1);
+check('strategy row: a "Web" tick (checked unless webEnabled === false) with a partial-config mutation', strpos($ui, 'checked={config.webEnabled !== false}') !== false && strpos($ui, "updateStrategyMutation.mutate({ id: strategyId, config: { webEnabled: enabled } });") !== false);
 
 echo "\n" . str_repeat('-', 60) . "\n";
 echo "  passed: {$PASS}   failed: {$FAIL}\n";

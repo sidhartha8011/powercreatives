@@ -88,6 +88,8 @@ export interface StrategyPayload {
   approvalMode: string;
   /** AutoPress parity: generate a featured image per article at creation time. */
   featuredImages?: boolean;
+  /** Web-enabled writing (card 14): the model browses the live web while writing. Absent = on. */
+  webEnabled?: boolean;
   /** AutoPress parity: insert in-content images & charts ([IMAGE_N] media_assets). Default on. */
   inContentMedia?: boolean;
   /** Media type to insert when inContentMedia is on. Default 'both'. */
@@ -340,6 +342,8 @@ export function CreateStrategyDialog({
   const [interlinkQuantity, setInterlinkQuantity] = useState(3);
   const [interlinkMode, setInterlinkMode] = useState('auto');
   const [featuredImages, setFeaturedImages] = useState(true);
+  // Web-enabled writing (card 14) — on unless this strategy opted out.
+  const [webEnabled, setWebEnabled] = useState(true);
   const [inContentMedia, setInContentMedia] = useState(true);
   const [mediaType, setMediaType] = useState('both');
   const [mediaCount, setMediaCount] = useState(3);
@@ -461,6 +465,7 @@ export function CreateStrategyDialog({
           if (cfg.duration.endDate) setDurationEndDate(s(cfg.duration.endDate));
           if (cfg.duration.maxArticles) setDurationMaxArticles(Number(cfg.duration.maxArticles) || 10);
         }
+        if (cfg.webEnabled !== undefined) setWebEnabled(cfg.webEnabled !== false);
         if (Array.isArray(cfg.researchPasses)) {
           setResearchLandscape(cfg.researchPasses.includes('landscape'));
           setResearchQuestions(cfg.researchPasses.includes('questions'));
@@ -667,6 +672,7 @@ export function CreateStrategyDialog({
       siteId: siteId ? parseInt(siteId, 10) : undefined,
       approvalMode,
       featuredImages,
+      webEnabled,
       inContentMedia,
       ...(inContentMedia ? { mediaType, mediaCount, ...(mediaGuidance.trim() ? { mediaGuidance: mediaGuidance.trim() } : {}) } : {}),
       // researchPasses is the source of truth now; `research` stays for back-compat
@@ -1762,6 +1768,32 @@ export function CreateStrategyDialog({
             </div>
               </div>
               )}
+
+              {/* Web-enabled writing (card 14): the writing model browses the live web while
+                  it writes — reads the source page / site, checks facts — instead of writing
+                  from memory. ON by default for every strategy; this is the per-strategy
+                  opt-out (config.webEnabled). The global switch lives in Settings → Model
+                  Registry → "Web-enabled generation". */}
+              <div className="flex items-center gap-2 pt-1">
+                <Label className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Web access</Label>
+                <div className="flex-1 border-t border-border" />
+                <Switch
+                  id="web-enabled"
+                  aria-label="Web-enabled writing on/off"
+                  checked={webEnabled}
+                  onCheckedChange={(on) => setWebEnabled(!!on)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="web-enabled" className="cursor-pointer font-medium leading-none" title="The writing model searches and reads the live web while it writes (the source article, your site, current facts) — via the provider's own web tool (OpenAI web search, Anthropic web search, Google grounding).">
+                  Web-enabled writing
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {webEnabled
+                    ? 'On — the model reads the live web (source page, your site, current facts) while writing each post.'
+                    : 'Off — the model writes from its training memory only.'}
+                </p>
+              </div>
             </div>
           </AccordionSection>
 

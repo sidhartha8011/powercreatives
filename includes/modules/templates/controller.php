@@ -498,6 +498,17 @@ class PCM_REST_Templates extends PCM_REST_Base
         $table = PCM_Schema::table('templates');
         $id = (int)$request->get_param('id');
 
+        // A template that strategies still USE cannot be deleted — every item of those
+        // strategies would fail with "Template #N not found" (owner, 2026-08-19). Name
+        // them so the user can re-point those rows first.
+        $users = $this->strategies_using_templates(array($id), (int)$user->id);
+        if (!empty($users[$id])) {
+            return $this->error(sprintf(
+                __('This template is still used by %1$d strateg%2$s (%3$s). Pick another template on those strategy rows first, then delete it.', 'power-creatives'),
+                count($users[$id]), count($users[$id]) === 1 ? 'y' : 'ies', implode(', ', array_slice($users[$id], 0, 5)) . (count($users[$id]) > 5 ? '…' : '')
+            ), 409, 'pcm_template_in_use');
+        }
+
         // Allow deleting own templates and system templates (userId=0)
         $deleted = $wpdb->query($wpdb->prepare(
             "DELETE FROM $table WHERE id = %d AND (userId = %d OR userId = 0)",
@@ -510,6 +521,55 @@ class PCM_REST_Templates extends PCM_REST_Base
         }
 
         return $this->success(array('success' => true));
+    }
+
+    /**
+     * Which of the user's strategies still point at these template ids (as their writer
+     * template, their image prompt, or a per-item override)? id => [strategy names].
+     *
+     * @param int[] $ids
+     * @return array<int,string[]>
+     */
+    private function strategies_using_templates(array $ids, int $user_id): array
+    {
+        global $wpdb;
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+        if ($ids === array()) {
+            return array();
+        }
+        $strategies = PCM_Schema::table('strategies');
+        $items      = PCM_Schema::table('strategy_items');
+        $out = array();
+        foreach ($ids as $id) {
+            $names = array();
+            // The strategy's own writer template or image prompt template.
+            $rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT id, name, templateId, config FROM {$strategies} WHERE userId = %d AND (templateId = %d OR config LIKE %s)",
+                $user_id, $id, '%' . $wpdb->esc_like('"imageTemplateId":' . $id) . '%'
+            ));
+            foreach ((array) $rows as $r) {
+                $cfg = !empty($r->config) ? json_decode((string) $r->config, true) : null;
+                $img = is_array($cfg) ? (int) ($cfg['imageTemplateId'] ?? 0) : 0; // the LIKE is a prefilter ("…Id":5 also matches 56)
+                if ((int) ($r->templateId ?? 0) === $id || $img === $id) {
+                    $names[(int) $r->id] = (string) $r->name;
+                }
+            }
+            // Per-item overrides ({"templateId":N} in an item's config).
+            $item_rows = $wpdb->get_results($wpdb->prepare(
+                "SELECT s.id, s.name, i.config AS itemConfig FROM {$items} i JOIN {$strategies} s ON s.id = i.strategyId WHERE s.userId = %d AND i.config LIKE %s",
+                $user_id, '%' . $wpdb->esc_like('"templateId":' . $id) . '%'
+            ));
+            foreach ((array) $item_rows as $r) {
+                $icfg = !empty($r->itemConfig) ? json_decode((string) $r->itemConfig, true) : null;
+                if (is_array($icfg) && (int) ($icfg['templateId'] ?? 0) === $id) { // LIKE is a prefilter
+                    $names[(int) $r->id] = (string) $r->name;
+                }
+            }
+            if ($names !== array()) {
+                $out[$id] = array_values(array_unique($names));
+            }
+        }
+        return $out;
     }
 
     /**
@@ -531,16 +591,27 @@ class PCM_REST_Templates extends PCM_REST_Base
             return $this->error('ids array is required.');
         }
 
-        // Sanitize IDs and batch delete
-        $placeholders = implode(',', array_fill(0, count($ids), '%d'));
-        $query_args = array_merge(array($user->id), array_map('intval', $ids));
+        // Templates still used by strategies are SKIPPED (not deleted) and reported —
+        // deleting them would break every item of those strategies ("Template #N not found").
+        $in_use  = $this->strategies_using_templates(array_map('intval', $ids), (int)$user->id);
+        $ids     = array_values(array_filter(array_map('intval', $ids), static fn($i) => $i > 0 && empty($in_use[$i])));
+        $skipped = array();
+        foreach ($in_use as $tid => $names) {
+            $skipped[] = sprintf('#%d (used by %s)', $tid, implode(', ', array_slice($names, 0, 3)));
+        }
+        $deleted = 0;
+        if ($ids !== array()) {
+            // Sanitize IDs and batch delete
+            $placeholders = implode(',', array_fill(0, count($ids), '%d'));
+            $query_args = array_merge(array($user->id), $ids);
 
-        $deleted = $wpdb->query($wpdb->prepare(
-            "DELETE FROM $table WHERE (userId = %d OR userId = 0) AND id IN ($placeholders)",
-            ...$query_args
-        ));
+            $deleted = (int) $wpdb->query($wpdb->prepare(
+                "DELETE FROM $table WHERE (userId = %d OR userId = 0) AND id IN ($placeholders)",
+                ...$query_args
+            ));
+        }
 
-        return $this->success(array('deleted' => (int)$deleted));
+        return $this->success(array('deleted' => $deleted, 'skipped' => count($skipped), 'skippedReason' => $skipped));
     }
 
     /**

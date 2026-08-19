@@ -267,12 +267,22 @@ function cadenceWindowDays(config: any): number {
  * window). Null = a slot is open right now (the next feed item posts on the next
  * scan). Owner card 14: "it should plan the next posts ahead".
  */
-export function nextArrivalSlot(config: any, items: Array<{ createdAt?: string }>, now: Date = new Date()): Date | null {
+export function nextArrivalSlot(config: any, items: Array<{ createdAt?: string; scheduledDate?: string; status?: string }>, now: Date = new Date()): Date | null {
+  // The watcher now PLANS the next window's posts as pending rows with a date (owner
+  // card 14: "it should plan the two next posts"). When such a plan exists, the next
+  // slot IS the earliest planned post — say that, not a recomputation.
+  const planned = items
+    .map((it) => (it.status === 'pending' && it.scheduledDate ? new Date(String(it.scheduledDate).replace(' ', 'T')).getTime() : NaN))
+    .filter((t) => Number.isFinite(t) && t > now.getTime())
+    .sort((a, b) => a - b);
+  if (planned.length > 0) return new Date(planned[0]);
   const cap = Math.max(1, Number(config?.rssCadence?.perWeek ?? 3) || 3);
   const windowMs = cadenceWindowDays(config) * 86400 * 1000;
   const since = now.getTime() - windowMs;
+  // Window occupancy goes by the PLANNED slot when there is one, else creation —
+  // the same COALESCE(scheduledDate, createdAt) rule the server's backpressure uses.
   const inWindow = items
-    .map((it) => (it.createdAt ? new Date(String(it.createdAt).replace(' ', 'T')).getTime() : NaN))
+    .map((it) => { const t = it.scheduledDate || it.createdAt; return t ? new Date(String(t).replace(' ', 'T')).getTime() : NaN; })
     .filter((t) => Number.isFinite(t) && t >= since)
     .sort((a, b) => a - b);
   if (inWindow.length < cap) return null;
@@ -764,6 +774,13 @@ export function StrategiesModule() {
     updateStrategyMutation.mutate({ id: strategyId, config: { featuredImages: enabled } });
   }, [updateStrategyMutation]);
 
+  // Web-enabled writing (card 14): the model browses the live web while it writes.
+  // ON unless the strategy opted out (config.webEnabled === false). Partial config
+  // merge; affects posts generated AFTER the change.
+  const handleWebEnabledChange = useCallback((strategyId: number, enabled: boolean) => {
+    updateStrategyMutation.mutate({ id: strategyId, config: { webEnabled: enabled } });
+  }, [updateStrategyMutation]);
+
   // Inline template (prompt) change — top-level whitelisted field.
   const handleTemplateChange = useCallback((strategyId: number, templateId: string) => {
     updateStrategyMutation.mutate({ id: strategyId, templateId: parseInt(templateId, 10) });
@@ -780,15 +797,24 @@ export function StrategiesModule() {
   const [cadenceDialog, setCadenceDialog] = useState<{
     strategyId: number; mode: CadenceMode; value: ScheduleRecurrence; perWeek: number; unit: string; reschedule: boolean;
   } | null>(null);
-  const handleCadenceSave = useCallback((d: NonNullable<typeof cadenceDialog>) => {
+  // Its OWN mutation: no generic "Strategy updated" toast (the owner saw it as "a
+  // flickering thing that appears and disappears" — the dialog had already closed, so
+  // nothing said what happened to the unpublished posts). The dialog now stays open in
+  // a Saving state until the server answers, then closes and reports the outcome in
+  // one specific sentence; on error it stays open with the reason.
+  const cadenceMutation = trpc.strategy.update.useMutation({
+    onSuccess: () => { refetch(); },
+  }) as any;
+  const handleCadenceSave = useCallback(async (d: NonNullable<typeof cadenceDialog>) => {
     const list: Strategy[] = Array.isArray(strategies) ? strategies : [];
     const strategy = list.find((s) => s.id === d.strategyId);
     const cfg = parseStrategyConfig(strategy?.config);
     const isSource = cfg.sourceMode === 'rss' || cfg.sourceMode === 'social';
     // Leaving schedule mode: the strategy's Post status decides publish vs draft.
     const offScheduleMode = cfg.publishing === 'auto' ? 'publish' : 'draft';
+    let payload: any;
     if (d.mode === 'schedule') {
-      updateStrategyMutation.mutate({
+      payload = {
         id: d.strategyId,
         // Saving a recurrence on a Draft/Auto-publish strategy also switches it to
         // 'schedule' — otherwise the schedule would be stored but never honoured.
@@ -797,26 +823,49 @@ export function StrategiesModule() {
           scheduleConfig: { ...recurrenceToConfig(d.value), startDate: cfg.scheduleConfig?.startDate || '' },
           ...(isSource ? {} : { trigger: 'scheduled' }),
         },
-        // The checkbox: recalculate the unpublished (planned) posts onto the new cadence.
+        // The toggle: recalculate the unpublished (planned) posts onto the new cadence.
         reschedulePending: d.reschedule,
-      });
+      };
     } else if (d.mode === 'arrive') {
-      updateStrategyMutation.mutate({
+      payload = {
         id: d.strategyId,
         ...(strategy?.publishingMode === 'schedule' ? { publishingMode: offScheduleMode } : {}),
         config: { rssCadence: { perWeek: d.perWeek, unit: d.unit } },
-        reschedulePending: false,
-      });
+        // The toggle: apply the new limit to the queued posts right now.
+        reschedulePending: d.reschedule,
+      };
     } else {
-      updateStrategyMutation.mutate({
+      payload = {
         id: d.strategyId,
         ...(strategy?.publishingMode === 'schedule' ? { publishingMode: offScheduleMode } : {}),
         config: { trigger: 'manual' },
         reschedulePending: false,
-      });
+      };
     }
-    setCadenceDialog(null);
-  }, [updateStrategyMutation, strategies]);
+    try {
+      const res: any = await cadenceMutation.mutateAsync(payload);
+      const rescheduled = Number(res?.rescheduled ?? 0) || 0;
+      const replanned = Number(res?.replanned ?? 0) || 0;
+      const what = d.mode === 'schedule'
+        ? `Schedule saved — ${summarizeRecurrence(d.value)}.`
+        : d.mode === 'arrive'
+          ? `Cadence saved — up to ${d.perWeek} post${d.perWeek === 1 ? '' : 's'} per ${d.unit}.`
+          : 'Cadence saved — articles now generate on demand.';
+      const tail = d.mode === 'schedule'
+        ? (d.reschedule
+            ? (rescheduled > 0 ? ` ${rescheduled} unpublished post${rescheduled === 1 ? '' : 's'} moved onto the new dates.` : ' No unpublished posts needed new dates.')
+            : ' Existing planned dates were left as they were.')
+        : d.mode === 'arrive'
+          ? (d.reschedule
+              ? (replanned > 0 ? ` ${replanned} queued post${replanned === 1 ? '' : 's'} released under the new limit.` : ' The queue follows the new limit from the next scan.')
+              : ' The queue follows the new limit from the next scan.')
+          : '';
+      toast.success(what + tail, { duration: 6000 });
+      setCadenceDialog(null);
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Could not save the cadence.');
+    }
+  }, [cadenceMutation, strategies]);
 
   // Per-item due-date edit (pending items on schedule-mode strategies).
   const updateItemMutation = trpc.strategy.updateItem.useMutation({
@@ -1392,6 +1441,11 @@ export function StrategiesModule() {
             // queue and when the next as-posts-arrive slot opens (null = open now).
             const isSource = isRss || isSocial;
             const queued: number = isSource && Array.isArray(config.rssQueue) ? config.rssQueue.length : 0;
+            // Posts the watcher has already PLANNED (pending, dated in the future) — the
+            // owner's "plan the two next posts"; they are rows in the list below.
+            const planned: number = isSource
+              ? ((strategy.items ?? []) as any[]).filter((it) => it?.status === 'pending' && it?.scheduledDate && new Date(String(it.scheduledDate).replace(' ', 'T')).getTime() > Date.now()).length
+              : 0;
             const nextSlot: Date | null = isSource && strategy.publishingMode !== 'schedule'
               ? nextArrivalSlot(config, (strategy.items ?? []) as any[])
               : null;
@@ -1508,9 +1562,14 @@ export function StrategiesModule() {
                           {' '}· {queued} queued
                         </span>
                       )}
+                      {isSource && planned > 0 && (
+                        <span title="Posts already planned for the next slots — listed below with their dates; they generate on their date">
+                          {' '}· {planned} planned
+                        </span>
+                      )}
                       {isSource && strategy.publishingMode !== 'schedule' && (
-                        <span title={nextSlot ? 'When the next post can go out on the current cadence' : 'A slot is open now — the next feed item posts on the next scan'}>
-                          {' '}· next slot: {nextSlot ? nextSlot.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'open now'}
+                        <span title={nextSlot ? (planned > 0 ? 'The next planned post goes out at this time' : 'When the next post can go out on the current cadence') : 'A slot is open now — the next feed item posts on the next scan'}>
+                          {' '}· next{planned > 0 ? ' post' : ' slot'}: {nextSlot ? nextSlot.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'open now'}
                         </span>
                       )}
                     </span>
@@ -1615,6 +1674,23 @@ export function StrategiesModule() {
                         Reuse image
                       </label>
                     )}
+
+                    {/* Web-enabled writing (card 14) — on unless opted out. The model
+                        reads the live web (source page, your site, current facts) while
+                        writing; the global switch is Settings → Model Registry. */}
+                    <label
+                      className="shrink-0 flex items-center gap-1.5 cursor-pointer text-xs"
+                      style={{ color: colors.textSecondary }}
+                      onClick={(e) => e.stopPropagation()}
+                      title="Web-enabled writing: the model searches and reads the live web while it writes each post (source page, your site, current facts). On by default; untick to write from memory only."
+                    >
+                      <Checkbox
+                        checked={config.webEnabled !== false}
+                        onCheckedChange={(checked) => handleWebEnabledChange(strategy.id, checked === true)}
+                        aria-label={`Web-enabled writing for ${strategy.name}`}
+                      />
+                      Web
+                    </label>
 
                     {/* ── divider: destination │ workflow ── */}
                     <div className="h-5 w-px shrink-0" style={{ background: colors.border }} aria-hidden="true" />
@@ -2579,6 +2655,7 @@ export function StrategiesModule() {
             const isSource = cfg.sourceMode === 'rss' || cfg.sourceMode === 'social';
             const items = (strategy?.items ?? []) as any[];
             const unpublished = items.filter((it) => it?.status === 'pending').length;
+            const queuedNow = Array.isArray(cfg.rssQueue) ? cfg.rssQueue.length : 0;
             const modes: { value: CadenceMode; label: string }[] = isSource
               ? [{ value: 'arrive', label: 'As posts arrive' }, { value: 'schedule', label: 'On a schedule' }]
               : [{ value: 'ondemand', label: 'On demand' }, { value: 'schedule', label: 'On a schedule' }];
@@ -2630,35 +2707,49 @@ export function StrategiesModule() {
                 )}
 
                 {d.mode === 'schedule' && (
-                  <>
-                    <RecurrenceEditor value={d.value} onChange={(next) => set({ value: next })} />
-                    {/* The owner's toggle: recalculate the planned-but-unpublished posts BEFORE Save. */}
-                    <label className="flex items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs cursor-pointer">
-                      <Checkbox checked={d.reschedule} onCheckedChange={(v) => set({ reschedule: !!v })} className="mt-0.5" />
-                      <span>
-                        <span className="font-medium text-foreground">Also reschedule the unpublished posts</span>
-                        <span className="block text-muted-foreground">
-                          {unpublished > 0
-                            ? `${unpublished} planned post${unpublished === 1 ? '' : 's'} get${unpublished === 1 ? 's' : ''} new dates on this cadence when you save. Published posts are never touched.`
-                            : 'No planned posts right now — new ones will follow this cadence.'}
-                        </span>
-                      </span>
-                    </label>
-                  </>
+                  <RecurrenceEditor value={d.value} onChange={(next) => set({ value: next })} />
                 )}
 
                 {d.mode === 'ondemand' && (
                   <p className="text-xs text-muted-foreground">Articles generate only when you click Generate in this list.</p>
                 )}
+
+                {/* THE OWNER'S TOGGLE — "before they click Save, a checkbox/toggle that updates
+                    the unpublished but planned posts so they get a new schedule as they save".
+                    Shown in EVERY mode that has something to re-plan (it used to render only in
+                    schedule mode, so on an as-posts-arrive feed strategy it looked unimplemented):
+                      · On a schedule  → the pending posts get new dates on the new recurrence
+                      · As posts arrive → the queued posts are released under the new limit now
+                    On demand has nothing planned, so nothing to offer. */}
+                {d.mode !== 'ondemand' && (
+                  <label className="flex items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs cursor-pointer">
+                    <Checkbox checked={d.reschedule} onCheckedChange={(v) => set({ reschedule: !!v })} className="mt-0.5" />
+                    <span>
+                      <span className="font-medium text-foreground">
+                        {d.mode === 'schedule' ? 'Also reschedule the unpublished posts' : 'Also apply the new limit to the queued posts now'}
+                      </span>
+                      <span className="block text-muted-foreground">
+                        {d.mode === 'schedule'
+                          ? (unpublished > 0
+                              ? `${unpublished} planned post${unpublished === 1 ? '' : 's'} get${unpublished === 1 ? 's' : ''} new dates on this cadence when you save. Published posts are never touched.`
+                              : 'No planned posts right now — new ones will follow this cadence.')
+                          : (queuedNow + unpublished > 0
+                              ? `${queuedNow} queued${unpublished > 0 ? ` and ${unpublished} pending` : ''} — released as the new limit allows, right when you save. Published posts are never touched.`
+                              : 'Nothing is waiting right now — new feed items will follow the new limit.')}
+                      </span>
+                    </span>
+                  </label>
+                )}
               </div>
             );
           })()}
           <DialogFooter className="pt-4 border-t">
-            <Button variant="outline" size="sm" onClick={() => setCadenceDialog(null)}>
+            <Button variant="outline" size="sm" disabled={cadenceMutation.isPending} onClick={() => setCadenceDialog(null)}>
               Cancel
             </Button>
-            <Button variant="default" size="sm" onClick={() => { if (cadenceDialog) handleCadenceSave(cadenceDialog); }}>
-              Save
+            <Button variant="default" size="sm" disabled={cadenceMutation.isPending} onClick={() => { if (cadenceDialog) void handleCadenceSave(cadenceDialog); }} className="gap-1.5">
+              {cadenceMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              {cadenceMutation.isPending ? 'Saving…' : 'Save'}
             </Button>
           </DialogFooter>
         </DialogContent>

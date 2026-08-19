@@ -86,7 +86,17 @@ class PCM_LLM
      */
     public static function web_default(): bool
     {
-        return !(function_exists('get_option') && (string) get_option('pcm_llm_web_search', '1') === '0');
+        if (function_exists('get_option') && (string) get_option('pcm_llm_web_search', '1') === '0') {
+            return false; // operator kill-switch (no UI)
+        }
+        // The UI switch: Settings → Model Registry → "Web-enabled generation" (absent = on).
+        if (class_exists('PCM_Settings')) {
+            $v = PCM_Settings::get('llm_web_search', true);
+            if ($v === false || $v === 0 || $v === '0' || $v === 'false') {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static function invoke(array $messages, array $options = array()): array

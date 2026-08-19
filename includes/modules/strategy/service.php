@@ -803,7 +803,7 @@ class PCM_Strategy_Service
         }
 
         try {
-            $template = self::load_template((int)$strategy->templateId, $user_id);
+            $template = self::load_template((int)$strategy->templateId, $user_id, $strategy);
             $brand = !empty($strategy->brandId) ? PCM_DB::get_brand_by_id((int)$strategy->brandId, $user_id) : null;
 
             $research = self::maybe_research_context($strategy, $keywords, $user_id);
@@ -1406,7 +1406,7 @@ class PCM_Strategy_Service
 
             // ── 2. Load template — item override wins over the strategy's own ──
             $template_id = !empty($item_cfg['templateId']) ? (int)$item_cfg['templateId'] : (int)$strategy->templateId;
-            $template = self::load_template($template_id, $user_id);
+            $template = self::load_template($template_id, $user_id, $strategy);
 
             // ── 3. Load brand context ──
             $brand = null;
@@ -2296,6 +2296,19 @@ class PCM_Strategy_Service
             }
         }
 
+        // ── PLAN AHEAD (owner, card 14: "it should plan the two next posts … when the
+        //    posts are completed, it should plan the next post"). As-content-arrives
+        //    only: the next window's worth of queued feed items become PENDING rows
+        //    dated at the moment each slot frees (oldest occupant's time + window), so
+        //    the list shows what posts next and when — and they generate on that date
+        //    via the scheduled scan, never early (future scheduledDate is not chained).
+        //    Backpressure counts them by their planned slot, so tomorrow's plan never
+        //    steals today's capacity nor doubles tomorrow's. ──
+        $planned = 0;
+        if ($schedule_cfg === null) {
+            $planned = self::plan_ahead_arrivals($strategy_id, $user_id, $config, $duration);
+        }
+
         // ── Persist the updated watcher state (rssSeen/rssQueue) — the WHOLE
         //    merged config, so every other key survives byte-for-byte. Skipped
         //    when nothing changed, so idle strategies aren't rewritten hourly.
@@ -2306,7 +2319,7 @@ class PCM_Strategy_Service
         if ($config_json !== (string)($strategy->config ?? '')) {
             $update['config'] = $config_json;
         }
-        if ($inserted > 0) {
+        if ($inserted > 0 || $planned > 0) {
             $update['totalItems'] = PCM_DB::count_strategy_items($strategy_id);
         }
         if ($update !== array()) {
@@ -2339,6 +2352,29 @@ class PCM_Strategy_Service
      * @param int $user_id     Owner PCM user ID.
      * @return array{created:int} Count of new pending items created this pass.
      */
+    /**
+     * Apply a just-saved as-content-arrives limit to the queue NOW (owner card 14: the
+     * cadence dialog's "also update the unpublished posts" toggle). One ordinary
+     * watcher pass for this strategy — the queue is popped under the NEW cap so a
+     * raised limit releases posts immediately instead of on the next cron pass. The
+     * social branch keeps its 4h Apify gate (force = false): never a paid call.
+     *
+     * @return int New pending items created (0 when nothing was waiting / cap unchanged).
+     */
+    public static function replan_queue_now(int $strategy_id, int $user_id): int
+    {
+        $strategy = PCM_DB::get_strategy($strategy_id, $user_id);
+        if (!$strategy) {
+            return 0;
+        }
+        try {
+            return (int) self::scan_rss_strategy($strategy, false);
+        } catch (\Throwable $e) {
+            error_log(sprintf('[PCM_Strategy_Service] replan_queue_now(#%d) failed: %s', $strategy_id, $e->getMessage()));
+            return 0;
+        }
+    }
+
     public static function scan_strategy_now(int $strategy_id, int $user_id): array
     {
         $strategy = PCM_DB::get_strategy($strategy_id, $user_id);
@@ -2622,6 +2658,59 @@ class PCM_Strategy_Service
      * @param array $config       Decoded strategy config.
      * @return int Free slots (>= 0).
      */
+    /**
+     * Materialise the NEXT window's posts for an as-content-arrives strategy as
+     * planned pending items (see scan_rss_strategy's PLAN AHEAD step). Pure over the
+     * DB helpers + the queue: pops up to (cap − already-planned) queue entries, caps by
+     * a 'limit' duration, and dates each at the time its slot frees — the k-th oldest
+     * window occupant's effective time + the window length; a slot that is already
+     * free dates 'now'. Queue/seen state is updated in $config (the caller persists).
+     *
+     * @return int Planned items created.
+     */
+    public static function plan_ahead_arrivals(int $strategy_id, int $user_id, array &$config, array $duration): int
+    {
+        $queue = is_array($config['rssQueue'] ?? null) ? $config['rssQueue'] : array();
+        if ($queue === array()) {
+            return 0;
+        }
+        $now_s  = current_time('mysql');
+        $now_ts = (int) strtotime($now_s);
+        $cap    = self::rss_free_slots(0, $config);               // the per-window cap itself
+        $window = self::rss_cadence_window_days($config) * 86400;
+        $want   = $cap - PCM_DB::count_planned_strategy_items($strategy_id, $now_s);
+        if ((string)($duration['mode'] ?? '') === 'limit' && (int)($duration['maxArticles'] ?? 0) > 0) {
+            $want = min($want, max(0, (int)$duration['maxArticles'] - PCM_DB::count_strategy_items($strategy_id)));
+        }
+        if ($want <= 0) {
+            return 0;
+        }
+        // When does each of the next $want slots free? The k-th oldest occupant of the
+        // current window leaves it at (its time + window). Fewer occupants than wanted
+        // means those slots are free already → 'now' (the immediate pop normally drains
+        // them first; this is only the safety rail).
+        $occupants = PCM_DB::get_window_occupant_times($strategy_id, date('Y-m-d H:i:s', $now_ts - $window));
+        $pop       = self::rss_pop_due_items($config, $want);
+        $config    = $pop['config'];
+        $created   = 0;
+        foreach ($pop['popped'] as $k => $entry) {
+            $keyword = trim((string)($entry['title'] ?? ''));
+            if ($keyword === '') { $keyword = trim((string)($entry['link'] ?? '')); }
+            if ($keyword === '') { continue; }
+            $item_cfg = array('sourceLink' => (string)($entry['link'] ?? ''), 'sourceTitle' => (string)($entry['title'] ?? ''));
+            if (isset($entry['text']) && (string)$entry['text'] !== '') { $item_cfg['sourceText'] = (string)$entry['text']; }
+            if (!empty($entry['social'])) { $item_cfg['social'] = true; }
+            if (trim((string)($entry['image'] ?? '')) !== '') { $item_cfg['sourceImage'] = trim((string)$entry['image']); }
+            $item_id = PCM_DB::create_rss_strategy_item($strategy_id, $user_id, $keyword, $item_cfg);
+            if (!$item_id) { continue; }
+            $occ  = isset($occupants[$k]) ? (int) strtotime((string) $occupants[$k]) : 0;
+            $slot = $occ > 0 ? max($now_ts, $occ + $window) : $now_ts;
+            PCM_DB::update_strategy_item((int) $item_id, array('scheduledDate' => date('Y-m-d H:i:s', $slot)));
+            $created++;
+        }
+        return $created;
+    }
+
     public static function rss_free_slots(int $recent_count, array $config): int
     {
         $per_week = 3;
@@ -3145,8 +3234,10 @@ class PCM_Strategy_Service
      * Web-enabled generation for this strategy's articles (owner card 14: "every
      * call we do should be web-enabled"). ON by default so the model can read the
      * client site ({{website.url}}), the source post and competitors instead of
-     * writing from memory. Per-strategy opt-out: config.webEnabled === false. Global
-     * kill-switch: option `pcm_llm_web_search` = '0' (no UI — an operator lever).
+     * writing from memory. Per-strategy opt-out: config.webEnabled === false (the
+     * "Web" tick in the strategy row / "Web access" in its dialog). Global switch:
+     * Settings → Model Registry → "Web-enabled generation" (PCM_LLM::web_default(),
+     * which also honours the operator kill-switch option `pcm_llm_web_search` = '0').
      * The LLM layer maps it to each provider's own web tool and ignores it where
      * the provider has none, so enabling it can never fail a generation by itself.
      */
@@ -3154,6 +3245,9 @@ class PCM_Strategy_Service
     {
         if (function_exists('get_option') && (string) get_option('pcm_llm_web_search', '1') === '0') {
             return false;
+        }
+        if (class_exists('PCM_LLM') && !PCM_LLM::web_default()) {
+            return false; // the Settings switch is off → off everywhere
         }
         $config = !empty($strategy->config) ? json_decode((string) $strategy->config, true) : null;
         if (is_array($config) && array_key_exists('webEnabled', $config)) {
@@ -5382,25 +5476,81 @@ class PCM_Strategy_Service
     // =========================================================================
 
     /**
+     * The writer template a strategy should use when its own is gone: the source's
+     * seed first (a keyword strategy on "RSS Reposting" would render empty {{ post_* }}),
+     * then the user's default writer template, then any writer template they can see.
+     * User-owned rows win over shared seeds of the same name. Null = nothing at all.
+     */
+    private static function fallback_writer_template(object $strategy, int $user_id): ?object
+    {
+        global $wpdb;
+        $table  = PCM_Schema::table('templates');
+        $config = !empty($strategy->config) ? json_decode((string) $strategy->config, true) : null;
+        $source = is_array($config) ? (string) ($config['sourceMode'] ?? '') : '';
+        $seed   = $source === 'rss' ? 'RSS Reposting' : ($source === 'social' ? 'Social Media Reposting' : 'SEO Pillar Article');
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE module = 'writer' AND name = %s AND (userId = %d OR userId = 0) ORDER BY userId DESC LIMIT 1",
+            $seed, $user_id
+        ));
+        if (!$row) {
+            $row = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM {$table} WHERE module = 'writer' AND (userId = %d OR userId = 0) ORDER BY isDefault DESC, userId DESC, id ASC LIMIT 1",
+                $user_id
+            ));
+        }
+        return $row ?: null;
+    }
+
+    /**
      * Load and parse a template by ID.
      *
-     * @param int $template_id Template ID.
-     * @param int $user_id     User ID.
+     * SELF-HEALING (owner: "Template #56 not found — why is this error occurring?"):
+     * a strategy keeps pointing at its templateId after that template is DELETED
+     * (Templates → delete had no "in use" guard) or when it belongs to another
+     * user's rows. Every item then failed with that one cryptic line and the row's
+     * template select went blank. When the id cannot be found and a strategy is
+     * given, fall back to a fitting WRITER template — the source's own seed ("RSS
+     * Reposting" / "Social Media Reposting" / "SEO Pillar Article"), else the user's
+     * default writer template, else any writer template visible to them — persist
+     * that choice onto the strategy so the row shows it and later runs are direct,
+     * and log what happened. Only when NO writer template exists at all does it
+     * still throw — with the actual remedy.
+     *
+     * @param int         $template_id Template ID.
+     * @param int         $user_id     User ID.
+     * @param object|null $strategy    The strategy (enables the source-aware fallback + persist).
      * @return array Template entries and metadata.
      */
-    private static function load_template(int $template_id, int $user_id): array
+    private static function load_template(int $template_id, int $user_id, ?object $strategy = null): array
     {
         global $wpdb;
         $table = PCM_Schema::table('templates');
 
-        $row = $wpdb->get_row($wpdb->prepare(
+        $row = $template_id > 0 ? $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM {$table} WHERE id = %d AND (userId = %d OR userId = 0)",
             $template_id,
             $user_id
-        ));
+        )) : null;
+
+        if (!$row && $strategy) {
+            $row = self::fallback_writer_template($strategy, $user_id);
+            if ($row) {
+                error_log(sprintf(
+                    '[PCM_Strategy_Service] Strategy #%d pointed at template #%d, which no longer exists (deleted, or another user’s) — using "%s" (#%d) instead and saving that on the strategy.',
+                    (int) ($strategy->id ?? 0), $template_id, (string) $row->name, (int) $row->id
+                ));
+                if (!empty($strategy->id)) {
+                    PCM_DB::update_strategy((int) $strategy->id, $user_id, array('templateId' => (int) $row->id));
+                    $strategy->templateId = (int) $row->id;
+                }
+            }
+        }
 
         if (!$row) {
-            throw new \RuntimeException("Template #{$template_id} not found.");
+            throw new \RuntimeException(sprintf(
+                'Template #%d no longer exists (it was deleted, or belongs to another user), and no Writer template is available to fall back on. Create one under Templates → Writer, then pick it in the strategy row and retry.',
+                $template_id
+            ));
         }
 
         $form_data = json_decode($row->formData, true) ?: array();

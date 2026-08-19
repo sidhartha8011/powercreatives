@@ -66,6 +66,11 @@ class PCM_Settings_Controller extends PCM_REST_Base
                 $raw === null ? null : PCM_Deliveries_Service::normalize_presets($raw);
         }
 
+        // Web-enabled generation switch (card 14) — store a real boolean.
+        if (array_key_exists('llm_web_search', $params)) {
+            $params['llm_web_search'] = filter_var($params['llm_web_search'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? true;
+        }
+
         // Per-module email senders are structured data — normalize on write so the
         // option only ever stores { module => { email, name } } with clean values.
         if (array_key_exists('module_email_senders', $params)) {

@@ -248,7 +248,15 @@ export function TemplatesModule() {
     onSuccess: (result) => {
       utils.templates.list.invalidate();
       selection.clearAll();
-      toast.success(`${result.deleted} template${result.deleted !== 1 ? "s" : ""} deleted`);
+      // Templates still used by strategies are skipped server-side (deleting them would break
+      // every item of those strategies) — say so, with the strategy names.
+      const skipped: number = Number((result as any)?.skipped ?? 0) || 0;
+      const reason: string[] = Array.isArray((result as any)?.skippedReason) ? (result as any).skippedReason : [];
+      if (skipped > 0) {
+        toast.warning(`${result.deleted} deleted; ${skipped} kept because ${skipped === 1 ? "a strategy still uses it" : "strategies still use them"}: ${reason.join("; ")}. Pick another template on those strategy rows first.`, { duration: 10000 });
+      } else {
+        toast.success(`${result.deleted} template${result.deleted !== 1 ? "s" : ""} deleted`);
+      }
     },
     onError: (err) => toast.error(err.message),
   });

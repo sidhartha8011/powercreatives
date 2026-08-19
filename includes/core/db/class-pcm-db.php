@@ -1403,9 +1403,13 @@ class PCM_DB
         global $wpdb;
         $table = self::t('strategy_items');
         if ($since !== null) {
+            // The trailing-window (backpressure) count goes by each item's PLANNED
+            // slot when it has one — a post planned for tomorrow occupies tomorrow's
+            // capacity, not today's — and by creation time otherwise (the exact
+            // behaviour before planned-ahead items existed).
             return (int)$wpdb->get_var(
                 $wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$table} WHERE strategyId = %d AND createdAt >= %s",
+                    "SELECT COUNT(*) FROM {$table} WHERE strategyId = %d AND COALESCE(scheduledDate, createdAt) >= %s",
                     $strategy_id,
                     $since
                 )
@@ -1417,6 +1421,38 @@ class PCM_DB
                 $strategy_id
             )
         );
+    }
+
+    /**
+     * Pending items PLANNED for a future slot (scheduledDate > now) — the watcher's
+     * "posts planned ahead" for an as-content-arrives strategy.
+     */
+    public static function count_planned_strategy_items(int $strategy_id, string $now): int
+    {
+        global $wpdb;
+        $table = self::t('strategy_items');
+        return (int)$wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table} WHERE strategyId = %d AND status = 'pending' AND scheduledDate IS NOT NULL AND scheduledDate > %s",
+            $strategy_id, $now
+        ));
+    }
+
+    /**
+     * The items occupying the trailing window, oldest first, by their effective time
+     * (planned slot, else creation) — each one's time + the window length is when
+     * its slot frees again. 'Y-m-d H:i:s' strings.
+     *
+     * @return string[]
+     */
+    public static function get_window_occupant_times(int $strategy_id, string $since): array
+    {
+        global $wpdb;
+        $table = self::t('strategy_items');
+        $rows = $wpdb->get_col($wpdb->prepare(
+            "SELECT COALESCE(scheduledDate, createdAt) AS t FROM {$table} WHERE strategyId = %d AND COALESCE(scheduledDate, createdAt) >= %s ORDER BY t ASC",
+            $strategy_id, $since
+        ));
+        return array_values(array_map('strval', (array) $rows));
     }
 
     /**

@@ -37,6 +37,7 @@ import {
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { ModelRegistrySection } from './ModelRegistrySection';
+import { WebSearchSection } from './WebSearchSection';
 import { PromptEditorSection } from './PromptEditorSection';
 import { DeliveryTypesSection } from './DeliveryTypesSection';
 import { ModuleEmailSenderRow, DefaultEmailSenderRow } from './EmailSendersSection';
@@ -126,6 +127,10 @@ export function SettingsModule() {
                 <ModelRegistrySection />
               </div>
             </section>
+
+            {/* Web-enabled generation (card 14) — the global switch; per-strategy
+                opt-out lives in the strategy row ("Web" tick). */}
+            <WebSearchSection />
           </div>
         </TabsContent>
 

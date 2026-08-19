@@ -474,6 +474,8 @@ class PCM_REST_Strategy extends PCM_REST_Base
         // (bool). Absent = the long-standing behaviour (always reschedule), so the
         // older row controls keep working unchanged.
         $reschedule_pending = !array_key_exists('reschedulePending', $params) || !empty($params['reschedulePending']);
+        $rescheduled = 0; // planned items given a new date (schedule mode)
+        $replanned   = 0; // queued feed items released under the new limit (as-content-arrives mode)
         if ($schedule_changed && $reschedule_pending) {
             $mode = $update['publishingMode'] ?? (string)($existing_strategy->publishingMode ?? '');
             if ($mode === 'schedule') {
@@ -482,17 +484,32 @@ class PCM_REST_Strategy extends PCM_REST_Base
                 // the custom-recurrence keys (interval/unit/byDays/ends) must
                 // reach the engine; a bare string would silently fall back to
                 // the legacy fixed-frequency path.
-                PCM_Strategy_Service::reschedule_pending_items(
+                $rescheduled = PCM_Strategy_Service::reschedule_pending_items(
                     $strategy_id,
                     is_array($sc) && $sc !== array() ? $sc : 'weekly',
                     !empty($sc['startDate']) ? (string)$sc['startDate'] : ''
                 );
             }
         }
+        // As-content-arrives: "update the unpublished posts so they get a new schedule as
+        // they save" = apply the NEW limit to the queue right now — pop whatever the new
+        // cap frees instead of waiting for the next watcher pass. One ordinary watcher
+        // pass for THIS strategy (feeds re-read, the queue popped under the new limit);
+        // the paid social (Apify) branch keeps its 4h gate — never forced here.
+        $cadence_changed = is_array($params['config'] ?? null) && array_key_exists('rssCadence', (array) $params['config']);
+        if ($cadence_changed && $reschedule_pending) {
+            $mode = $update['publishingMode'] ?? (string)($existing_strategy->publishingMode ?? '');
+            if ($mode !== 'schedule') {
+                $replanned = PCM_Strategy_Service::replan_queue_now($strategy_id, (int)$pcm_user->id);
+            }
+        }
 
-        // Return updated strategy
+        // Return updated strategy (+ what the save did to the unpublished posts, so the
+        // dialog can SAY it instead of a generic "updated").
         $strategy = PCM_DB::get_strategy($strategy_id, (int)$pcm_user->id);
         $strategy->items = PCM_DB::get_strategy_items($strategy_id);
+        $strategy->rescheduled = $rescheduled;
+        $strategy->replanned   = $replanned;
         return $this->success($strategy);
     }
 
