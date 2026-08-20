@@ -52,6 +52,15 @@ class PCM_Shortcode
         if (!has_shortcode($post->post_content, 'power_creatives')) {
             return;
         }
+        // THE EMOJI KILLER (card 18): WP's wp-emoji script rewrites emoji characters
+        // into <img class="emoji"> across the WHOLE document via a MutationObserver.
+        // Inside the app's ProseMirror editors (ad body in Approvals, Copy) that image
+        // is not in the schema, so the editor drops it — open an ad, click outside,
+        // and the emoji are gone from the saved copy. The app renders its own text;
+        // it never needs the replacement, so drop the detection script on any page
+        // carrying the shortcode (inline mode included — the editors are the same).
+        remove_action('wp_head', 'print_emoji_detection_script', 7);
+        remove_action('wp_print_styles', 'print_emoji_styles');
         // Look for an explicit mode="inline" — if absent, treat as fullscreen
         if (preg_match('/\[power_creatives[^\]]*mode=["\']?inline["\']?[^\]]*\]/i', $post->post_content)) {
             return;

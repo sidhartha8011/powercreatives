@@ -39,7 +39,35 @@ const queryClient = new QueryClient({
  */
 const rootElement = document.getElementById("pcm-root");
 
+/**
+ * THE EMOJI KILLER, client half (card 18): WordPress's wp-emoji script swaps emoji
+ * characters for <img class="emoji"> across the whole document (MutationObserver).
+ * Inside the app's ProseMirror editors that image is not in the schema, so the editor
+ * DROPS it — opening an ad and clicking outside saved the copy without its emoji.
+ * The PHP half removes the script on our surfaces; this half covers pages that still
+ * carry it (cached HTML, another plugin's twemoji): make twemoji.parse a no-op, even
+ * when the library loads after us.
+ */
+function neutralizeTwemoji() {
+  const noop = (x: unknown) => x;
+  const disarm = (t: any) => { if (t && typeof t === 'object') { try { t.parse = noop; } catch { /* frozen — ignore */ } } return t; };
+  const w = window as any;
+  if (w.twemoji) {
+    disarm(w.twemoji);
+    return;
+  }
+  try {
+    let stored: any;
+    Object.defineProperty(w, 'twemoji', {
+      configurable: true,
+      get: () => stored,
+      set: (v) => { stored = disarm(v); },
+    });
+  } catch { /* property not configurable — nothing more we can do */ }
+}
+
 if (rootElement) {
+  neutralizeTwemoji();
   createRoot(rootElement).render(
     <QueryClientProvider client={queryClient}>
       <App />

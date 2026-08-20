@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { isVideoAsset } from './ClientReviewPage';
 import { TiptapBodyEditor } from '@/components/shared/TiptapBodyEditor';
 import { escapeAstral } from '@/lib/escapeAstral';
+import { keepEmojiOnPureLoss } from '@/lib/emojiGuard';
 import { useAutoResizeTextarea } from '@/hooks/useAutoResizeTextarea';
 import { trpc } from '@/lib/trpc';
 import { CardDocumentView, type CardDocumentProperty, type CardDocumentDraft } from './CardDocumentView';
@@ -354,11 +355,25 @@ export function CreativeAssetCard({
 
   // Save inline text edits to snapshot and DB
   const handleSaveTextEdits = useCallback(async () => {
+    // THE EMOJI LOSS GUARD (card 18, Safari round): if a field's only change is
+    // MISSING emoji, the browser ate them (Safari's editor normalisation, a stale
+    // twemoji bundle, …) — keep the original so the emoji survive whatever the
+    // mechanism was. Real edits (anything beyond emoji) pass through untouched.
+    const finalHeadline = keepEmojiOnPureLoss(editedHeadline, asset.headline || '');
+    const finalBody = keepEmojiOnPureLoss(editedBody, asset.body || '');
+    const finalDescription = keepEmojiOnPureLoss(editedDescription, asset.description || '');
+    if (finalHeadline !== editedHeadline || finalBody !== editedBody || finalDescription !== editedDescription) {
+      // Put the restored emoji back on screen too, not only in the payload.
+      setEditedHeadline(finalHeadline);
+      setEditedBody(finalBody);
+      setEditedDescription(finalDescription);
+    }
+
     // If text hasn't changed, just close editing mode
     if (
-      editedHeadline === (asset.headline || '') && 
-      editedBody === (asset.body || '') && 
-      editedDescription === (asset.description || '')
+      finalHeadline === (asset.headline || '') &&
+      finalBody === (asset.body || '') &&
+      finalDescription === (asset.description || '')
     ) {
       setIsEditingText(false);
       return;
@@ -384,9 +399,9 @@ export function CreativeAssetCard({
         assetId: asset.id,
         // Escape emoji to ASCII so a request-stripping WAF/security layer can't
         // drop them in transit; the server decodes them back before storing.
-        headline: escapeAstral(editedHeadline),
-        body: escapeAstral(editedBody),
-        description: escapeAstral(editedDescription)
+        headline: escapeAstral(finalHeadline),
+        body: escapeAstral(finalBody),
+        description: escapeAstral(finalDescription)
       },
       {
         onSuccess: () => {

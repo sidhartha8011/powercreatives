@@ -51,6 +51,19 @@ const extensions = [
  * Convert plain text (with \n\n paragraph breaks) to Tiptap-compatible HTML.
  * Each paragraph becomes a <p> tag. Single \n becomes <br>.
  */
+/**
+ * Restore emoji that arrive as twemoji images. WP (and pages copied from it) render
+ * emoji as <img class="emoji" alt="🎬" src="…svg">; ProseMirror has no image node in
+ * this schema and would silently DROP them (card 18: "ad saved without emojis").
+ * The alt attribute carries the original character — put it back before parsing.
+ */
+function restoreEmojiImages(html: string): string {
+  if (!html || html.indexOf('<img') === -1) return html;
+  return html.replace(/<img[^>]*alt=["']([^"']*)["'][^>]*>/gi, (m, alt) =>
+    /class=["'][^"']*emoji[^"']*["']/i.test(m) ? alt : m
+  );
+}
+
 function plainTextToHtml(text: string): string {
   if (!text) return '<p></p>';
   // If it already looks like HTML, pass through
@@ -140,6 +153,9 @@ function TiptapBodyEditorInner({
       attributes: {
         class: `outline-none min-h-[3rem] ${className}`,
       },
+      // Pasting from a twemoji'd page hands us <img class="emoji"> — restore the
+      // character instead of letting the schema drop it (card 18).
+      transformPastedHTML: restoreEmojiImages,
     },
   });
 

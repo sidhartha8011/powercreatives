@@ -82,6 +82,12 @@ class PCM_Admin
             return;
         }
 
+        // THE EMOJI KILLER (card 18): wp-emoji rewrites emoji into <img class="emoji">
+        // document-wide; ProseMirror drops the unknown image and the emoji vanish from
+        // edited ad copy. The SPA never needs the replacement — drop it on our page.
+        remove_action('admin_print_scripts', 'print_emoji_detection_script');
+        remove_action('admin_print_styles', 'print_emoji_styles');
+
         // Enable WordPress Media Library integration for the React app
         wp_enqueue_media();
 

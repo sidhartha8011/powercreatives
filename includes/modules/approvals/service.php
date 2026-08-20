@@ -1698,6 +1698,42 @@ class PCM_Approvals_Service
     /**
      * Update an asset (e.g. ad copy text) inside the approval set's snapshot and propagate it.
      */
+    /**
+     * Emoji-ish code points (VS15/16, ZWJ, keycap, misc symbols + dingbats, the
+     * arrows/stars block emoji use, the astral emoji plane incl. skin tones) —
+     * the vocabulary of keep_emoji_on_pure_loss(). Mirrors app/src/lib/emojiGuard.ts.
+     */
+    private const EMOJI_CHARS = '/[\x{FE0E}\x{FE0F}\x{200D}\x{20E3}\x{2600}-\x{27BF}\x{2B00}-\x{2BFF}\x{1F000}-\x{1FFFF}]/u';
+
+    /**
+     * THE EMOJI LOSS GUARD (card 18, Safari round). Returns $incoming unless its
+     * ONLY difference from $stored is MISSING emoji — the exact signature every
+     * emoji-killing client bug produces (wp-emoji/twemoji rewrites, Safari editor
+     * normalisation, stale cached bundles). Then the stored value is kept so the
+     * emoji survive whatever the mechanism was.
+     *
+     * Deliberate trade-off (owner: "the emojis has to stay"): deleting ONLY an
+     * emoji, changing nothing else, is undone; removing it together with any other
+     * character works normally.
+     */
+    public static function keep_emoji_on_pure_loss(string $incoming, string $stored): string
+    {
+        if ($incoming === $stored || $stored === '') {
+            return $incoming;
+        }
+        $in_stripped = preg_replace(self::EMOJI_CHARS, '', $incoming);
+        $st_stripped = preg_replace(self::EMOJI_CHARS, '', $stored);
+        if ($in_stripped === null || $st_stripped === null) {
+            return $incoming; // malformed UTF-8 — never let the guard eat an edit
+        }
+        $in_count = preg_match_all(self::EMOJI_CHARS, $incoming);
+        $st_count = preg_match_all(self::EMOJI_CHARS, $stored);
+        if ((int) $in_count < (int) $st_count && $in_stripped === $st_stripped) {
+            return $stored;
+        }
+        return $incoming;
+    }
+
     public static function update_snapshot_asset(string $token, string $asset_id, array $updates): bool
     {
         global $wpdb;
@@ -1715,14 +1751,19 @@ class PCM_Approvals_Service
         if (!empty($snapshot['copy']) && is_array($snapshot['copy'])) {
             foreach ($snapshot['copy'] as &$item) {
                 if (isset($item['id']) && (string)$item['id'] === (string)$asset_id) {
+                    // THE EMOJI LOSS GUARD (card 18, Safari round): a browser whose
+                    // editor (or a stale cached bundle) ate the emoji sends the SAME
+                    // text minus emoji. The server is the one place every client
+                    // passes through, so it refuses that exact signature: only-emoji-
+                    // missing → keep the stored value. Any real edit passes through.
                     if (isset($updates['body'])) {
-                        $item['body'] = sanitize_textarea_field($updates['body']);
+                        $item['body'] = self::keep_emoji_on_pure_loss(sanitize_textarea_field($updates['body']), (string) ($item['body'] ?? ''));
                     }
                     if (isset($updates['headline'])) {
-                        $item['headline'] = sanitize_text_field($updates['headline']);
+                        $item['headline'] = self::keep_emoji_on_pure_loss(sanitize_text_field($updates['headline']), (string) ($item['headline'] ?? ''));
                     }
                     if (isset($updates['description'])) {
-                        $item['description'] = sanitize_textarea_field($updates['description']);
+                        $item['description'] = self::keep_emoji_on_pure_loss(sanitize_textarea_field($updates['description']), (string) ($item['description'] ?? ''));
                     }
                     $updated = true;
                     break;

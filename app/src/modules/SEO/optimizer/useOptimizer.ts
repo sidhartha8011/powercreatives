@@ -74,7 +74,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  * generic "too busy" wording; a served JSON error keeps its own message.
  */
 const isGatewayPage = (e: unknown): boolean =>
-  e instanceof Error && /^API error: 50[234]/.test(e.message);
+  e instanceof Error && /^API error: 50[234]\b/.test(e.message);
 
 const isTransient = (e: unknown): boolean => {
   const status = (e as { status?: number } | null)?.status;
