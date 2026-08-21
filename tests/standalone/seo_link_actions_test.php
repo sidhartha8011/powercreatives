@@ -99,8 +99,12 @@ $sch = file_get_contents($ROOT . '/includes/core/db/class-pcm-schema.php');
 // table (`seo_deleted_links_x`) because the real name is its prefix.
 check('seo_deleted_links table created', strpos($sch, 'CREATE TABLE {$prefix}seo_deleted_links (') !== false);
 check('keyed by site+post for the popup list', strpos($sch, 'KEY idx_post (siteId, postId)') !== false);
-check('DB version bumped to 1.47.0',
-    strpos(file_get_contents($ROOT . '/power-creatives.php'), "PCM_DB_VERSION', '1.47.0'") !== false);
+// ≥, not ===: the intent is "the deleted-links table shipped with a version bump",
+// and later features keep bumping (1.48.0 hierarchy, 1.49.0 anchors …). An exact
+// pin turns every LATER bump into a false failure here.
+preg_match("/PCM_DB_VERSION', '([0-9.]+)'/", file_get_contents($ROOT . '/power-creatives.php'), $mv);
+check('DB version bumped to 1.47.0 or later',
+    isset($mv[1]) && version_compare($mv[1], '1.47.0', '>='), $mv[1] ?? 'no version');
 check('drop_tables knows the new table (schema law)', strpos($sch, "'seo_deleted_links',") !== false);
 
 echo "\n4. Routes — local + remote, all six operations\n";

@@ -111,7 +111,11 @@ let ghosts = 0;
 for (const f of FILES) {
   ghosts += (readFileSync(f, 'utf8').match(/variant="ghost"\s+size="auto"/g) ?? []).length;
 }
-check('every chromeless trigger uses variant="ghost" size="auto"', ghosts === 4, ghosts);
+// 4 → 5 (2026-08-20): the hierarchy view's Parent picker is the fifth chromeless
+// trigger, and it went through the variant like the law demands. The exact count
+// stays pinned so a HAND-ROLLED chromeless trigger (which section 2 would miss if
+// it also skips the base classes) still trips something.
+check('every chromeless trigger uses variant="ghost" size="auto"', ghosts === 5, ghosts);
 
 console.log('\n' + '-'.repeat(60));
 console.log(`  passed: ${pass}   failed: ${fail}`);

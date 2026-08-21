@@ -71,13 +71,66 @@ class PCM_SEO_Interlinks
         }
 
         // Inside an anchor: the last <a is more recent than the last </a>.
-        $open  = strripos($before, '<a ');
-        $open2 = strripos($before, '<a>');
-        $open  = max($open === false ? -1 : $open, $open2 === false ? -1 : $open2);
-        $close = strripos($before, '</a>');
-        $close = $close === false ? -1 : $close;
+        // `<a` may be followed by ANY whitespace, not just a space — real markup
+        // carries `<a\nhref=…`, and the space-only check nested an <a> inside it
+        // (executed and confirmed by the 08-21 audit).
+        if (self::inside_element($before, 'a')) {
+            return true;
+        }
 
-        return $open > $close;
+        // Inside a container whose TEXT must never become a link: script/style
+        // (wrapping corrupts the code — executed: a JS string variable got an
+        // <a> spliced into it), textarea/title (text, not markup), and the
+        // h1–h6 headings (linking a page's own heading is not an interlink).
+        foreach (array('script', 'style', 'textarea', 'title', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6') as $el) {
+            if (self::inside_element($before, $el)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The search pattern for one phrase. Three laws, each audit-executed:
+     *
+     *  - WORD BOUNDARIES: 'tak' must never match inside 'intakta' — Swedish
+     *    compounds made mid-word links constant ("in<a>tak</a>ta" was the
+     *    generator's actual output). Unicode-letter lookarounds guard any edge
+     *    of the phrase that IS a letter; punctuation edges stay unguarded.
+     *  - WHITESPACE: a space in the phrase matches any whitespace run on the
+     *    page, in every spelling — \s, a literal NBSP, or the 6-byte "&nbsp;"
+     *    entity editors store between words.
+     *  - SOFT HYPHENS: hyphenation plugins thread U+00AD / "&shy;" through long
+     *    words invisibly ("tak\u{00AD}läggning" reads as "takläggning") —
+     *    ignored between characters, and the matched text keeps them.
+     */
+    private static function build_pattern(string $needle, bool $case_sensitive): string
+    {
+        $flags = '/u' . ($case_sensitive ? '' : 'i');
+        $chars = preg_split('//u', preg_replace('/\s+/u', ' ', $needle), -1, PREG_SPLIT_NO_EMPTY);
+        if ($chars === false || $chars === array()) {
+            return '/' . preg_quote($needle, '/') . $flags;
+        }
+        $parts = array();
+        foreach ($chars as $ch) {
+            $parts[] = $ch === ' ' ? '(?:\s|\x{00A0}|&nbsp;)+' : preg_quote($ch, '/');
+        }
+        $inner  = implode('(?:\x{00AD}|&shy;)*', $parts);
+        $before = preg_match('/^\p{L}/u', $needle) ? '(?<!\p{L})' : '';
+        $after  = preg_match('/\p{L}$/u', $needle) ? '(?!\p{L})' : '';
+        return '/' . $before . $inner . $after . $flags;
+    }
+
+    /** Is the end of $before inside an open <$el …> element? */
+    private static function inside_element(string $before, string $el): bool
+    {
+        $open = -1;
+        if (preg_match_all('/<' . $el . '(?=[\s>\/])/i', $before, $m, PREG_OFFSET_CAPTURE)) {
+            $last = end($m[0]);
+            $open = (int) $last[1];
+        }
+        $close = strripos($before, '</' . $el);
+        return $open > ($close === false ? -1 : $close);
     }
 
     /**
@@ -95,25 +148,104 @@ class PCM_SEO_Interlinks
             return null;
         }
 
+        // The page's own spellings of the same phrase. Executed against real
+        // Swedish bodies, the byte-wise search MISSED all of these (the
+        // "generation is not working" report):
+        //   - stripos only case-folds ASCII, so "änglamark" never matched
+        //     "Änglamark" — every non-ASCII phrase at a sentence start refused;
+        //   - WordPress stores "&" as "&amp;" (and typographic quotes as ’ “ ”),
+        //     so a plain-typed anchor/title never matched the stored bytes.
+        // Each variant is hunted in order; the FIRST safe hit wins.
+        // The needle itself can ARRIVE entity-encoded too: remote rows carry
+        // title.rendered, where WordPress spells "&" as "&#038;" — decode first
+        // so one plain base feeds every stored spelling (audit-executed miss).
+        $base = html_entity_decode($needle, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $variants = array($needle);
+        if ($base !== $needle) {
+            $variants[] = $base;
+        }
+        $entified = htmlspecialchars($base, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8', false);
+        if ($entified !== $base && !in_array($entified, $variants, true)) {
+            $variants[] = $entified;
+        }
+        $curly = str_replace(array("'", '"'), array("\u{2019}", "\u{201D}"), $base);
+        if ($curly !== $base) {
+            $variants[] = $curly;
+            $curly_ent = htmlspecialchars($curly, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8', false);
+            if ($curly_ent !== $curly) {
+                $variants[] = $curly_ent;
+            }
+        }
+
+        foreach ($variants as $variant) {
+            $hit = self::scan_for($content, $variant, $case_sensitive);
+            if ($hit !== null) {
+                return $hit;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * One variant's scan: first SAFE occurrence, case-folded across the whole
+     * of Unicode (preg /iu), not just ASCII. Falls back to the byte-wise
+     * search when the content is not valid UTF-8 (preg /u refuses it).
+     *
+     * @return array{0:string,1:int}|null [matched text AS IT APPEARS, byte offset]
+     */
+    private static function scan_for(string $content, string $needle, bool $case_sensitive): ?array
+    {
+        $pattern = self::build_pattern($needle, $case_sensitive);
+        // Valid pattern probe: preg_match returns 0 (no match) for a healthy
+        // pattern and FALSE only on error — so the test must be !== false, not
+        // truthiness (0 is falsy and would silently disable the preg path).
+        $use_preg = @preg_match($pattern, '') !== false;
         $from = 0;
         $len  = strlen($content);
 
         while ($from < $len) {
-            $pos = $case_sensitive
-                ? strpos($content, $needle, $from)
-                : stripos($content, $needle, $from);
-
-            if ($pos === false) {
-                return null;
+            if ($use_preg) {
+                $r = @preg_match($pattern, $content, $m, PREG_OFFSET_CAPTURE, $from);
+                if ($r === false) {
+                    // The SUBJECT refused /u (invalid UTF-8 content) — the
+                    // pattern probe can't see that. Byte-wise from here on.
+                    $use_preg = false;
+                    continue;
+                }
+                if ($r === 0) {
+                    return null;
+                }
+                $pos  = (int) $m[0][1];
+                $text = (string) $m[0][0];
+            } else {
+                $pos = $case_sensitive ? strpos($content, $needle, $from) : stripos($content, $needle, $from);
+                if ($pos === false) {
+                    return null;
+                }
+                $text = substr($content, $pos, strlen($needle));
+                // The word-boundary law holds on the fallback path too (ASCII
+                // approximation — this path only runs on invalid-UTF-8 content).
+                $prev = $pos > 0 ? $content[$pos - 1] : '';
+                $next = $content[$pos + strlen($text)] ?? '';
+                if ((ctype_alpha($prev) && preg_match('/^[A-Za-z]/', $needle))
+                    || (ctype_alpha($next) && preg_match('/[A-Za-z]$/', $needle))) {
+                    $from = $pos + 1;
+                    continue;
+                }
             }
             if (!self::is_inside_markup($content, $pos)) {
-                // Return the text AS IT APPEARS, so wrapping preserves the
-                // page's own casing rather than imposing the needle's.
-                return array(substr($content, $pos, strlen($needle)), $pos);
+                // The text AS IT APPEARS, so wrapping preserves the page's own
+                // casing (and entity form) rather than imposing the needle's.
+                return array($text, $pos);
             }
-            $from = $pos + 1;
+            // Advance by one CHARACTER, not one byte: an unsafe hit starting
+            // with a multibyte char (Änglamark in an alt attribute) left the
+            // /u pattern anchored mid-character, which errors and silently
+            // degraded the rest of the scan to the ASCII-only byte search —
+            // the later real occurrence was then missed (audit-executed).
+            $b = ord($content[$pos]);
+            $from = $pos + ($b >= 0xF0 ? 4 : ($b >= 0xE0 ? 3 : ($b >= 0xC0 ? 2 : 1)));
         }
-
         return null;
     }
 
@@ -134,9 +266,24 @@ class PCM_SEO_Interlinks
         if (!preg_match_all('/<a\b[^>]*\bhref\s*=\s*(["\'])(.*?)\1/i', $content, $m)) {
             return false;
         }
+        // A RELATIVE href to the same page counts too. Real content links with
+        // href="/tandvard/" while the proposal carries the absolute permalink;
+        // compared only on the full normalised form those never matched, so the
+        // guard waved duplicates through on every run (executed and confirmed).
+        $target_path = rtrim((string) parse_url('https://' . $target, PHP_URL_PATH), '/');
         foreach ($m[2] as $href) {
-            if (self::normalize_url(html_entity_decode($href)) === $target) {
+            $href = html_entity_decode($href);
+            if (self::normalize_url($href) === $target) {
                 return true;
+            }
+            // Single leading slash only: "//other-site.se/…" is a SCHEME-RELATIVE
+            // link to ANOTHER host, whose path merely coincides — counting it
+            // wrongly refused real proposals as "already linked" (audit-executed).
+            if ($target_path !== '' && ($href[0] ?? '') === '/' && ($href[1] ?? '') !== '/') {
+                $href_path = rtrim((string) parse_url($href, PHP_URL_PATH), '/');
+                if ($href_path === $target_path) {
+                    return true;
+                }
             }
         }
         return false;
@@ -164,7 +311,15 @@ class PCM_SEO_Interlinks
         return $path;
     }
 
-    /** Scheme/host/slash-insensitive URL key. */
+    /**
+     * Scheme/host-case/www/slash/encoding-insensitive URL key.
+     *
+     * The duplicate guard compares on this, so every spelling of the same page
+     * must collapse to one key. Executed audit misses now covered: an
+     * UPPERCASE host ("https://Kliniken.SE/…"), a percent-encoded path
+     * ("/tandv%C3%A5rd/" vs "/tandvård/"), and tracking query params
+     * (?utm_…/fbclid/gclid) — all of them let a second identical link in.
+     */
     public static function normalize_url(string $url): string
     {
         $url = trim($url);
@@ -174,6 +329,19 @@ class PCM_SEO_Interlinks
         $url = preg_replace('#^https?://#i', '', $url);
         $url = preg_replace('#^www\.#i', '', (string) $url);
         $url = preg_replace('#\#.*$#', '', (string) $url);
+        // Host is case-insensitive by spec; paths on WordPress are lowercase
+        // slugs, so lowercasing the host segment only (up to the first '/').
+        $slash = strpos((string) $url, '/');
+        if ($slash !== false) {
+            $url = strtolower(substr((string) $url, 0, $slash)) . substr((string) $url, $slash);
+        } else {
+            $url = strtolower((string) $url);
+        }
+        // Percent-decoding: /tandv%C3%A5rd/ and /tandvård/ are the same page.
+        $url = rawurldecode((string) $url);
+        // Tracking params never change the page.
+        $url = preg_replace('/[?&](?:utm_[a-z]+|fbclid|gclid|msclkid)=[^&#]*/i', '', (string) $url);
+        $url = rtrim((string) $url, '?&');
         return rtrim((string) $url, '/');
     }
 
@@ -309,6 +477,24 @@ class PCM_SEO_Interlinks
         }
 
         $pairs = array();
+        $missing_refusals = 0;
+        // SEPARATE caps: refusal rows must never starve real proposals. With one
+        // shared cap, 200 honest refusals filled it and the single linkable pair
+        // after them was dropped unevaluated (audit-executed) — the run then read
+        // as "the generator finds nothing". Refusals keep their own cap so a huge
+        // site still cannot melt the UI.
+        $out   = array();
+        $n_act = 0;
+        $n_ref = 0;
+        $push  = static function (array $p) use (&$out, &$n_act, &$n_ref): void {
+            if ($p['anchor'] !== '') {
+                $n_act++;
+                $out[] = $p;
+            } elseif ($n_ref < self::MAX_PROPOSALS) {
+                $n_ref++;
+                $out[] = $p;
+            }
+        };
         foreach ($map as $child_id => $parent_id) {
             $child_id  = (int) $child_id;
             $parent_id = (int) $parent_id;
@@ -323,8 +509,28 @@ class PCM_SEO_Interlinks
             if ($child_id === $parent_id) {
                 continue;
             }
-            // Both ends must still exist in the table.
+            // Both ends must still exist in the table — but a missing end is
+            // SAID, not skipped. Silently dropping the pair made a run "look
+            // smaller" with no trace when a page was deleted or fell past the
+            // per-type row cap (audit-executed) — the same hidden-refusal class
+            // card 7 already taught this module about.
             if (!isset($by_id[$child_id]) || !isset($by_id[$parent_id])) {
+                if ($missing_refusals < self::MAX_PROPOSALS) {
+                    $missing_refusals++;
+                    $missing = !isset($by_id[$child_id]) ? $child_id : $parent_id;
+                    $out[] = array(
+                        'sourceId'    => $child_id,
+                        'targetId'    => $parent_id,
+                        'sourceTitle' => (string) ($by_id[$child_id]['title'] ?? ('#' . $child_id)),
+                        'targetTitle' => (string) ($by_id[$parent_id]['title'] ?? ('#' . $parent_id)),
+                        'url'         => (string) ($by_id[$parent_id]['permalink'] ?? ''),
+                        'direction'   => 'up',
+                        'anchor'      => '',
+                        'reason'      => sprintf('page #%d is in the hierarchy but not in the table (deleted, or past the row limit)', $missing),
+                        'sourcePath'  => self::path_of((string) ($by_id[$child_id]['permalink'] ?? '')),
+                        'targetPath'  => self::path_of((string) ($by_id[$parent_id]['permalink'] ?? '')),
+                    );
+                }
                 continue;
             }
             if (in_array('up', $directions, true)) {
@@ -335,9 +541,8 @@ class PCM_SEO_Interlinks
             }
         }
 
-        $out = array();
         foreach ($pairs as $pair) {
-            if (count($out) >= self::MAX_PROPOSALS) {
+            if ($n_act >= self::MAX_PROPOSALS) {
                 break;
             }
             list($source_id, $target_id, $direction) = $pair;
@@ -363,17 +568,17 @@ class PCM_SEO_Interlinks
 
             if ($url === '') {
                 $proposal['reason'] = 'the target page has no permalink yet';
-                $out[]              = $proposal;
+                $push($proposal);
                 continue;
             }
             if ($body === '') {
                 $proposal['reason'] = 'the source page has no readable content';
-                $out[]              = $proposal;
+                $push($proposal);
                 continue;
             }
             if (self::already_links_to($body, $url)) {
                 $proposal['reason'] = 'already linked';
-                $out[]              = $proposal;
+                $push($proposal);
                 continue;
             }
 
@@ -411,7 +616,7 @@ class PCM_SEO_Interlinks
                     . ' in the source page';
             }
 
-            $out[] = $proposal;
+            $push($proposal);
         }
 
         return $out;
@@ -617,7 +822,7 @@ class PCM_SEO_Interlinks
      * @param array<int,string> $types postId => post type
      * @return array<int,string>
      */
-    public static function bodies_remote(object $site, array $ids, array $types): array
+    public static function bodies_remote(object $site, array $ids, array $types, ?array &$errors = null): array
     {
         PCM_SEO_Service::ensure_sites_service();
         $out = array();
@@ -628,7 +833,19 @@ class PCM_SEO_Interlinks
             }
             $route = PCM_SEO_Service::remote_route($site, (string) ($types[$id] ?? 'page'), $id);
             $res   = PCM_Sites_Service::remote_rest($site, 'GET', $route, array('context' => 'edit', '_fields' => 'content'));
-            if (is_wp_error($res) || (int) ($res['status'] ?? 0) >= 300) {
+            if (is_wp_error($res)) {
+                // The real cause travels with the refusal instead of being
+                // swallowed into a generic "no readable content" (audit find:
+                // a 401 on every read looked identical to six builder pages).
+                if ($errors !== null) {
+                    $errors[$id] = $res->get_error_message();
+                }
+                continue;
+            }
+            if ((int) ($res['status'] ?? 0) >= 300) {
+                if ($errors !== null) {
+                    $errors[$id] = sprintf('HTTP %d reading the page', (int) ($res['status'] ?? 0));
+                }
                 continue;
             }
             $raw = (string) ($res['body']['content']['raw'] ?? '');
@@ -656,7 +873,12 @@ class PCM_SEO_Interlinks
             return self::refusal($url, $phrase);
         }
 
-        $updated = wp_update_post(array('ID' => $post_id, 'post_content' => $res['content']), true);
+        // wp_slash: wp_update_post() expects SLASHED data and unslashes it — an
+        // unslashed write strips the backslashes Gutenberg stores in block
+        // attributes (e.g. the -- escapes CSS custom properties use),
+        // corrupting the block on the very Accept that added the link. Same
+        // lesson local.php:533 already records for update_post_meta.
+        $updated = wp_update_post(wp_slash(array('ID' => $post_id, 'post_content' => $res['content'])), true);
         if (is_wp_error($updated)) {
             return $updated;
         }

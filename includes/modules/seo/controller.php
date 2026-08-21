@@ -1746,17 +1746,28 @@ class PCM_REST_SEO extends PCM_REST_Base
             $types[absint($pid)] = sanitize_key((string) $type);
         }
 
-        return $this->success(array(
-            'proposals' => PCM_SEO_Interlinks::propose(
-                $rows,
-                PCM_SEO_Interlinks::bodies_remote($site, $ids, $types),
-                $map,
-                array(
-                    'directions' => $this->interlink_directions_from($params),
-                    'anchors'    => PCM_SEO_Interlinks::anchors_map((int) $user->id, (int) $site->id),
-                )
-            ),
-        ));
+        $read_errors = array();
+        $proposals   = PCM_SEO_Interlinks::propose(
+            $rows,
+            PCM_SEO_Interlinks::bodies_remote($site, $ids, $types, $read_errors),
+            $map,
+            array(
+                'directions' => $this->interlink_directions_from($params),
+                'anchors'    => PCM_SEO_Interlinks::anchors_map((int) $user->id, (int) $site->id),
+            )
+        );
+        // A body that could not be READ is a different fact from a body that is
+        // empty — say which one it was, per refusal, so a site-wide auth failure
+        // does not read as "six builder pages" (audit find).
+        foreach ($proposals as &$p) {
+            $sid = (int) ($p['sourceId'] ?? 0);
+            if (($p['reason'] ?? '') === 'the source page has no readable content' && isset($read_errors[$sid])) {
+                $p['reason'] = 'could not read the source page: ' . $read_errors[$sid];
+            }
+        }
+        unset($p);
+
+        return $this->success(array('proposals' => $proposals));
     }
 
     public function remote_interlink_apply(WP_REST_Request $request): WP_REST_Response|WP_Error

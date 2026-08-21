@@ -93,9 +93,37 @@ check('the proposal type carries both paths',
 // ── 5. mounting ──
 check('the dialog is mounted OUTSIDE the table scroll container',
   /InterlinkPanel/.test(I) && !/rounded-md border border-border overflow-auto[\s\S]{0,400}<InterlinkPanel/.test(I));
-check('it is still gated on hierarchy mode and a generated list',
-  /hierarchyOn && proposals !== null/.test(I));
+check('it is gated ONLY on a generated list — the floating bar can open it without the Hierarchy view',
+  /\{proposals !== null && \(/.test(I) && !/hierarchyOn && proposals !== null/.test(I));
 check('closing clears the proposals', /onClose=\{\(\) => setProposals\(null\)\}/.test(I));
+
+// ── 6. the floating bulk bar + the filtered-view bug (owner 2026-08-21) ──
+// "bring the generate interlinks button on the floating button which appears
+// when we bulk select" + generation was silently dropping pairs whenever a
+// filter hid a hierarchy member from the view.
+const bar = I.slice(I.indexOf('{selected.size} selected'), I.indexOf('Bulk actions —'));
+check('the floating bar carries an Interlinks button', /Interlinks\s*<\/Button>/.test(bar), bar.length);
+check('…which generates scoped to the SELECTION', /onClick=\{\(\) => handleGenerateInterlinks\(selected\)\}/.test(bar));
+check('…and shows the propose spinner / disables while in flight',
+  /proposeMutation\.isPending/.test(bar) && /disabled=\{busy \|\| proposeMutation\.isPending\}/.test(bar));
+check('the payload is built from ALL rows, never the filtered view',
+  /const payload = rows\.map\(\(r\) => \(\{/.test(I) && !/const payload = sortedData\.map/.test(I));
+check('…types too', /for \(const r of rows\) types\[r\.id\] = r\.type;/.test(I));
+check('the scope filter keeps proposals TOUCHING a selected page (source or target)',
+  /list = list\.filter\(\(p\) => scope\.has\(p\.sourceId\) \|\| scope\.has\(p\.targetId\)\);/.test(I));
+check('an empty scoped result says so in the selection’s own words',
+  /Nothing to propose for the selected pages/.test(I));
+check('the TOOLBAR "Generate interlinks" button is GONE — the floating bar owns generation (owner 2026-08-22)',
+  !/Generate interlinks/.test(I) && !/onClick=\{\(\) => handleGenerateInterlinks\(\)\}/.test(I));
+check('…and the floating-bar button is the ONLY caller of handleGenerateInterlinks',
+  (I.match(/handleGenerateInterlinks\(/g) || []).length === 1 /* the definition uses `= useCallback`, so 1 = the single call site */
+  && /onClick=\{\(\) => handleGenerateInterlinks\(selected\)\}/.test(I),
+  (I.match(/handleGenerateInterlinks\(/g) || []).length);
+check('Approve resolves the source TYPE from ALL rows, never the filtered view (audit)',
+  /const type = rows\.find\(\(r\) => r\.id === p\.sourceId\)\?\.type \?\? 'page';/.test(I)
+  && !/sortedData\.find\(\(r\) => r\.id === p\.sourceId\)/.test(I));
+check('a fully successful Approve-all CLOSES the dialog instead of announcing "Nothing to propose" (audit)',
+  /setProposals\(failed\.length > 0 \? failed : null\);/.test(I));
 
 console.log(`\n${FAIL === 0 ? 'ALL GREEN' : 'FAILURES'} — ${PASS} passed, ${FAIL} failed`);
 process.exit(FAIL === 0 ? 0 : 1);

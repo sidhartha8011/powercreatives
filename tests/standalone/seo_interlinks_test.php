@@ -348,9 +348,15 @@ check('an all-blank list DELETES the row (clear), never stores []',
 $bad = PCM_SEO_Interlinks::set_anchors(7, 0, 0, array('x'));
 check('post id 0 is refused', $bad instanceof WP_Error);
 
-// dangling ends
-check('a pair whose parent left the table produces nothing',
-    PCM_SEO_Interlinks::propose(array($rows[1]), $bodies, $hier) === array());
+// dangling ends — SAID since 2026-08-21, not silently dropped (audit find: a
+// deleted page or the row cap shrank the run with no trace). The old contract
+// here asserted `=== array()`; the new one is an explicit refusal row.
+$dangling = PCM_SEO_Interlinks::propose(array($rows[1]), $bodies, $hier);
+check('a pair whose parent left the table becomes a REFUSAL, never an actionable proposal',
+    count($dangling) >= 1
+    && array_filter($dangling, static fn($p) => $p['anchor'] !== '') === array()
+    && strpos($dangling[0]['reason'], 'is in the hierarchy but not in the table') !== false,
+    $dangling);
 
 // cap
 $many_rows = array(); $many_bodies = array(); $many_hier = array();
@@ -364,6 +370,125 @@ for ($i = 2; $i <= 400; $i++) {
 $capped = PCM_SEO_Interlinks::propose($many_rows, $many_bodies, $many_hier);
 check('proposals are capped at MAX_PROPOSALS',
     count($capped) === PCM_SEO_Interlinks::MAX_PROPOSALS, count($capped));
+
+// ── The "not working properly" bugs (owner, 2026-08-21) — all EXECUTED,
+//    all reproduced against the pre-fix engine before being fixed ───────
+echo "\nMatching that mirrors how WordPress actually stores text\n";
+check('multibyte case folding: a lowercase Swedish anchor matches its capitalised form (Ä/ä)',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>Änglamarkens produkter är bra.</p>', 'änglamarkens produkter')
+        === array('Änglamarkens produkter', 3));
+check('entity form: a plain "&" anchor matches the stored "&amp;" text — and the ENTITY form is what gets wrapped',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>Vi på Tak &amp; Bygg hjälper dig.</p>', 'Tak & Bygg')
+        === array('Tak &amp; Bygg', 10));
+check('typographic quotes: a straight-apostrophe anchor matches the page’s curly one',
+    PCM_SEO_Interlinks::find_safe_occurrence("<p>Sweden\u{2019}s best massage in town.</p>", "Sweden's best massage")
+        === array("Sweden\u{2019}s best massage", 3));
+check('whitespace flexibility: the phrase matches across the page’s own line break (and the apply round-trip’s collapsed spaces)',
+    PCM_SEO_Interlinks::find_safe_occurrence("<p>the best\nmassage in town</p>", 'best massage')
+        === array("best\nmassage", 7));
+check('plain ASCII behaviour unchanged',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>the best massage in town</p>', 'best massage')
+        === array('best massage', 7));
+check('no match is still an honest refusal',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>something else entirely</p>', 'tandläkare göteborg') === null);
+check('the entity variant only fires when it differs (no double-scan of plain phrases)',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>plain words here</p>', 'plain words') === array('plain words', 3));
+check('invalid UTF-8 content falls back to the byte-wise scan instead of matching nothing',
+    PCM_SEO_Interlinks::find_safe_occurrence("<p>best massage \xC3</p>", 'best massage') === array('best massage', 3));
+
+echo "\nIdempotency sees relative links\n";
+check('a RELATIVE href to the target path counts as already linked (no duplicate on re-run)',
+    PCM_SEO_Interlinks::already_links_to('<p>Läs om <a href="/tandvard/">tandvård</a> här.</p>', 'https://site.se/tandvard/') === true);
+check('…trailing-slash variants of the relative form too',
+    PCM_SEO_Interlinks::already_links_to('<p><a href="/tandvard">x</a></p>', 'https://site.se/tandvard/') === true);
+check('a DIFFERENT relative path does not count',
+    PCM_SEO_Interlinks::already_links_to('<p><a href="/kontakt/">x</a></p>', 'https://site.se/tandvard/') === false);
+check('absolute-href matching unchanged',
+    PCM_SEO_Interlinks::already_links_to('<p><a href="http://www.site.se/tandvard/">x</a></p>', 'https://site.se/tandvard') === true);
+
+echo "\ninsert_link carries the new matching end to end\n";
+$ins = PCM_SEO_Interlinks::insert_link('<p>Vi på Tak &amp; Bygg hjälper dig.</p>', 'https://site.se/tak/', 'Tak & Bygg');
+check('inserting via an entity-form match wraps the entity text and keeps the page bytes intact',
+    $ins !== null && $ins['content'] === '<p>Vi på <a href="https://site.se/tak/">Tak &amp; Bygg</a> hjälper dig.</p>', $ins);
+$ins2 = PCM_SEO_Interlinks::insert_link('<p>Läs om <a href="/tandvard/">tandvård</a> och tandvård igen.</p>', 'https://site.se/tandvard/', 'tandvård');
+check('insert refuses when a RELATIVE link to the target already exists', $ins2 === null);
+
+// ── Audit round 2 (2026-08-21, all executed against the pre-fix engine first) ──
+echo "\nWord boundaries — Swedish compounds must never get mid-word links\n";
+check('\'tak\' does NOT match inside \'intakta\' (the audit\'s "in<a>tak</a>ta" output)',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>Priserna har varit intakta i flera år.</p>', 'tak') === null);
+check('…but the LATER standalone \'tak\' on the same page is found',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>intakta priser. Vi bygger nytt tak i sommar.</p>', 'tak') === array('tak', 34));
+check('\'bygg\' does not match inside \'utbyggnad\'',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>Vi planerar en utbyggnad av kontoret.</p>', 'bygg') === null);
+check('a phrase ending in punctuation keeps its unguarded edge',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>Läs mer om tak.</p>', 'tak.') === array('tak.', 15));
+check('multibyte boundaries: \'är\' does not match inside \'lär\' or \'ärlig\'',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>vi lär oss ärligt</p>', 'är') === null);
+
+echo "\nInvisible spellings of visible text\n";
+check('the 6-byte &nbsp; ENTITY between words matches a plain-space phrase',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>Vi jobbar med tak&nbsp;och bygg i Uppsala.</p>', 'tak och bygg') === array('tak&nbsp;och bygg', 17));
+check('a soft hyphen (U+00AD) threaded through a compound is ignored — and KEPT in the matched text',
+    PCM_SEO_Interlinks::find_safe_occurrence("<p>Vi kan tak\u{00AD}läggning här.</p>", 'takläggning') === array("tak\u{00AD}läggning", 10));
+check('an &shy; entity inside the word too',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>Vi kan tak&shy;läggning här.</p>', 'takläggning') === array('tak&shy;läggning', 10));
+
+echo "\nForbidden containers + anchor detection\n";
+check('a phrase inside <script> text is never wrapped (JS would break); the <p> occurrence wins',
+    PCM_SEO_Interlinks::find_safe_occurrence('<script>var x = "bygg";</script><p>vi kan bygg</p>', 'bygg') === array('bygg', 42));
+check('a phrase inside an <h2> is skipped — headings are not interlink anchors',
+    PCM_SEO_Interlinks::find_safe_occurrence('<h2>bygg mera</h2><p>vi kan bygg</p>', 'bygg') === array('bygg', 28));
+$nested = PCM_SEO_Interlinks::insert_link("<p>Se <a\nhref=\"/akut/\">akut tandvård</a> för mer. God tandvård här.</p>", 'https://x.se/tandvard/', 'tandvård');
+check('<a followed by a NEWLINE is still an open anchor — no nested link; the free-text occurrence is used',
+    $nested !== null && strpos($nested['content'], "akut <a href=") === false && strpos($nested['content'], 'God <a href="https://x.se/tandvard/">tandvård</a> här') !== false, $nested);
+check('an unsafe multibyte FIRST hit (alt attribute) no longer kills the scan — the later text hit is found',
+    PCM_SEO_Interlinks::find_safe_occurrence('<img alt="Änglamark bild"><p>Här finns änglamark i butiken.</p>', 'Änglamark') === array('änglamark', 41));
+
+echo "\nIdempotency spellings + entity-encoded needles\n";
+check('UPPERCASE host counts as the same page',
+    PCM_SEO_Interlinks::already_links_to('<a href="https://Kliniken.SE/tandvard/">x</a>', 'https://kliniken.se/tandvard/') === true);
+check('tracking params (utm/fbclid) never make a page "different"',
+    PCM_SEO_Interlinks::already_links_to('<a href="https://kliniken.se/tandvard/?utm_source=x">x</a>', 'https://kliniken.se/tandvard/') === true);
+check('percent-encoded path equals its decoded form',
+    PCM_SEO_Interlinks::already_links_to('<a href="https://kliniken.se/tandv%C3%A5rd/">x</a>', "https://kliniken.se/tandv\u{00E5}rd/") === true);
+check('a SCHEME-RELATIVE link to another host is NOT "already linked"',
+    PCM_SEO_Interlinks::already_links_to('<a href="//helt-annan-sajt.se/tandvard/">x</a>', 'https://kliniken.se/tandvard/') === false);
+check('an entity-encoded needle (remote title.rendered: &#038;) matches the stored &amp; body',
+    PCM_SEO_Interlinks::find_safe_occurrence('<p>Se Priser &amp; Omdömen här.</p>', 'Priser &#038; Omdömen') === array('Priser &amp; Omdömen', 6));
+
+echo "\nCaps + visibility of the invisible\n";
+$rows_cap = array(array('id' => 500, 'title' => 'Pillar', 'permalink' => 'https://s.se/p/', 'primaryKeyword' => 'zebrafisk'));
+$bodies_cap = array(); $map_cap = array();
+for ($i = 1; $i <= 200; $i++) {
+    $rows_cap[] = array('id' => $i, 'title' => "c{$i}", 'permalink' => "https://s.se/c{$i}/", 'primaryKeyword' => '');
+    $bodies_cap[$i] = '<p>inget relevant här</p>'; $map_cap[$i] = 500;
+}
+$rows_cap[] = array('id' => 999, 'title' => 'c999', 'permalink' => 'https://s.se/c999/', 'primaryKeyword' => '');
+$bodies_cap[999] = '<p>Vi skriver om zebrafisk idag.</p>'; $map_cap[999] = 500;
+$out_cap = PCM_SEO_Interlinks::propose($rows_cap, $bodies_cap, $map_cap, array('directions' => array('up')));
+$act_cap = array_values(array_filter($out_cap, static fn($p) => $p['anchor'] !== ''));
+check('200 refusals can no longer starve the one REAL proposal (separate caps)',
+    count($act_cap) === 1 && (int) $act_cap[0]['sourceId'] === 999, array(count($out_cap), count($act_cap)));
+$gone = PCM_SEO_Interlinks::propose(
+    array(array('id' => 1, 'title' => 'Tandvård', 'permalink' => 'https://ex.se/tandvard/', 'primaryKeyword' => '')),
+    array(1 => '<p>x</p>'),
+    array(2 => 1)
+);
+check('a hierarchy pair whose member is MISSING from the table is SAID, not silently dropped',
+    count($gone) === 1 && $gone[0]['anchor'] === '' && strpos($gone[0]['reason'], 'page #2 is in the hierarchy but not in the table') === 0, $gone);
+
+echo "\nWiring pins (WP-dependent halves — source contracts)\n";
+$eng = file_get_contents($ROOT . '/includes/modules/seo/interlinks.php');
+$ctl = file_get_contents($ROOT . '/includes/modules/seo/controller.php');
+check('bodies_remote surfaces read errors through the by-ref map (401 ≠ builder page)',
+    strpos($eng, 'public static function bodies_remote(object $site, array $ids, array $types, ?array &$errors = null): array') !== false
+    && strpos($eng, "\$errors[\$id] = sprintf('HTTP %d reading the page'") !== false);
+check('the remote propose controller rewrites the generic refusal with the REAL read error',
+    strpos($ctl, 'PCM_SEO_Interlinks::bodies_remote($site, $ids, $types, $read_errors)') !== false
+    && strpos($ctl, "\$p['reason'] = 'could not read the source page: ' . \$read_errors[\$sid];") !== false);
+check('apply_local writes SLASHED content (wp_update_post unslashes — Gutenberg attrs survive)',
+    strpos($eng, "wp_update_post(wp_slash(array('ID' => \$post_id, 'post_content' => \$res['content'])), true)") !== false);
 
 echo "\n" . ($FAIL === 0 ? "ALL GREEN" : "FAILURES") . " — {$PASS} passed, {$FAIL} failed\n";
 exit($FAIL === 0 ? 0 : 1);

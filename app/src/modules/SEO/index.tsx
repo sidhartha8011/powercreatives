@@ -1377,7 +1377,13 @@ export function SEOModule() {
     return false;
   }, [hierarchy]);
 
-  const handleGenerateInterlinks = useCallback(async () => {
+  /**
+   * @param scope When given (the floating bulk bar), only proposals TOUCHING a
+   *              selected page (as source or target) are kept — the generation
+   *              itself still sees the whole hierarchy, so a selected child
+   *              still pairs with its unselected pillar.
+   */
+  const handleGenerateInterlinks = useCallback(async (scope?: Set<number>) => {
     if (Object.keys(hierarchy).length === 0) {
       toast.error('Set a parent on at least one page first — the links come from the hierarchy.');
       return;
@@ -1386,22 +1392,33 @@ export function SEOModule() {
     // permalink and keyword on screen, so re-listing them server-side (and on a
     // connected site, re-walking the REST API) would be a second round trip for
     // data we are already holding. The hub re-sanitises all of it regardless.
-    const payload = sortedData.map((r) => ({
+    // ALL rows, not the filtered view (`sortedData`): a search box or filter
+    // left active silently removed hierarchy members from the payload, and
+    // propose() then dropped their pairs without a word — the "generation is
+    // not working" report. Filters shape what you SEE, never what links exist.
+    const payload = rows.map((r) => ({
       id: r.id, title: r.title, permalink: r.permalink, primaryKeyword: r.primaryKeyword,
     }));
     const types: Record<number, string> = {};
-    for (const r of sortedData) types[r.id] = r.type;
+    for (const r of rows) types[r.id] = r.type;
     try {
       const res: any = await proposeMutation.mutateAsync(
         isLocal ? { rows: payload } : { siteId, rows: payload, types },
       );
-      const list: InterlinkProposal[] = res?.proposals ?? [];
+      let list: InterlinkProposal[] = res?.proposals ?? [];
+      if (scope && scope.size > 0) {
+        list = list.filter((p) => scope.has(p.sourceId) || scope.has(p.targetId));
+      }
       setProposals(list);
-      if (list.length === 0) toast('Nothing to propose from the current hierarchy.');
+      if (list.length === 0) {
+        toast(scope && scope.size > 0
+          ? 'Nothing to propose for the selected pages — set a parent on them first.'
+          : 'Nothing to propose from the current hierarchy.');
+      }
     } catch (e: any) {
       toast.error(e?.message || 'Could not generate interlinks.');
     }
-  }, [hierarchy, sortedData, proposeMutation, isLocal, siteId]);
+  }, [hierarchy, rows, proposeMutation, isLocal, siteId]);
 
   const dropProposal = useCallback((p: InterlinkProposal) => {
     setProposals((cur) => (cur ?? []).filter((x) => !(x.sourceId === p.sourceId && x.targetId === p.targetId)));
@@ -1409,7 +1426,9 @@ export function SEOModule() {
 
   /** @returns the error message when the write failed, else null. */
   const applyOneProposal = useCallback(async (p: InterlinkProposal): Promise<string | null> => {
-    const type = sortedData.find((r) => r.id === p.sourceId)?.type ?? 'page';
+    // ALL rows, not the filtered view: a filtered-out source silently became
+    // type 'page', sending the remote apply to the wrong REST route (audit).
+    const type = rows.find((r) => r.id === p.sourceId)?.type ?? 'page';
     try {
       await applyMutation.mutateAsync(
         isLocal
@@ -1420,7 +1439,7 @@ export function SEOModule() {
     } catch (e: any) {
       return e?.message || 'the page could not be saved';
     }
-  }, [applyMutation, isLocal, siteId, sortedData]);
+  }, [applyMutation, isLocal, siteId, rows]);
 
   const handleAcceptProposal = useCallback(async (p: InterlinkProposal) => {
     const key = `${p.sourceId}:${p.targetId}`;
@@ -1445,8 +1464,10 @@ export function SEOModule() {
       if (err) failed.push(p); else done++;
     }
     setApplyingKey(null);
-    // Successes leave the list; failures STAY so they can be retried.
-    setProposals(failed.length > 0 ? failed : []);
+    // Successes leave the list; failures STAY so they can be retried. A fully
+    // successful run CLOSES the dialog — leaving it open on an empty list made
+    // it announce "Nothing to propose", which read as a failure (audit).
+    setProposals(failed.length > 0 ? failed : null);
     if (failed.length === 0) {
       toast.success(`Added ${done} internal ${done === 1 ? 'link' : 'links'}.`);
     } else {
@@ -2239,16 +2260,9 @@ export function SEOModule() {
           >
             Hierarchy
           </PillButton>
-          {hierarchyOn && (
-            <PillButton
-              icon={proposeMutation.isPending ? <Loader2 className="animate-spin" /> : <Link2 />}
-              onClick={handleGenerateInterlinks}
-              disabled={busy || proposeMutation.isPending}
-              title="Propose internal links from the parent/child structure"
-            >
-              Generate interlinks
-            </PillButton>
-          )}
+          {/* "Generate interlinks" lives ONLY in the floating bulk-select bar
+              (owner 2026-08-22) — select the pages, then generate for them.
+              The toolbar keeps just the view toggle. */}
           <PillButton
             icon={scanningAll ? <Loader2 className="animate-spin" /> : <Link2 />}
             onClick={handleScanAll}
@@ -2480,6 +2494,21 @@ export function SEOModule() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+          {/* Interlinks for the SELECTION (owner: "bring the generate interlinks
+              button on the floating button"). Generation reads the whole
+              hierarchy; the proposal list is then scoped to links touching a
+              selected page. Works without the Hierarchy view being open. */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 px-3 text-xs"
+            disabled={busy || proposeMutation.isPending}
+            onClick={() => handleGenerateInterlinks(selected)}
+            title="Propose internal links involving the selected pages (uses the parent/child structure from the Hierarchy view)"
+          >
+            {proposeMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+            Interlinks
+          </Button>
           {/* Bulk actions — change status, duplicate, delete (all remote-aware). */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -2666,7 +2695,7 @@ export function SEOModule() {
           wherever the table is scrolled to (owner 2026-08-20). Portals to the
           body, so it is mounted here with the other modals rather than inside
           the table's scroll container. */}
-      {hierarchyOn && proposals !== null && (
+      {proposals !== null && (
         <InterlinkPanel
           proposals={proposals}
           applyingKey={applyingKey}
