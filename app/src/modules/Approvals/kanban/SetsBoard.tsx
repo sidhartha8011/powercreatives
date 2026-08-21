@@ -43,6 +43,7 @@ import { useProjectPickerData } from '@/components/shared/ProjectPicker';
 import { toast } from 'sonner';
 
 import { trpc } from '@/lib/trpc';
+import { escapeAstralDeep } from '@/lib/escapeAstral';
 import {
   DefaultEmptyState,
   KanbanBoard,
@@ -272,7 +273,9 @@ export function SetsBoard({ onCreateInLane }: SetsBoardProps) {
             action: item && bucket
               ? {
                   label: 'Undo',
-                  onClick: () => appendAssetMutation.mutate({ id: set.id, snapshot: { [bucket]: [item] } }),
+                  // escapeAstralDeep: the restored item carries raw emoji from the server;
+                  // a stripping WAF must not eat them on the round trip back (card 18).
+                  onClick: () => appendAssetMutation.mutate({ id: set.id, snapshot: escapeAstralDeep({ [bucket]: [item] }) }),
                 }
               : undefined,
           });

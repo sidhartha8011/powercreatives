@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import { colors, typography, shadows } from '@/components/shared/design-tokens';
 import { trpc } from '@/lib/trpc';
+import { escapeAstralDeep } from '@/lib/escapeAstral';
 import { ApprovalSharePanel, buildDefaultInviteMessage } from '@/components/shared/ApprovalSharePanel';
 import { buildPublicBoardUrl, useApprovalSetsCache } from '@/components/shared/approvalSets';
 import { ApprovalSetPicker, type AppendableSet } from '@/components/shared/ApprovalSetPicker';
@@ -179,7 +180,9 @@ export function CreateApprovalSetDialog({
       toast.error('Select at least one item to send for approval.');
       return;
     }
-    appendMutation.mutate({ id: targetSet.id, snapshot: { media, copy } });
+    // escapeAstralDeep: ad copy is emoji-heavy; a WAF that strips non-ASCII bytes
+    // must not eat them in transit (card 18). The server decodes on arrival.
+    appendMutation.mutate({ id: targetSet.id, snapshot: escapeAstralDeep({ media, copy }) });
   }, [targetSet, buildBuckets, appendMutation]);
 
   const handleGenerateLink = useCallback(async () => {
@@ -211,12 +214,12 @@ export function CreateApprovalSetDialog({
       // The set's ONE mapping. Delivery + brand are derived live from this
       // project server-side (PCM_Hierarchy) — never stored on the set.
       projectId: effProjectId,
-      snapshot: {
+      snapshot: escapeAstralDeep({
         media: selectedMedia,
         copy: selectedCopy,
         brandName: brandName || 'PowerCreatives',
         brandLogoUrl: brandLogoUrl || null,
-      },
+      }),
     });
   }, [setName, buildBuckets, brandId, project, brandName, brandLogoUrl, createMutation, createProjectMutation]);
 

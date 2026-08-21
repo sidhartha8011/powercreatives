@@ -127,7 +127,35 @@ check('emoji deleted TOGETHER with other text passes through', GuardHost::keep_e
 check('same emoji, reordered/replaced (counts equal) passes through', GuardHost::keep_emoji_on_pure_loss('Njut av fördelarna ✨🥛 och handla nu', $stored) === 'Njut av fördelarna ✨🥛 och handla nu');
 check('ADDING an emoji passes through', GuardHost::keep_emoji_on_pure_loss($stored . ' 🎉', $stored) === $stored . ' 🎉');
 check('empty stored / identical input are untouched fast paths', GuardHost::keep_emoji_on_pure_loss('x', '') === 'x' && GuardHost::keep_emoji_on_pure_loss($stored, $stored) === $stored);
-check('the guard is applied to all three copy fields on write (after sanitize, against the stored value)', substr_count($asvc, 'self::keep_emoji_on_pure_loss(sanitize_textarea_field($updates[') === 2 && strpos($asvc, "self::keep_emoji_on_pure_loss(sanitize_text_field(\$updates['headline']), (string) (\$item['headline'] ?? ''))") !== false);
+// THE 4TH-REPORT BYPASSES — the first guard compared raw stripped strings; a line-end
+// emoji dies WITH its surrounding space and one space of drift let the loss through.
+$roof = "Ditt tak har ett bäst-före-datum ⏳";
+check('4th report: line-end emoji + its space gone → RESTORED (whitespace-canonical compare)', GuardHost::keep_emoji_on_pure_loss('Ditt tak har ett bäst-före-datum', $roof) === $roof);
+$film = "— it performs. 🎬\n\nReady to see?";
+check('4th report: paragraph-end emoji, trailing space trimmed by the editor → RESTORED', GuardHost::keep_emoji_on_pure_loss("— it performs.\n\nReady to see?", $film) === $film);
+check('4th report: line-START emoji gone → RESTORED', GuardHost::keep_emoji_on_pure_loss('Boka nu', '🎁 Boka nu') === '🎁 Boka nu');
+check('4th report: MID-line emoji gone, its two spaces collapsed to one → RESTORED (interior collapse)', GuardHost::keep_emoji_on_pure_loss('Great film today', 'Great film 🎬 today') === 'Great film 🎬 today');
+check('4th report: CRLF drift + a Misc-Technical emoji (⏳ U+23F3, in the ad!) → RESTORED', GuardHost::keep_emoji_on_pure_loss("A\r\nB", "A ⏳\nB") === "A ⏳\nB");
+check('4th report: editor left U+FFFC placeholders behind → RESTORED', GuardHost::keep_emoji_on_pure_loss("A \u{FFFC}\nB", "A 🎬\nB") === "A 🎬\nB");
+check('watch ⌚ / play ▶️ (231A / 25B6+VS16) count as emoji now', GuardHost::keep_emoji_on_pure_loss('Se video', 'Se video ▶️') === 'Se video ▶️' && GuardHost::keep_emoji_on_pure_loss('Tid: nu', 'Tid: nu ⌚') === 'Tid: nu ⌚');
+check('whitespace-ONLY edit (same emoji count) still passes through', GuardHost::keep_emoji_on_pure_loss("— it performs. 🎬\n\nReady  to see?", $film) === "— it performs. 🎬\n\nReady  to see?");
+// The workflow hunt's confirmed holes (4th report, second pass):
+// The snapshot stores RAW (never sanitized); the incoming side went through
+// sanitize_*_field, which among other things STRIPS %hh octets. Only running the
+// same sanitizer over the stored side (the align callable) makes them comparable.
+$octet_align = static fn($s) => preg_replace('/%[0-9a-f]{2}/i', '', $s);
+$rawstored = "Läs mer: rabatt%20nu 🚀";
+check('hunt: raw stored vs sanitized incoming — the align callable closes the asymmetry (%hh octets)', GuardHost::keep_emoji_on_pure_loss('Läs mer: rabattnu', $rawstored, $octet_align) === $rawstored);
+check('hunt: …and a trailing-newline stored value works even without align (canon trims)', GuardHost::keep_emoji_on_pure_loss('Launch day is here', "Launch day is here 🚀\n") === "Launch day is here 🚀\n");
+check('hunt: 3 newlines render as 2 in the editor — newline runs cannot alibi a kill', GuardHost::keep_emoji_on_pure_loss("A\n\nB", "A 🎬\n\n\nB") === "A 🎬\n\n\nB");
+check('hunt: zero-width residue (U+200B) left where the emoji stood → still RESTORED', GuardHost::keep_emoji_on_pure_loss("Buy now \u{200B}", 'Buy now 🚀') === 'Buy now 🚀');
+check('hunt: ™ (U+2122) and ↔ (U+2194) count as emoji (twemoji rewrites them)', GuardHost::keep_emoji_on_pure_loss('Best offer', 'Best offer ™') === 'Best offer ™' && GuardHost::keep_emoji_on_pure_loss('A B', 'A ↔ B') === 'A ↔ B');
+check('hunt: a KEYCAP (1️⃣) dies WITH its digit — stripped as a unit, restored', GuardHost::keep_emoji_on_pure_loss('Step  Buy', 'Step 1️⃣ Buy') === 'Step 1️⃣ Buy');
+check('hunt: keycap + covered emoji killed in one save — neither poisons the other', GuardHost::keep_emoji_on_pure_loss('Steg', 'Steg 1️⃣ 🔥') === 'Steg 1️⃣ 🔥');
+check('hunt: ‼️ (203C) and © (00A9) covered now', GuardHost::keep_emoji_on_pure_loss('Viktigt', 'Viktigt ‼️') === 'Viktigt ‼️' && GuardHost::keep_emoji_on_pure_loss('PC', 'PC ©') === 'PC ©');
+check('a REAL edit near the emoji still passes through', GuardHost::keep_emoji_on_pure_loss('Ditt tak har inget bäst-före-datum', $roof) === 'Ditt tak har inget bäst-före-datum');
+check('the guard is applied to all three copy fields on write, ALIGNED with each field’s sanitizer', substr_count($asvc, 'self::keep_emoji_on_pure_loss(sanitize_textarea_field($updates[') === 2 && strpos($asvc, "self::keep_emoji_on_pure_loss(sanitize_text_field(\$updates['headline']), (string) (\$item['headline'] ?? ''), 'sanitize_text_field')") !== false && substr_count($asvc, ", 'sanitize_textarea_field')") === 2);
+check('hunt: the copy_results propagation writes the GUARDED values, never the raw updates', strpos($asvc, "\$copy_updates['body'] = \$guarded_copy['body'] ?? sanitize_textarea_field(\$updates['body']);") !== false && strpos($asvc, "\$copy_updates['headline'] = \$guarded_copy['headline'] ?? sanitize_text_field(\$updates['headline']);") !== false && strpos($asvc, "\$copy_updates['description'] = \$guarded_copy['description'] ?? sanitize_textarea_field(\$updates['description']);") !== false && preg_match('/\$guarded_copy = array\(\s*\r?\n\s*\'body\'\s+=> \$item\[\'body\'\] \?\? null,/', $asvc) === 1);
 
 // The client guard, executed via node.
 $tsg = file_get_contents($ROOT . '/app/src/lib/emojiGuard.ts');
@@ -143,14 +171,27 @@ $js = $fn . "\n"
     . "out.realEdit = keepEmojiOnPureLoss('Njut av alla f\\u00f6rdelar', stored) === 'Njut av alla f\\u00f6rdelar';\n"
     . "out.added = keepEmojiOnPureLoss(stored + ' \\u{1F389}', stored) === stored + ' \\u{1F389}';\n"
     . "out.addedTight = keepEmojiOnPureLoss(stored + '\\u{1F389}', stored) === stored + '\\u{1F389}';\n"
+    . "out.wsDrift = keepEmojiOnPureLoss('Njut av f\\u00f6rdelarna och handla nu', stored.replace(' och', ' \\u{1F95B} och')) !== 'Njut av f\\u00f6rdelarna och handla nu';\n"
+    . "out.lineEnd = keepEmojiOnPureLoss('Ditt tak har ett b\\u00e4st-f\\u00f6re-datum', 'Ditt tak har ett b\\u00e4st-f\\u00f6re-datum \\u{23F3}') === 'Ditt tak har ett b\\u00e4st-f\\u00f6re-datum \\u{23F3}';\n"
     . "console.log(JSON.stringify(out));\n";
 $tmp = tempnam(sys_get_temp_dir(), 'egd') . '.cjs';
 file_put_contents($tmp, $js);
 $out = json_decode((string) shell_exec('node ' . escapeshellarg($tmp) . ' 2>&1'), true);
 @unlink($tmp);
 check('client guard: pure loss restored, real edits + additions pass (node)', ($out['pureLoss'] ?? false) === true && ($out['realEdit'] ?? false) === true && ($out['added'] ?? false) === true && ($out['addedTight'] ?? false) === true, $out);
+check('client guard: the 4th-report bypasses closed too (whitespace drift, line-end ⏳)', ($out['wsDrift'] ?? false) === true && ($out['lineEnd'] ?? false) === true, $out);
 check('the card guards all three fields BEFORE the dirty check and SENDS the guarded values', strpos($card, "const finalBody = keepEmojiOnPureLoss(editedBody, asset.body || '');") !== false && strpos($card, 'body: escapeAstral(finalBody),') !== false && strpos($card, 'headline: escapeAstral(finalHeadline),') !== false && strpos($card, 'description: escapeAstral(finalDescription)') !== false && strpos($card, "finalBody === (asset.body || '')") !== false);
 check('…and puts the restored emoji back on screen', strpos($card, 'setEditedBody(finalBody);') !== false);
+
+echo "\n6. Hunt: the three OTHER transit paths are escaped + decoded (WAF-proof end to end)\n";
+$adsdlg = file_get_contents($ROOT . '/app/src/modules/Ads/components/CreateApprovalSetDialog.tsx');
+check('Ads → send-to-approvals escapes the snapshot on BOTH create and append', strpos($adsdlg, "import { escapeAstralDeep } from '@/lib/escapeAstral';") !== false && strpos($adsdlg, 'snapshot: escapeAstralDeep({ media, copy })') !== false && strpos($adsdlg, 'snapshot: escapeAstralDeep({') !== false && strpos($adsdlg, 'snapshot: { media, copy }') === false);
+$board = file_get_contents($ROOT . '/app/src/modules/Approvals/kanban/SetsBoard.tsx');
+check('SetsBoard undo escapes the restored item', strpos($board, 'snapshot: escapeAstralDeep({ [bucket]: [item] })') !== false && strpos($board, "from '@/lib/escapeAstral'") !== false);
+check('document saves escape title + content', strpos($card, 'title: escapeAstral(doc.title),') !== false && strpos($card, 'content: escapeAstral(doc.content),') !== false);
+$actl2 = file_get_contents($ROOT . '/includes/modules/approvals/controller.php');
+check('the controller decodes ALL text fields back (both the raw-body fallback and the entity decode)', substr_count($actl2, "foreach (array('body', 'headline', 'description', 'title', 'content', 'name', 'metaTitle', 'metaDescription') as \$field) {") === 2);
+check('create_set + append_assets already decode the whole snapshot deep (existing plumbing confirmed)', substr_count($actl2, 'self::decode_snapshot_emojis(') >= 2);
 
 echo "\n" . str_repeat('-', 60) . "\n";
 echo "  passed: {$PASS}   failed: {$FAIL}\n";

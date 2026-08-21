@@ -347,8 +347,10 @@ export function CreativeAssetCard({
     await updateMutation.mutateAsync({
       token: publicToken,
       assetId: asset.id,
-      title: doc.title,
-      content: doc.content,
+      // escapeAstral: document titles/bodies carry emoji too — same WAF-transit
+      // protection the ad-copy fields already have (card 18). Server decodes.
+      title: escapeAstral(doc.title),
+      content: escapeAstral(doc.content),
       overlay: doc.overlay,
     });
   }, [publicToken, asset.id, updateMutation]);

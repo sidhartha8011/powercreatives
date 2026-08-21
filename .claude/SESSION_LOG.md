@@ -15278,3 +15278,11 @@ VERIFIED
 
 NOT LIVE-CLICKED. Zip still NOT rebuilt — now four features behind (emoji merge, anchors, toolbar
 consolidation, this).
+
+## 2026-08-20 — Card 18, 5th round ("still not fixed"): the guard was field-beaten — hardened end to end (ultracode workflow audit)
+Executed the shipped guard against realistic kill patterns: a LINE-END emoji (where every screenshot has them) dies WITH its surrounding space; one space of drift broke the raw stripped-equality and the loss sailed through → that is why "still not fixed". A 21-agent adversarial workflow (3 hunters + verify) confirmed further holes.
+- `keep_emoji_on_pure_loss` / `keepEmojiOnPureLoss` now compare on `emoji_loss_canon`: emoji + KEYCAP sequences (1️⃣ digit+VS16+20E3 stripped as a unit — twemoji folds the digit into the img) removed; U+FFFC/200B/FEFF residue removed; NBSP→space; CRLF→LF; space runs collapsed; line edges trimmed; newline RUNS collapsed (editor renders \n\n\n as \n\n). Emoji class widened: ™ ℹ ↔-↪ ‼ ⁉ © ® + Misc-Technical (⏳⌚ 231A-23FA) etc., both sides identical.
+- Sanitize asymmetry: incoming was sanitized, stored snapshot is RAW (created verbatim) — new `$align` callable runs the SAME sanitizer over the stored side for comparison only (restore stays raw). Wired per field.
+- CRITICAL (workflow find): the copy_results propagation wrote the RAW `$updates` — re-poisoning the source table on the very save the guard caught. Now propagates the guarded `$guarded_copy` values.
+- Three unescaped transit paths closed (WAF-strip protection): Ads → CreateApprovalSetDialog (create + append now `escapeAstralDeep`), SetsBoard undo (restored item escaped), document saves (`escapeAstral(doc.title/content)`); controller decode lists widened to title/content/name/metaTitle/metaDescription (both the raw-body fallback and the entity decode).
+- Tests: card-18 test → 52/52 (all patterns EXECUTED: line-end/mid-line/line-start kills, keycap, ‼©, %hh align, newline runs, zero-width residue; pass-through set intact). Negative control 26/26 CAUGHT. Suite 71 pass / 2 pre-existing fails from ANOTHER session's commits (seo_link_actions DB-version pin, select_style ghost-trigger count — not this diff). Build OK, tsc 58, zip rebuilt + archive verified.

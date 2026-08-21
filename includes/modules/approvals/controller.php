@@ -441,7 +441,7 @@ class PCM_REST_Approvals extends PCM_REST_Base
         // wp_json_encode, i.e. \uXXXX ASCII.)
         $raw_body = json_decode((string) $request->get_body(), true);
         if (is_array($raw_body)) {
-            foreach (array('body', 'headline', 'description') as $field) {
+            foreach (array('body', 'headline', 'description', 'title', 'content', 'name', 'metaTitle', 'metaDescription') as $field) {
                 if (isset($raw_body[$field], $params[$field])
                     && self::emoji_count($raw_body[$field]) > self::emoji_count($params[$field])
                 ) {
@@ -458,7 +458,7 @@ class PCM_REST_Approvals extends PCM_REST_Base
         // body kept — it can't recover bytes that never reached PHP at all).
         // Decode them back to UTF-8 here so the value stored matches what the user
         // typed. Numeric references only — named entities / literal text untouched.
-        foreach (array('body', 'headline', 'description') as $field) {
+        foreach (array('body', 'headline', 'description', 'title', 'content', 'name', 'metaTitle', 'metaDescription') as $field) {
             if (isset($params[$field]) && is_string($params[$field])) {
                 $params[$field] = self::decode_numeric_entities($params[$field]);
             }

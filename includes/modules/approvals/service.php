@@ -1703,7 +1703,15 @@ class PCM_Approvals_Service
      * arrows/stars block emoji use, the astral emoji plane incl. skin tones) —
      * the vocabulary of keep_emoji_on_pure_loss(). Mirrors app/src/lib/emojiGuard.ts.
      */
-    private const EMOJI_CHARS = '/[\x{FE0E}\x{FE0F}\x{200D}\x{20E3}\x{2600}-\x{27BF}\x{2B00}-\x{2BFF}\x{1F000}-\x{1FFFF}]/u';
+    private const EMOJI_CHARS = '/[\x{00A9}\x{00AE}\x{FE0E}\x{FE0F}\x{200D}\x{203C}\x{2049}\x{20E3}\x{2122}\x{2139}\x{2194}-\x{2199}\x{21A9}\x{21AA}\x{231A}\x{231B}\x{2328}\x{23CF}\x{23E9}-\x{23FA}\x{24C2}\x{25AA}\x{25AB}\x{25B6}\x{25C0}\x{25FB}-\x{25FE}\x{2600}-\x{27BF}\x{2934}\x{2935}\x{2B00}-\x{2BFF}\x{3030}\x{303D}\x{3297}\x{3299}\x{1F000}-\x{1FFFF}]/u';
+
+    /**
+     * Keycap sequences (1️⃣ = digit + VS16 + U+20E3): twemoji folds the WHOLE
+     * sequence into one <img>, so a kill removes the ASCII digit too — the char
+     * class alone would keep that digit on the stored side and break the canon
+     * equality. Stripped as a unit, before the per-char class.
+     */
+    private const KEYCAP_SEQ = '/[0-9#*]\x{FE0F}?\x{20E3}/u';
 
     /**
      * THE EMOJI LOSS GUARD (card 18, Safari round). Returns $incoming unless its
@@ -1716,22 +1724,56 @@ class PCM_Approvals_Service
      * emoji, changing nothing else, is undone; removing it together with any other
      * character works normally.
      */
-    public static function keep_emoji_on_pure_loss(string $incoming, string $stored): string
+    public static function keep_emoji_on_pure_loss(string $incoming, string $stored, ?callable $align = null): string
     {
         if ($incoming === $stored || $stored === '') {
             return $incoming;
         }
-        $in_stripped = preg_replace(self::EMOJI_CHARS, '', $incoming);
-        $st_stripped = preg_replace(self::EMOJI_CHARS, '', $stored);
-        if ($in_stripped === null || $st_stripped === null) {
+        // The incoming value went through sanitize_*_field; the stored snapshot value
+        // never did (it was wp_json_encode'd verbatim at set creation). Run the SAME
+        // sanitizer over the stored side for the COMPARISON only — otherwise a stored
+        // trailing newline or stray octet makes the pure-loss signature unmatchable
+        // forever. The value restored on a match stays the RAW stored one.
+        $st_compare = $align !== null ? (string) $align($stored) : $stored;
+        $in_canon = self::emoji_loss_canon($incoming);
+        $st_canon = self::emoji_loss_canon($st_compare);
+        if ($in_canon === null || $st_canon === null) {
             return $incoming; // malformed UTF-8 — never let the guard eat an edit
         }
         $in_count = preg_match_all(self::EMOJI_CHARS, $incoming);
-        $st_count = preg_match_all(self::EMOJI_CHARS, $stored);
-        if ((int) $in_count < (int) $st_count && $in_stripped === $st_stripped) {
+        $st_count = preg_match_all(self::EMOJI_CHARS, $st_compare);
+        if ((int) $in_count < (int) $st_count && $in_canon === $st_canon) {
             return $stored;
         }
         return $incoming;
+    }
+
+    /**
+     * The comparison form for the loss guard: emoji removed, then WHITESPACE made
+     * canonical. The first guard compared raw stripped strings and was beaten in the
+     * field (card 18, 4th report): an emoji at a line end — where ad copy keeps them,
+     * "… it performs. 🎬" — dies TOGETHER with its surrounding space, because the
+     * editor trims paragraph-edge whitespace when it drops the <img>. One space of
+     * drift made the strings unequal and the loss sailed through. So: emoji out,
+     * object-replacement chars (U+FFFC, what some editors leave behind) out, NBSP →
+     * space, CRLF → LF, space runs collapsed, line edges trimmed. Whitespace can no
+     * longer alibi an emoji kill — and the emoji-count condition still keeps every
+     * same-count edit (incl. pure whitespace edits) out of the guard's reach.
+     */
+    private static function emoji_loss_canon(string $s): ?string
+    {
+        $s = preg_replace(self::KEYCAP_SEQ, '', $s);       // whole keycap first (digit included)
+        $s = $s === null ? null : preg_replace(self::EMOJI_CHARS, '', $s);
+        if ($s === null) {
+            return null;
+        }
+        $s = str_replace(array("\r\n", "\r", "\u{FFFC}", "\u{200B}", "\u{FEFF}", "\u{00A0}"), array("\n", "\n", '', '', '', ' '), $s);
+        $s = preg_replace('/[ \t]+/', ' ', $s);
+        $s = preg_replace('/^[ \t]+|[ \t]+$/m', '', (string) $s);
+        // Newline RUNS collapse too: the editor round trip renders \n\n\n as the same
+        // two-paragraph document as \n\n, so runs must not alibi a kill either.
+        $s = preg_replace('/\n{2,}/', "\n\n", (string) $s);
+        return $s === null ? null : trim($s);
     }
 
     public static function update_snapshot_asset(string $token, string $asset_id, array $updates): bool
@@ -1746,6 +1788,7 @@ class PCM_Approvals_Service
 
         $snapshot = $set->snapshot;
         $updated = false;
+        $guarded_copy = array(); // guard-corrected copy fields, for the propagation below
 
         // Search in copy snapshot assets
         if (!empty($snapshot['copy']) && is_array($snapshot['copy'])) {
@@ -1757,14 +1800,22 @@ class PCM_Approvals_Service
                     // passes through, so it refuses that exact signature: only-emoji-
                     // missing → keep the stored value. Any real edit passes through.
                     if (isset($updates['body'])) {
-                        $item['body'] = self::keep_emoji_on_pure_loss(sanitize_textarea_field($updates['body']), (string) ($item['body'] ?? ''));
+                        $item['body'] = self::keep_emoji_on_pure_loss(sanitize_textarea_field($updates['body']), (string) ($item['body'] ?? ''), 'sanitize_textarea_field');
                     }
                     if (isset($updates['headline'])) {
-                        $item['headline'] = self::keep_emoji_on_pure_loss(sanitize_text_field($updates['headline']), (string) ($item['headline'] ?? ''));
+                        $item['headline'] = self::keep_emoji_on_pure_loss(sanitize_text_field($updates['headline']), (string) ($item['headline'] ?? ''), 'sanitize_text_field');
                     }
                     if (isset($updates['description'])) {
-                        $item['description'] = self::keep_emoji_on_pure_loss(sanitize_textarea_field($updates['description']), (string) ($item['description'] ?? ''));
+                        $item['description'] = self::keep_emoji_on_pure_loss(sanitize_textarea_field($updates['description']), (string) ($item['description'] ?? ''), 'sanitize_textarea_field');
                     }
+                    // The copy_results propagation below must write THESE (guarded)
+                    // values — propagating the raw $updates would re-poison the source
+                    // table with the emoji-less text on the very save the guard caught.
+                    $guarded_copy = array(
+                        'body'        => $item['body'] ?? null,
+                        'headline'    => $item['headline'] ?? null,
+                        'description' => $item['description'] ?? null,
+                    );
                     $updated = true;
                     break;
                 }
@@ -1872,18 +1923,21 @@ class PCM_Approvals_Service
             return false;
         }
 
-        // 2. Propagate updates back to the original copy_results table if the ID is numeric
+        // 2. Propagate updates back to the original copy_results table if the ID is numeric.
+        // GUARDED values only (card 18): when the emoji-loss guard restored a field on the
+        // snapshot, the same restored text must reach copy_results — the raw $updates would
+        // write the emoji-less body into the source table and re-poison future hydrations.
         if (is_numeric($asset_id)) {
             $copy_table = PCM_Schema::table('copy_results');
             $copy_updates = array();
             if (isset($updates['body'])) {
-                $copy_updates['body'] = sanitize_textarea_field($updates['body']);
+                $copy_updates['body'] = $guarded_copy['body'] ?? sanitize_textarea_field($updates['body']);
             }
             if (isset($updates['headline'])) {
-                $copy_updates['headline'] = sanitize_text_field($updates['headline']);
+                $copy_updates['headline'] = $guarded_copy['headline'] ?? sanitize_text_field($updates['headline']);
             }
             if (isset($updates['description'])) {
-                $copy_updates['description'] = sanitize_textarea_field($updates['description']);
+                $copy_updates['description'] = $guarded_copy['description'] ?? sanitize_textarea_field($updates['description']);
             }
             if (!empty($copy_updates)) {
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery
