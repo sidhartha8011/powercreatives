@@ -15149,3 +15149,132 @@ VERIFIED
 NOT LIVE-CLICKED: the dialog has not been opened on the site. Also still unproven end-to-end: a real
 Approve writing a link into a page — on that client's site nothing was approvable, so the write path
 has never executed against live content.
+
+## 2026-08-20 — Merged teammate's card 18 (emoji) stream under the uncommitted interlinks work
+Pulled 1494de0 while the interlink feature was still UNCOMMITTED (standing rule: don't commit unless
+asked). Stash → fast-forward → pop, so the work stays uncommitted on top of the newer base.
+ONE CONFLICT, in .claude/SESSION_LOG.md only — append-vs-append (his 2 card-18 entries against my 3
+interlink entries). Resolved by keeping BOTH, upstream first. No code file overlapped: his commit
+touched TiptapBodyEditor/emojiGuard/main.tsx/CreativeAssetCard/approvals+admin+shortcode; mine touch
+the SEO module, schema and the SEO table. Verified that separation with comm(1) before stashing
+rather than assuming it.
+VERIFIED AFTER THE MERGE (a clean text merge is not proof the code agrees):
+  tsc 58 = baseline · build clean · php -l clean across BOTH streams' changed files ·
+  my suites 59/59, 26/26, 13/13 · HIS new approvals_emoji_card18_test 28/28 · run.php 95/95 ·
+  phpunit 643 / 110 errors / 14 failures = unchanged baseline.
+Orphan gate still reports the SAME pre-existing item (seo_link_scan_phantoms_test.php:156 calling
+->scan_links() on an instance when it is static) — his file, predates today, still unfixed.
+Desktop zip now STALE: it predates this merge and carries none of the emoji fixes.
+
+## 2026-08-20 — Interlinks round 3: per-page ANCHOR phrases (DB 1.48.0 → 1.49.0) [/task]
+Owner: "put one more option in the parent to define the anchors for each of the parent so it can be
+reffered or used to generate the interlinks."
+
+This is the DIRECT FIX for the "0 ready, 6 not possible" screenshot: that site's primaryKeyword was
+ENGLISH ("dental clinic gothenburg") hunted inside SWEDISH copy, so no candidate ever matched.
+Defined anchors are the phrases in the site's own language, ranked by the user.
+
+ONE STORAGE DECISION WORTH RECORDING: anchors live in their OWN table {prefix}seo_page_anchors
+(UNIQUE userId,siteId,postId; anchors = JSON array), NOT as a column on seo_page_parents — that
+table is keyed by CHILD, so a ROOT pillar (the page that most needs anchors) has no row there to
+put a column on. Same overlay rationale as the hierarchy: hub-side, works with no connector, never
+touches the client site. DB 1.48.0 → 1.49.0, dbDelta-additive, drop-registry entry.
+
+BUILT
+  - Engine: propose() takes $opts['anchors'] (postId → phrases) and tries them FIRST — user order
+    is a preference ranking and is honoured — then primaryKeyword, then title. Refusals now say
+    'no safe occurrence of "X" (or N other phrases)' so a multi-anchor miss is legible. Engine
+    stays PURE: the DB read (anchors_map) happens in the controller, not inside propose().
+  - set_anchors(): trim, drop blanks/dupes/>120-char phrases, cap MAX_ANCHORS=10 keeping the FIRST
+    N (the ranking, not an arbitrary N); empty list DELETES the row (clear ≠ store-[]).
+  - 2 routes (local edit_posts + per-post edit_post check; remote manage_options), 2 tRPC entries.
+    The hierarchy GETs now return {map, anchors} — one round trip for the whole overlay.
+  - UI: an "Anchors" column in hierarchy mode only, PINNED directly after Parent (same one-workflow
+    logic: pick the pillar, then name the phrases links to it should wrap). Cell = Popover +
+    Textarea (shared primitives), one phrase per line, seeded from props on each open. Excluded
+    from the Columns menu; visibility derives from the toggle — all three rules the placement test
+    already enforces for Parent, extended to Anchors.
+  - Anchors on a CHILD serve the down-link too — one mechanism, both directions (tested).
+
+VERIFIED
+  - seo_interlinks_test.php 59 → 71, EXECUTED: the dental case itself (English keyword refuses on
+    Swedish copy → defined anchor resolves), user order, defined-beats-keyword, fallback when no
+    defined phrase appears, refusal counting, child-anchors-on-down-links; set_anchors sanitation
+    run against a scripted $wpdb (cap keeps FIRST 10, dedup/blank/length drops, clear-deletes).
+  - seo_hierarchy_column_test.mjs 13 → 15: Anchors pinned after Parent, absent when off, menu
+    exclusion + vis derivation extended — assertions UPDATED to the new contract, meaning kept.
+  - NEGATIVE CONTROL 10/10 CAUGHT: anchors ignored, demoted below keyword, order reversed, cap
+    removed, dedup dropped, clear-stores-[], refusal count dropped, pin removed, back in the
+    Columns menu, shown with hierarchy off.
+  - tsc 58 = baseline. Build clean. php -l clean. run.php 95/95. dialog test 26/26 untouched.
+    phpunit 643/110/14 = the standing (pre-existing, flagged 08-20) baseline, unmoved.
+
+NOT LIVE-CLICKED, and the zip is STALE (predates this + the emoji merge). The end-to-end proof for
+this card is one pass on the dental site: Hierarchy on → set "tandläkare Göteborg" as an anchor on
+the pillar → Generate → the previously-refusing rows should now propose.
+
+## 2026-08-20 — SEO toolbar: Update + New consolidation [/task]
+Owner: "1. Consolidate the add page and add post into one button drop-down. 2. consolidate the
+update stats and update ranks button into a drop-down with both separate updates and one update
+button that will update both at the same time … the past days last7, 30 days … as a sub dropdown
+maybe. 3." — ITEM 3 ARRIVED EMPTY; flagged back, not guessed at.
+
+BUILT (frontend only, one file + one test):
+  - "Update" menu replaces the GSC-stats dropdown + the PRT-ranks button:
+      Stats + ranks  ▸ Last 7/30/60/90/120 days   ← runs BOTH pulls in one onSelect, concurrently
+      GSC stats only ▸ Last 7/30/60/90/120 days     ("at the same time", each keeping its own flag,
+      PRT ranks only                                 spinner and toasts)
+    PRT deliberately gets NO period sub-menu — ProRankTracker returns current ranks; a fake period
+    for symmetry would be a lie. Trigger disables/spins on EITHER pull.
+    Both period sub-menus map over ONE hoisted GSC_PERIODS const so they cannot drift.
+  - "New" menu (Post / Page) replaces the two standalone create buttons.
+  - Both triggers keep the documented PillButton-in-span asChild trap (closed props interface —
+    Radix's cloned onClick/ref would silently drop; shipped exactly that once, comment preserved).
+
+VERIFIED
+  - NEW tests/standalone/seo_toolbar_consolidation_test.mjs 19/19 — rules, sliced to menu blocks:
+    combined entry runs both in the same onSelect; GSC-only pulls ONLY GSC; PRT-only exists; one
+    shared period list feeds both subs; old standalone buttons gone; New creates both types; span
+    trap on both triggers; trigger disabled on either flag.
+  - NEGATIVE CONTROL 9/9 CAUGHT, after fixing THREE test-blindness bugs of my own the control
+    surfaced — all boundary/regex classics this log already names:
+      (a) /DropdownMenuSub/ matched DropdownMenuSubTrigger as a substring, so flattening the Sub
+          wrapper passed → exact opening tag asserted;
+      (b) [^>]* cannot bridge PillButton→onClick because the icon prop's <Plus /> contains '>' —
+          a resurrected standalone Post button was invisible → [\s\S]{0,120}?;
+      (c) TWO label-bounded slices leaked the NEIGHBOUR block in, because in JSX the next element's
+          attributes/tags precede its label text (PRT's onSelect before "PRT ranks only"; the second
+          Sub's opening tag before "GSC stats only") → sliced to closing tags instead.
+  - tsc 58 = baseline. Build clean. All sibling suites green (71/15/26), run.php 95/95.
+
+NOT LIVE-CLICKED (no dev server): worth one look that the two menus open, and that "Stats + ranks →
+Last 30 days" fills the GSC columns AND Pos (PRT) in one gesture. Zip NOT rebuilt — say the word.
+
+## 2026-08-20 — Settings: Web-enabled generation explanations behind an info hover [/task]
+Owner: "should have an information pop-over hover button that shows the explanations instead of
+showing it outside, because otherwise everything grows so much and it's hard for the UI."
+
+BUILT (one file, app/src/modules/Settings/WebSearchSection.tsx): the card collapses to ONE row —
+icon, name, ⓘ, switch. The long description, the "Where it applies"/"How" grid and the
+state-dependent line all moved INSIDE a shared HoverCard (first consumer of that ui primitive —
+using it IS the rule, rather than hand-rolling onMouseEnter state). Trigger is a real <button> with
+an aria-label, so it is keyboard-reachable (Radix HoverCard opens on focus too). Switch behaviour
+untouched: same llm_web_search mutation, absent-means-on default, switch stays OUTSIDE the hover —
+a control you must hover to find is a control that isn't there.
+Teammate's card-14 test (strategies_updates_card14_test.php) still 70/70 — it pins the setting's
+plumbing, not the layout.
+
+VERIFIED
+  - NEW tests/standalone/settings_websearch_hover_test.mjs 20/20 — inside/outside decided by
+    slicing at the HoverCardContent TAGS (not labels — the sibling files' slice-boundary lesson):
+    each explanation inside AND absent outside, labelled real-button trigger on the shared
+    primitive, no hand-rolled hover, mutation key + default pinned, switch outside + NOT inside.
+  - NEGATIVE CONTROL 7/8 CAUGHT + 1 judged: explanations moved back out, span trigger, aria-label
+    dropped, hand-rolled hover, state line deleted, mutation key renamed — all red. The one miss
+    was a DEAD-TERNARY variant (outer switch kept textually but never rendered) — invisible to any
+    source-level test by construction; its realistic core (switch moved into the hover) got a
+    mirror assertion and a mutant that bites.
+  - tsc 58 = baseline. Build clean. Toolbar 19/19, run.php 95/95.
+
+NOT LIVE-CLICKED. Zip still NOT rebuilt — now four features behind (emoji merge, anchors, toolbar
+consolidation, this).
