@@ -193,6 +193,31 @@ $actl2 = file_get_contents($ROOT . '/includes/modules/approvals/controller.php')
 check('the controller decodes ALL text fields back (both the raw-body fallback and the entity decode)', substr_count($actl2, "foreach (array('body', 'headline', 'description', 'title', 'content', 'name', 'metaTitle', 'metaDescription') as \$field) {") === 2);
 check('create_set + append_assets already decode the whole snapshot deep (existing plumbing confirmed)', substr_count($actl2, 'self::decode_snapshot_emojis(') >= 2);
 
+echo "\n7. Follow-up: entering edit mode must SHOW the whole card (auto-resize on attach)\n";
+// "click to edit the card and half of the content disappears": the headline/description
+// textareas mount only when edit mode opens; the old hook measured in a [value]-keyed
+// effect that never re-ran on mount, so rows={1} + overflow:hidden clipped everything
+// past line one. The hook now returns a CALLBACK ref that measures the moment the
+// element attaches. EXECUTED against a fake element.
+$hook = file_get_contents($ROOT . '/app/src/hooks/useAutoResizeTextarea.ts');
+check('the hook returns a callback ref that fits on ATTACH (not only on value change)', strpos($hook, 'const ref = useCallback((el: HTMLTextAreaElement | null) => {') !== false && strpos($hook, 'if (el) fit(el);') !== false && strpos($hook, 'return ref;') !== false);
+check('…and still re-fits on value changes before paint', strpos($hook, 'useLayoutEffect(() => {') !== false && strpos($hook, 'if (elRef.current) fit(elRef.current);') !== false && strpos($hook, '}, [value]);') !== false);
+$fs = strpos($hook, 'function fit(');
+$fe = strpos($hook, 'export function', (int) $fs);
+$fitfn = preg_replace('/\(el: HTMLTextAreaElement\): void/', '(el)', substr($hook, (int) $fs, (int) $fe - (int) $fs));
+$js = $fitfn . "\n"
+    . "const el = { style: { height: '21px' }, scrollHeight: 0 };\n"
+    . "Object.defineProperty(el, 'scrollHeight', { get() { return el.style.height === 'auto' ? 123 : 21; } });\n"
+    . "fit(el);\n"
+    . "console.log(JSON.stringify({ h: el.style.height }));\n";
+$tmp = tempnam(sys_get_temp_dir(), 'fit') . '.cjs';
+file_put_contents($tmp, $js);
+$out = json_decode((string) shell_exec('node ' . escapeshellarg($tmp) . ' 2>&1'), true);
+@unlink($tmp);
+check('fit(): resets to auto so scrollHeight re-measures, then locks to the content height (node)', ($out['h'] ?? '') === '123px', $out);
+$card18 = file_get_contents($ROOT . '/app/src/modules/Approvals/components/CreativeAssetCard.tsx');
+check('both edit textareas are wired to the hook (headline + description, rows=1, hidden overflow by design)', strpos($card18, 'const headlineRef = useAutoResizeTextarea(editedHeadline);') !== false && strpos($card18, 'const descriptionRef = useAutoResizeTextarea(editedDescription);') !== false && strpos($card18, 'ref={headlineRef}') !== false && strpos($card18, 'ref={descriptionRef}') !== false);
+
 echo "\n" . str_repeat('-', 60) . "\n";
 echo "  passed: {$PASS}   failed: {$FAIL}\n";
 exit($FAIL > 0 ? 1 : 0);
