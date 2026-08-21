@@ -14973,3 +14973,179 @@ Chrome fixed by the wp-emoji removal; Safari still loses emoji via a path not re
 - NEW `app/src/lib/emojiGuard.ts` `keepEmojiOnPureLoss(next, prev)`: if the edited value equals the original EXCEPT for missing emoji (stripped-equal + fewer emoji), the original is kept. `CreativeAssetCard.handleSaveTextEdits` guards headline/body/description BEFORE the dirty check, sends the guarded values, and puts the restored emoji back on screen. Trade-off (documented): deleting ONLY an emoji and nothing else is undone — owner's law is "the emojis has to stay".
 - `includes/modules/approvals/service.php`: same guard server-side (`keep_emoji_on_pure_loss`, EMOJI_CHARS mirrors the TS regex) applied to the three copy fields after sanitize, against the stored snapshot value — the server is the one place EVERY client passes through, so even a stale Safari bundle can no longer strip emoji. Malformed-UTF-8 → guard steps aside (never eats an edit).
 - Tests: card-18 test +11 (28/28) — PHP guard EXECUTED (pure loss/ZWJ+skin-tone kept; real edits, emoji+text deletions, reorders, additions pass), client guard EXECUTED in node, wiring pins. Negative control now 16/16 CAUGHT (incl. count-condition and stripped-equality drops). Suite 68/68, build OK, tsc 58, zip rebuilt + archive verified.
+## 2026-08-20 — SEO table: hierarchy view + interlink generator (DB 1.47.0 → 1.48.0) [/task]
+Owner: "in the seo table we want to generate interlinks between the pages… a toggle button small
+which allows us to change the view of the table and there we can select the parent and the child…
+and according to that the interlinks can be generated."
+
+TWO DECISIONS TAKEN WITH THE OWNER before building (both materially changed the work):
+  1. HIERARCHY STORAGE — our own overlay, NOT WordPress' post_parent. Setting a real post_parent on
+     a hierarchical type REWRITES THE PERMALINK, which 404s live client URLs. The overlay also works
+     on connected sites with NO connector, where the sibling `clusterLabel` (post meta) is silently
+     DROPPED — the same hole REMOTE_META_FIELDS exists to paper over.
+  2. GENERATION — stages proposals for review; nothing touches a page until Accept.
+
+WHAT EXISTED, AND WHY NONE OF IT COULD BE REUSED WHOLE (mapped by 3 parallel explore agents):
+  - Strategy interlinker (strategy/service.php:4535 maybe_inject_interlinks) writes to the plugin's
+    OWN wp_pcm_articles.content, never to WP posts; its useful primitives are private.
+  - Optimizer's interlink teacher is advisory only — it never writes.
+  - Every SEO link API (update/remove/rel/delete/restore) is INDEX-ADDRESSED: it edits the nth
+    EXISTING <a>. Grep for insert_link|add_link|append_link across includes/ + app/ = zero hits.
+    So insertion is genuinely new, on both the local and the remote path.
+  - `clusterLabel` already groups pages but carries no DIRECTION (which page is the pillar), so it is
+    complementary, not a duplicate. Left alone.
+
+BUILT
+  - Table {prefix}seo_page_parents (v1.48.0): one row per CHILD, UNIQUE(userId,siteId,postId) — the
+    uniqueness IS the tree invariant (a page has at most one parent). siteId 0 = local.
+  - NEW includes/modules/seo/interlinks.php. Split deliberately: the proposal engine and the
+    insertion primitive are PURE PHP with no WordPress deps, so tests EXECUTE the real logic instead
+    of scanning source for a spelling. DB/WP work sits below that line.
+  - THE ANCHOR LAW: an interlink only ever wraps wording ALREADY on the page — never invents copy,
+    never rewrites a sentence. "No safe occurrence" is therefore a legitimate REFUSAL that is shown,
+    not hidden (hidden refusals are how a run comes to look like it "skipped" pages — card 7).
+  - Pillar/cluster linking both ways (child→pillar, pillar→child). Siblings deliberately NOT linked:
+    O(n²) per cluster and it buries the pillar. Cap MAX_PROPOSALS=200.
+  - 8 routes (4 local inheriting edit_posts, 4 remote passing manage_options — the module's existing
+    boundary), 8 tRPC entries, per-post current_user_can('edit_post') on both write paths.
+  - Frontend: a small "Hierarchy" PillButton (variant 'active' when pressed — exactly what that
+    variant is reserved for) swaps the table into tree mode: rows nest under their parent, a Parent
+    picker column appears, "Generate interlinks" appears beside it. Proposals stage in a new
+    InterlinkPanel using the SHARED StagedSuggestion (its THIRD caller, not a second Accept/Reject).
+  - REMOTE APPLY VERIFIES THE WRITE: WordPress can accept a POST and store nothing (the phantom-save
+    class this module has been bitten by twice — SEO meta without a connector, and the silently
+    ignored author write). Reporting success on an unverified write is the bug, not the write.
+  - purge_post_caches() private → public: the applier writes post_content exactly as the link editors
+    do, so it must bust the same caches, or the link lands and the live page keeps serving the old
+    markup — which reads to the user as "it did nothing".
+  - Builder-owned remote pages (empty content.raw) refuse with the SAME pcm_seo_no_raw 422 the link
+    editors use, so a builder page fails identically everywhere. NO connector change → no client-site
+    update needed for this feature.
+
+DELIBERATELY NOT DONE: no LLM anywhere in generation (deterministic keyword/title matching, the
+strategy interlinker's default mode) — cheaper, and it makes the whole engine testable offline.
+
+VERIFIED
+  - NEW tests/standalone/seo_interlinks_test.php 53/53, EXECUTING the real methods.
+  - NEGATIVE CONTROL 12/12 CAUGHT after the control exposed TWO REAL WEAKNESSES IN MY OWN TESTS:
+      (a) "re-run is a no-op" was passing for the WRONG REASON — the markup guard blocked it, so the
+          idempotency check was never exercised. Added a page that already links the target AND
+          repeats the phrase as free text, which only already_links_to() can refuse.
+      (b) only the 'up' direction filter was asserted, so a bug ignoring the 'up' gate still passed
+          (count stays 1 because 'down' remains gated). Added the mirror. Same "assert one side of a
+          symmetric pair" mistake this log has recorded repeatedly.
+    One mutant was correctly judged EQUIVALENT, not a miss: deleting would_cycle's `$post_id ===
+    $parent_id` early return changes nothing, because the walk's first comparison catches it.
+  - A REAL BUG IN MY OWN CODE, caught by the test before it shipped: is_inside_markup used
+    `strrpos($before,'<') > strrpos($before,'>')`, which is WRONG when content OPENS with a tag — the
+    missing '>' returns false, false coerces to 0, and '<' at index 0 compares 0 > 0, reporting the
+    inside of the first tag as safe to wrap. Now compared !== false. (The strategy injector's
+    original is correct; the flaw was introduced in my paraphrase of it.)
+  - tsc 58 = baseline. Build clean. php -l clean. standalone run.php 95/95.
+  - PHPUNIT 643 tests / 110 errors / 14 failures — IDENTICAL AT HEAD, measured by stashing this work
+    and re-running. Zero regressions from this change. See the standing note below.
+
+⚠ PRE-EXISTING, NOT MINE, FLAGGED NOT FIXED
+  - The PHPUnit suite has DRIFTED BADLY: 110 errors + 14 failures now, against the 1 error + 27
+    failures baseline of 08-12. Confirmed at HEAD with this work stashed, so it arrived with the
+    pulled commits, not from here. Nobody has flagged it. Needs an owner decision.
+  - Orphan gate reports tests/standalone/seo_link_scan_phantoms_test.php:156 calling ->scan_links()
+    on an instance when it is static. scan_links was ALREADY static at HEAD and I did not touch it.
+
+NOT LIVE-VERIFIED: no dev server and no WordPress here. The engine is executed and negative-
+controlled, but the toggle, the tree indent, the Parent picker and a real write to a page have not
+been clicked. Worth one pass: set a parent, Generate, Accept one, confirm the link is on the page.
+Not committed.
+
+## 2026-08-20 — Hierarchy view round 2: the Parent picker was UNREACHABLE ("how to set")
+Owner, on the deployed build with Hierarchy toggled ON: "how to set". The screenshot showed the
+toggle active and "Generate interlinks" present — and NO Parent column anywhere on screen.
+
+CAUSE, and it is mine from this morning. useColumnLayout's reconcileOrder() APPENDS keys it has not
+seen to the end of a saved layout (useColumnLayout.ts:35-38 — the behaviour I relied on so nobody's
+saved widths would reset). So on any browser that already had a layout — i.e. every existing user —
+'parent' arrived LAST, sitting past ~20 columns (meta, keywords, schema, links, date, the whole GSC
+block, author, actions) in a horizontally-scrolled table. The picker rendered correctly and was
+effectively invisible.
+This is the SAME DEFECT CLASS as the 08-12 per-item status dropdown that "existed" inside a collapsed
+overrides panel, whose test passed 57/57 because it asserted the control EXISTED and never asserted
+WHERE. I had that lesson in front of me in this very log and still shipped it.
+
+FIX: orderedCols now PINS 'parent' immediately after 'title' whenever hierarchy mode is on, ignoring
+the saved order for that one column. Title hidden → the picker goes first rather than being dropped.
+Everything else keeps the user's own order and widths.
+
+VERIFIED — placement, not existence
+  - NEW tests/standalone/seo_hierarchy_column_test.mjs 13/13. It EXTRACTS the shipped orderedCols
+    memo body out of index.tsx and EXECUTES it (the body is plain JS), so the assertions run the real
+    ordering logic rather than grepping for the word 'parent'. Fed the realistic input: a legacy saved
+    layout with 'parent' appended last, exactly what a returning user has.
+  - Asserted: absent when off; present when on; immediately after Title; NOT last; exactly once;
+    every other column preserved in order; still shown when Title is hidden; a layout that never knew
+    the key still gets it; excluded from the Columns menu; visibility derives from hierarchyOn.
+  - NEGATIVE CONTROL 7/7 CAUGHT — including re-introducing the reported bug itself (pinning removed →
+    appended last → suite red), off-by-one (pinned before Title), dropped when Title hidden,
+    duplicate not de-duped, shown with hierarchy off, back into the Columns menu, and visibility
+    taken from the cols map.
+  - seo_interlinks_test still 53/53. tsc 58 = baseline. Build clean. Zip rebuilt 660 / 3.52 MB.
+
+STILL NOT LIVE-CLICKED: the fix is proven against the real ordering function, but the rendered column
+on the site has not been seen. Set a parent on two pages, then Generate.
+
+## 2026-08-20 — Interlink review becomes a DIALOG; and the "X → X" rows explained [/task]
+Owner, with a screenshot of the inline panel: "this can we get a popup instead? and we can select
+approve or reject."
+
+THE SCREENSHOT SAID MORE THAN THE REQUEST DID — two findings the ask did not mention:
+  1. "0 ready, 6 not possible". On that site the generator produced NOTHING actionable. Three rows
+     were "the source page has no readable content" (builder-owned pages: content.raw empty — the
+     documented pcm_seo_no_raw case), two were "no safe occurrence of 'dental clinic gothenburg'"
+     (an ENGLISH primaryKeyword hunted for inside SWEDISH copy). Both are the anchor law behaving
+     correctly and refusing to invent text; neither is a defect. Recorded because "0 of 6" reads as
+     a broken feature and is not one.
+  2. TWO ROWS READ "X → X". A page appearing to link to itself. Two causes, both now closed:
+     - propose() had NO self-pair guard. set_parent()'s cycle guard refuses to STORE a self-parent,
+       so the map should never contain one — but propose() TRUSTING that was a gap (a hand-edited
+       row or an import would surface it). Guarded, with a test.
+     - The real cause on that site: the panel identified a page by TITLE ALONE, and this site
+       carries the same title on a post and a page. Proposals now carry sourcePath/targetPath and
+       the UI renders title + path, so identical titles are tellable apart.
+
+BUILT
+  - InterlinkPanel is now a DIALOG (shared Dialog primitive, matching OptimizeModal/LinksPopup —
+    not a hand-rolled overlay). Per row: Approve / Reject. Footer: Approve all (N) + Close.
+    Everything disables while a write is in flight. Mounted with the other modals rather than inside
+    the table's scroll container, since Dialog portals to the body — the inline wrapper div added
+    this morning is gone.
+  - PCM_SEO_Interlinks::path_of() + both paths on every proposal.
+  - Refusals still SHOWN, now with the anchor law stated above them ("an internal link only wraps
+    wording that is already on the page, so these have nothing to link") — the refusal text was
+    accurate but read as a malfunction without it.
+
+VERIFIED
+  - seo_interlinks_test.php 53 → 59 (self-pair, same-title disambiguation, path_of incl. the draft
+    permalink shape).
+  - NEW tests/standalone/seo_interlink_dialog_test.mjs 26/26 (rendering contract, asserted against
+    source by structure — JSX cannot be executed here; the behavioural half is executed in the PHP).
+  - NEGATIVE CONTROL 8/8 + 2 CAUGHT, after fixing TWO REAL WEAKNESSES THE CONTROL FOUND IN MY OWN
+    TESTS:
+      (a) I asserted DialogContent/Title/Footer exist but NOT that the component ROOT is a Dialog —
+          so swapping the outer tag back to <div> rendered it inline again and every check still
+          passed. Now asserts `return ( <Dialog` and that it is controlled.
+      (b) A label regex `>\s*Approve` matched neither Approve button (both follow `}` from the
+          spinner ternary), and matching the bare word anywhere would have been satisfied by the
+          FOOTER's "Approve all" while the per-row button was gone. Now scoped to the ready-row
+          block. Same "assert a spelling, not a rule" family this log keeps recording.
+      Also a self-inflicted slice bug: the block end anchor `refused.length > 0` also occurs EARLIER
+      in the dialog description, so the slice came back empty — end anchor now searched from the
+      start index.
+  - A REAL BUG the new tests caught before shipping: path_of returned '/' for `?page_id=9`
+    permalinks (parse_url gives '/', not ''), so EVERY DRAFT would have displayed an identical '/'
+    and stayed exactly as indistinguishable as the titles were — the bug being fixed. Falls back to
+    the query now. Same permalink shape as the 08-13 GSC draft/homepage collision.
+  - tsc 58 = baseline. Build clean. php -l clean. run.php 95/95. hierarchy column 13/13.
+    Zip rebuilt 660 / 3.52 MB.
+
+NOT LIVE-CLICKED: the dialog has not been opened on the site. Also still unproven end-to-end: a real
+Approve writing a link into a page — on that client's site nothing was approvable, so the write path
+has never executed against live content.

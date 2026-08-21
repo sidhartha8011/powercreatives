@@ -18,7 +18,7 @@ import {
   Plus, Trash2, ExternalLink, SquarePen, Loader2, Sparkles, Check, X, Globe, ChevronDown, ChevronRight, RefreshCw, Copy,
   Type, AlignLeft, KeyRound, Tags, FileText, CircleDot, Braces, User, type LucideIcon,
   Image as ImageIcon, Link2, Calendar, TrendingUp, Eye, Unlink,
-  MousePointerClick, Crosshair, Search as SearchIcon, Target,
+  MousePointerClick, Crosshair, Search as SearchIcon, Target, Network,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -64,7 +64,10 @@ import { SiteStatusDot } from './SiteStatusDot';
 import { useSiteHealth } from './hooks/useSiteHealth';
 import { SEO_TABLE_GRID } from './seo-table';
 import { Pill, type PillVariant } from '@/components/ui/pill';
-import { SEO_TEXT_FIELDS, statusPillVariant, type SeoRow } from './types';
+import { SEO_TEXT_FIELDS, statusPillVariant, type SeoRow, type HierarchyMap, type InterlinkProposal } from './types';
+import { InterlinkPanel } from './InterlinkPanel';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Textarea } from '@/components/ui/textarea';
 
 // WordPress media library global (wp_enqueue_media() is called in class-pcm-admin.php).
 declare const wp: any;
@@ -256,6 +259,10 @@ const TOGGLE_COLUMNS: { key: string; label: string }[] = [
   { key: 'type', label: 'Type' },
   { key: 'title', label: 'Title' },
   { key: 'slug', label: 'Slug' },
+  // Rendered only in hierarchy mode (see `vis`) — the pillar/cluster picker
+  // and the per-page anchor phrases the generator prefers over keyword/title.
+  { key: 'parent', label: 'Parent' },
+  { key: 'anchors', label: 'Anchors' },
   { key: 'featuredImage', label: 'Image' },
   { key: 'status', label: 'Status' },
   ...SEO_TEXT_FIELDS.map((f) => ({ key: f.key as string, label: f.label })),
@@ -279,6 +286,11 @@ const TOGGLE_COLUMNS: { key: string; label: string }[] = [
 // --- Column layout (resize + reorder) metadata -------------------------------
 /** Reorderable/resizable column keys, in their natural default order. */
 const COLUMN_KEYS = TOGGLE_COLUMNS.map((c) => c.key);
+/** What the Columns menu offers.
+ *  Parent is owned by the Hierarchy TOGGLE, not by this menu — listing it
+ *  would offer a checkbox that does nothing, since `vis` derives that one
+ *  column from hierarchyOn alone. */
+const COLUMNS_MENU = TOGGLE_COLUMNS.filter((c) => c.key !== 'parent' && c.key !== 'anchors');
 /** key → label, for header rendering. */
 const COLUMN_LABELS: Record<string, string> = Object.fromEntries(TOGGLE_COLUMNS.map((c) => [c.key, c.label]));
 /** key → text-field descriptor (the AI-editable meta columns). */
@@ -310,13 +322,16 @@ const HEAD_ICONS: Record<string, LucideIcon> = {
 };
 /** Default px width per column (seeds the spreadsheet layout on first use). */
 const DEFAULT_COLUMN_WIDTHS: Record<string, number> = {
-  type: 90, title: 240, slug: 160, featuredImage: 72, status: 120,
+  type: 90, title: 240, slug: 160, parent: 200, anchors: 180, featuredImage: 72, status: 120,
   metaTitle: 200, metaDescription: 260, primaryKeyword: 150, metaKeywords: 180,
   supportingKeyword: 150, schema: 150, date: 120, traffic: 90, author: 120,
   impressions: 110, ctr: 80, position: 95, prtPosition: 95, gscKeywords: 220,
   internalLinks: 110, externalLinks: 110, brokenLinks: 110,
   actions: 100,
 };
+/** GSC pull periods, days — one list feeding BOTH the combined and the
+ *  stats-only submenu, so they can never drift apart. */
+const GSC_PERIODS = [7, 30, 60, 90, 120];
 /** Fixed leading selection/row-number column (not reorderable/resizable). */
 const SELECT_COL_WIDTH = 44;
 
@@ -362,6 +377,72 @@ function remoteThumbUrl(siteId: number, attachmentId: number, imageUrl: string):
   if (cfg.nonce) q.set('_wpnonce', cfg.nonce);
   // A plain-permalink restUrl already carries `?rest_route=`; then our params must join with `&`.
   return `${base}${base.includes('?') ? '&' : '?'}${q.toString()}`;
+}
+
+/**
+ * The Anchors cell (hierarchy mode): the phrases the interlink generator will
+ * try FIRST when linking TO this page — ahead of its keyword and title.
+ *
+ * Exists because the automatic candidates can be in the wrong language: the
+ * dental site's keyword was English, its copy Swedish, so nothing ever
+ * matched and every proposal refused. These are the phrases in the site's own
+ * words, one per line, in the user's preference order.
+ *
+ * Local draft state lives here so typing doesn't re-render the table; it
+ * re-seeds from props each time the popover opens (another row's save may
+ * have refreshed the map since).
+ */
+function AnchorsCell({ value, busy, onSave }: { value: string[]; busy: boolean; onSave: (list: string[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) setDraft(value.join('\n'));
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="h-full w-full truncate px-2 text-left text-xs hover:bg-muted/60"
+          title={value.length ? value.join(', ') : 'Define the phrases links to this page should wrap'}
+        >
+          {value.length
+            ? <span className="text-foreground">{value.join(', ')}</span>
+            : <span className="text-muted-foreground">+ Anchors</span>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 space-y-2">
+        <p className="text-xs font-medium text-foreground">Anchor phrases for links to this page</p>
+        <p className="text-xs text-muted-foreground">
+          One per line, best first. The generator only wraps a phrase that already appears in the
+          linking page&rsquo;s own text — write them in the site&rsquo;s language.
+        </p>
+        <Textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={4}
+          placeholder={'tandl\u00e4kare G\u00f6teborg\ntandv\u00e5rd'}
+          className="text-sm"
+        />
+        <div className="flex justify-end gap-1.5">
+          <Button type="button" size="xs" variant="outline" onClick={() => setOpen(false)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="xs"
+            onClick={() => { onSave(draft.split('\n').map((s) => s.trim()).filter(Boolean)); setOpen(false); }}
+            disabled={busy}
+          >
+            Save
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function FeaturedThumb({ src, hasImageId, proxySrc = '' }: { src: string; hasImageId: boolean; /** Hub proxy URL tried when the site refuses the direct load. */ proxySrc?: string }) {
@@ -487,6 +568,10 @@ export function SEOModule() {
   // Collapse all open heading panels when switching between local/remote sites (row
   // ids aren't comparable across scopes).
   useEffect(() => { setExpandedRows(new Set()); }, [siteId]);
+  // Same reason as the line above: proposals name row ids, and ids mean
+  // nothing across scopes — a stale list would offer to link pages that
+  // belong to a different site entirely.
+  useEffect(() => { setProposals(null); setApplyingKey(null); }, [siteId]);
   const activeSite = isLocal ? null : sites.find((s) => Number(s.id) === siteId) ?? null;
   // Remote site (Phase 1): read + inline-edit its SEO via the connector proxy.
   // Generation/scanning/creation stay local-only and are gated on isLocal below.
@@ -829,7 +914,56 @@ export function SEOModule() {
     () => Object.fromEntries(TOGGLE_COLUMNS.map((c) => [c.key, true])),
   );
   const toggleCol = useCallback((key: string) => setCols((c) => ({ ...c, [key]: c[key] === false })), []);
-  const vis = (key: string) => cols[key] !== false;
+  // ── Interlinks: the hierarchy view ────────────────────────────────
+  // A small toolbar toggle swaps the table into pillar/cluster mode: rows are
+  // nested under their parent and a Parent picker appears. The hierarchy is
+  // OUR overlay (wp_pcm_seo_page_parents), never WordPress' post_parent —
+  // setting a real post_parent rewrites permalinks and would 404 live URLs.
+  const [hierarchyOn, setHierarchyOn] = useState(false);
+  const [proposals, setProposals] = useState<InterlinkProposal[] | null>(null);
+  const [applyingKey, setApplyingKey] = useState<string | null>(null);
+
+  const hierarchyQuery = (isLocal
+    ? trpc.seo.interlinkHierarchy.useQuery(undefined, { staleTime: 30_000 })
+    : trpc.seo.remoteInterlinkHierarchy.useQuery(
+        { siteId },
+        { enabled: typeof siteId === 'number', staleTime: 30_000 },
+      )) as any;
+  const hierarchy: HierarchyMap = useMemo(() => {
+    const raw = hierarchyQuery.data?.map ?? {};
+    // wpdb hands back string keys AND string values; every id comparison here
+    // is numeric, so normalise once at the boundary rather than at each use.
+    const out: HierarchyMap = {};
+    for (const [k, v] of Object.entries(raw)) out[Number(k)] = Number(v);
+    return out;
+  }, [hierarchyQuery.data]);
+
+  // postId → the user's anchor phrases (the hierarchy GET carries both maps).
+  const anchorsByPost: Record<number, string[]> = useMemo(() => {
+    const raw = hierarchyQuery.data?.anchors ?? {};
+    const out: Record<number, string[]> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (Array.isArray(v)) out[Number(k)] = (v as unknown[]).map(String);
+    }
+    return out;
+  }, [hierarchyQuery.data]);
+
+  const setAnchorsMutation = (isLocal ? trpc.seo.interlinkSetAnchors : trpc.seo.remoteInterlinkSetAnchors).useMutation({
+    onSuccess: () => { hierarchyQuery.refetch?.(); },
+    onError: (e: any) => toast.error(e?.message || 'Could not save the anchors.'),
+  }) as any;
+
+  const setParentMutation = (isLocal ? trpc.seo.interlinkSetParent : trpc.seo.remoteInterlinkSetParent).useMutation({
+    onSuccess: () => { hierarchyQuery.refetch?.(); },
+    onError: (e: any) => toast.error(e?.message || 'Could not set the parent.'),
+  }) as any;
+  const proposeMutation = (isLocal ? trpc.seo.interlinkPropose : trpc.seo.remoteInterlinkPropose).useMutation() as any;
+  const applyMutation = (isLocal ? trpc.seo.interlinkApply : trpc.seo.remoteInterlinkApply).useMutation() as any;
+
+  // The Parent column exists ONLY in hierarchy mode. It is not in the Columns
+  // menu's remit: the toggle owns it, so turning the view off can never leave
+  // an orphaned picker behind.
+  const vis = (key: string) => (key === 'parent' || key === 'anchors' ? hierarchyOn : cols[key] !== false);
   // Spreadsheet-style column order + widths (drag to reorder / resize; persisted
   // to localStorage). Selection column stays fixed and is not part of this.
   const { order: colOrder, width: colWidth, setWidth: setColWidth, moveColumn, reset: resetColumnLayout } =
@@ -1190,6 +1324,136 @@ export function SEOModule() {
     },
   );
 
+  /**
+   * Rows in render order, each with its indent depth.
+   *
+   * Hierarchy off → the sorted list, flat. On → children nested under their
+   * parent, roots keeping the table's current sort. Two invariants worth
+   * naming: a row whose parent is filtered out of view is shown as a ROOT
+   * rather than disappearing, and any row not reached by the walk (corrupt or
+   * cyclic data) is appended. A view that silently hides pages is worse than
+   * an ugly one.
+   */
+  const displayRows = useMemo<{ row: SeoRow; depth: number }[]>(() => {
+    if (!hierarchyOn) return sortedData.map((row) => ({ row, depth: 0 }));
+
+    const present = new Set(sortedData.map((r) => r.id));
+    const childrenOf = new Map<number, SeoRow[]>();
+    const roots: SeoRow[] = [];
+    for (const r of sortedData) {
+      const parent = hierarchy[r.id];
+      if (parent && parent !== r.id && present.has(parent)) {
+        const list = childrenOf.get(parent) ?? [];
+        list.push(r);
+        childrenOf.set(parent, list);
+      } else {
+        roots.push(r);
+      }
+    }
+
+    const out: { row: SeoRow; depth: number }[] = [];
+    const seen = new Set<number>();
+    const walk = (r: SeoRow, depth: number) => {
+      if (seen.has(r.id) || depth > 32) return;
+      seen.add(r.id);
+      out.push({ row: r, depth });
+      for (const c of childrenOf.get(r.id) ?? []) walk(c, depth + 1);
+    };
+    roots.forEach((r) => walk(r, 0));
+    for (const r of sortedData) if (!seen.has(r.id)) out.push({ row: r, depth: 0 });
+    return out;
+  }, [hierarchyOn, sortedData, hierarchy]);
+
+  /** Is `candidate` already below `of` in the tree? Such a pick would make a
+   *  page its own ancestor, so it is never offered. The server refuses it too
+   *  (409) — this only keeps the impossible choice out of the menu. */
+  const isDescendantOf = useCallback((candidate: number, of: number) => {
+    let cursor = hierarchy[candidate];
+    let guard = 0;
+    while (cursor && guard++ < 64) {
+      if (cursor === of) return true;
+      cursor = hierarchy[cursor];
+    }
+    return false;
+  }, [hierarchy]);
+
+  const handleGenerateInterlinks = useCallback(async () => {
+    if (Object.keys(hierarchy).length === 0) {
+      toast.error('Set a parent on at least one page first — the links come from the hierarchy.');
+      return;
+    }
+    // Rows travel WITH the request: the table already has every title,
+    // permalink and keyword on screen, so re-listing them server-side (and on a
+    // connected site, re-walking the REST API) would be a second round trip for
+    // data we are already holding. The hub re-sanitises all of it regardless.
+    const payload = sortedData.map((r) => ({
+      id: r.id, title: r.title, permalink: r.permalink, primaryKeyword: r.primaryKeyword,
+    }));
+    const types: Record<number, string> = {};
+    for (const r of sortedData) types[r.id] = r.type;
+    try {
+      const res: any = await proposeMutation.mutateAsync(
+        isLocal ? { rows: payload } : { siteId, rows: payload, types },
+      );
+      const list: InterlinkProposal[] = res?.proposals ?? [];
+      setProposals(list);
+      if (list.length === 0) toast('Nothing to propose from the current hierarchy.');
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not generate interlinks.');
+    }
+  }, [hierarchy, sortedData, proposeMutation, isLocal, siteId]);
+
+  const dropProposal = useCallback((p: InterlinkProposal) => {
+    setProposals((cur) => (cur ?? []).filter((x) => !(x.sourceId === p.sourceId && x.targetId === p.targetId)));
+  }, []);
+
+  /** @returns the error message when the write failed, else null. */
+  const applyOneProposal = useCallback(async (p: InterlinkProposal): Promise<string | null> => {
+    const type = sortedData.find((r) => r.id === p.sourceId)?.type ?? 'page';
+    try {
+      await applyMutation.mutateAsync(
+        isLocal
+          ? { sourceId: p.sourceId, url: p.url, anchor: p.anchor }
+          : { siteId, sourceId: p.sourceId, type, url: p.url, anchor: p.anchor },
+      );
+      return null;
+    } catch (e: any) {
+      return e?.message || 'the page could not be saved';
+    }
+  }, [applyMutation, isLocal, siteId, sortedData]);
+
+  const handleAcceptProposal = useCallback(async (p: InterlinkProposal) => {
+    const key = `${p.sourceId}:${p.targetId}`;
+    setApplyingKey(key);
+    const err = await applyOneProposal(p);
+    setApplyingKey(null);
+    if (err) { toast.error(err); return; }
+    dropProposal(p);
+    toast.success(`Linked “${p.anchor}” to ${p.targetTitle}.`);
+  }, [applyOneProposal, dropProposal]);
+
+  const handleAcceptAllProposals = useCallback(async () => {
+    const list = (proposals ?? []).filter((p) => p.anchor !== '');
+    const failed: InterlinkProposal[] = [];
+    let done = 0;
+    // Sequential on purpose: these are writes to the same site, and a failure
+    // must be attributable to its own page. The count reported below is what
+    // actually landed — never the count attempted (the bulk-save lesson).
+    for (const p of list) {
+      setApplyingKey(`${p.sourceId}:${p.targetId}`);
+      const err = await applyOneProposal(p);
+      if (err) failed.push(p); else done++;
+    }
+    setApplyingKey(null);
+    // Successes leave the list; failures STAY so they can be retried.
+    setProposals(failed.length > 0 ? failed : []);
+    if (failed.length === 0) {
+      toast.success(`Added ${done} internal ${done === 1 ? 'link' : 'links'}.`);
+    } else {
+      toast.error(`Added ${done} of ${list.length}. ${failed.length} failed and are still listed.`);
+    }
+  }, [proposals, applyOneProposal]);
+
   const visibleIds = sortedData.map((r) => r.id);
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const someSelected = selected.size > 0 && !allSelected;
@@ -1343,7 +1607,27 @@ export function SEOModule() {
   }, [saveCell, isLocal, remote]);
 
   // Columns in saved order, minus any hidden via the Columns menu.
-  const orderedCols = colOrder.filter((k) => vis(k));
+  /**
+   * Visible columns, in order.
+   *
+   * Parent is FORCED to sit directly after Title in hierarchy mode. Without
+   * this it obeys the saved layout, and useColumnLayout appends unknown keys to
+   * the END — so on any browser with an existing layout (i.e. everyone's) the
+   * picker landed to the far right, past ~20 columns. A control you have to go
+   * hunting for is a control that isn't there: the same defect as the status
+   * dropdown buried in the overrides panel (08-12).
+   */
+  const orderedCols = useMemo(() => {
+    const visible = colOrder.filter((k) => vis(k));
+    if (!hierarchyOn) return visible;
+    const rest = visible.filter((k) => k !== 'parent' && k !== 'anchors');
+    const at = rest.indexOf('title');
+    // Title hidden → put the pickers first rather than dropping them.
+    // Anchors rides directly after Parent: they are one workflow (choose the
+    // pillar, then name the phrases links to it should wrap).
+    rest.splice(at < 0 ? 0 : at + 1, 0, 'parent', 'anchors');
+    return rest;
+  }, [colOrder, cols, hierarchyOn]);
   const tableWidth = SELECT_COL_WIDTH + orderedCols.reduce((sum, k) => sum + colWidth(k), 0);
 
   // Drag the right edge of a header to resize that column (px, persisted).
@@ -1404,7 +1688,7 @@ export function SEOModule() {
   };
 
   // Body cell for a column (bespoke per column key).
-  const renderCell = (key: string, row: SeoRow) => {
+  const renderCell = (key: string, row: SeoRow, depth = 0) => {
     switch (key) {
       case 'type':
         return (
@@ -1412,10 +1696,59 @@ export function SEOModule() {
             <span className={`${CELL_PILL_NEUTRAL} capitalize`}>{row.type}</span>
           </TableCell>
         );
+      case 'parent': {
+        // "None" is a real choice, not a placeholder: it promotes a page back
+        // to being a pillar. Sent as parentId 0, which the service treats as a
+        // clear rather than an error.
+        const current = hierarchy[row.id] ?? 0;
+        const candidates = sortedData.filter(
+          (r) => r.id !== row.id && !isDescendantOf(r.id, row.id),
+        );
+        return (
+          <TableCell key={key} className="p-0">
+            <Select
+              value={current ? String(current) : 'none'}
+              onValueChange={(v) => {
+                const parentId = v === 'none' ? 0 : Number(v);
+                setParentMutation.mutate(
+                  isLocal ? { postId: row.id, parentId } : { siteId, postId: row.id, parentId },
+                );
+              }}
+            >
+              <SelectTrigger variant="ghost" size="auto" className="h-full w-full">
+                <SelectValue placeholder="None" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None (top level)</SelectItem>
+                {candidates.map((r) => (
+                  <SelectItem key={r.id} value={String(r.id)}>{r.title || r.slug}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </TableCell>
+        );
+      }
+      case 'anchors':
+        return (
+          <TableCell key={key} className="p-0">
+            <AnchorsCell
+              value={anchorsByPost[row.id] ?? []}
+              busy={setAnchorsMutation.isPending}
+              onSave={(list) =>
+                setAnchorsMutation.mutate(
+                  isLocal ? { postId: row.id, anchors: list } : { siteId, postId: row.id, anchors: list },
+                )
+              }
+            />
+          </TableCell>
+        );
       case 'title':
         return (
           <TableCell key={key}>
-            <div className="flex items-center gap-1">
+            {/* Hierarchy indent. Padding on the flex row (not a margin on the
+                chevron) so the whole cell shifts together and the gridline
+                stays put — the same idiom HeadingsPanel uses for nested rows. */}
+            <div className="flex items-center gap-1" style={depth > 0 ? { paddingLeft: depth * 14 } : undefined}>
               <button
                 type="button"
                 onClick={() => toggleExpanded(row.id)}
@@ -1896,6 +2229,26 @@ export function SEOModule() {
         <div className="flex items-center gap-2">
           {/* Toolbar buttons rest GRAY, hover BLUE (PO 2026-07-08) — default
               variant; 'active' (blue at rest) is reserved for pressed states. */}
+          {/* Hierarchy view. A pressed toggle, so 'active' is the correct
+              variant here — this is exactly the state it is reserved for. */}
+          <PillButton
+            icon={<Network />}
+            variant={hierarchyOn ? 'active' : undefined}
+            onClick={() => { setHierarchyOn((v) => !v); setProposals(null); }}
+            title={hierarchyOn ? 'Back to the flat table' : 'Group pages under a parent to plan internal links'}
+          >
+            Hierarchy
+          </PillButton>
+          {hierarchyOn && (
+            <PillButton
+              icon={proposeMutation.isPending ? <Loader2 className="animate-spin" /> : <Link2 />}
+              onClick={handleGenerateInterlinks}
+              disabled={busy || proposeMutation.isPending}
+              title="Propose internal links from the parent/child structure"
+            >
+              Generate interlinks
+            </PillButton>
+          )}
           <PillButton
             icon={scanningAll ? <Loader2 className="animate-spin" /> : <Link2 />}
             onClick={handleScanAll}
@@ -1903,54 +2256,85 @@ export function SEOModule() {
           >
             {scanningAll ? 'Scanning…' : 'Scan links'}
           </PillButton>
-          {/* Clicks / impressions / CTR / position / top queries. Clicking the button opens the
-              period menu and the pull starts as soon as you pick one — so it's one gesture, and
-              there's no second control parked in the toolbar advertising a number you rarely
-              change. Values are whole days; the endpoint clamps to 1–180. */}
+          {/* ONE Update menu for both external pulls (owner 2026-08-20: "consolidate
+              the update stats and update ranks button into a drop-down"). Top item
+              runs BOTH at once; each pull keeps a separate entry; GSC period lives
+              in sub-menus (both fed by GSC_PERIODS, so they cannot drift). PRT has
+              no period — ProRankTracker returns current ranks, so it sits as a
+              plain item rather than growing a fake sub-menu for symmetry. */}
           <DropdownMenu>
             {/* asChild targets this SPAN, never the PillButton. PillButtonProps is a CLOSED
                 interface — no forwardRef, no {...rest} — so Radix's cloned onClick/ref would be
                 silently dropped and the button would do nothing at all (shipped exactly that
                 once). The span is a real DOM node, so it receives the handler and ref, and the
                 inner button's click bubbles up to it. PillButton is given NO onClick here. */}
-            <DropdownMenuTrigger asChild disabled={busy || gscPulling}>
+            <DropdownMenuTrigger asChild disabled={busy || gscPulling || prtPulling}>
               <span className="inline-flex">
                 <PillButton
-                  icon={gscPulling ? <Loader2 className="animate-spin" /> : <TrendingUp />}
-                  disabled={busy || gscPulling}
+                  icon={gscPulling || prtPulling ? <Loader2 className="animate-spin" /> : <TrendingUp />}
+                  disabled={busy || gscPulling || prtPulling}
                 >
-                  {gscPulling ? 'Pulling…' : 'GSC stats'}
+                  {gscPulling || prtPulling ? 'Updating…' : 'Update'}
                 </PillButton>
               </span>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-40">
-              <DropdownMenuLabel className="text-xs text-muted-foreground">Pull period</DropdownMenuLabel>
+            <DropdownMenuContent align="start" className="w-48">
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="text-xs">Stats + ranks</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-36">
+                  {GSC_PERIODS.map((d) => (
+                    <DropdownMenuItem
+                      key={d}
+                      className="text-xs"
+                      onSelect={() => {
+                        // Concurrent on purpose — "update both at the same time".
+                        // Each pull owns its flag and its toasts; neither waits.
+                        void handlePullGsc(d);
+                        void handlePullPrt();
+                      }}
+                    >
+                      Last {d} days
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               <DropdownMenuSeparator />
-              {[7, 30, 60, 90, 120].map((d) => (
-                <DropdownMenuItem
-                  key={d}
-                  className="text-xs"
-                  onSelect={() => { void handlePullGsc(d); }}
-                >
-                  Last {d} days
-                </DropdownMenuItem>
-              ))}
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="text-xs">GSC stats only</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-36">
+                  {GSC_PERIODS.map((d) => (
+                    <DropdownMenuItem
+                      key={d}
+                      className="text-xs"
+                      onSelect={() => { void handlePullGsc(d); }}
+                    >
+                      Last {d} days
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuItem className="text-xs" onSelect={() => { void handlePullPrt(); }}>
+                <Target className="size-3.5" /> PRT ranks only
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {/* Pulls ProRankTracker rank of each row's Primary Keyword → "Pos (PRT)" column. */}
-          <PillButton
-            icon={prtPulling ? <Loader2 className="animate-spin" /> : <Target />}
-            onClick={handlePullPrt}
-            disabled={busy || prtPulling}
-          >
-            {prtPulling ? 'Pulling…' : 'PRT ranks'}
-          </PillButton>
-          <PillButton icon={<Plus />} onClick={() => handleCreate('post')} disabled={busy}>
-            Post
-          </PillButton>
-          <PillButton icon={<Plus />} onClick={() => handleCreate('page')} disabled={busy}>
-            Page
-          </PillButton>
+          {/* ONE create menu (owner 2026-08-20: "consolidate the add page and add
+              post into one button drop-down"). Same span trap as above. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild disabled={busy}>
+              <span className="inline-flex">
+                <PillButton icon={<Plus />} disabled={busy}>New</PillButton>
+              </span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-28">
+              <DropdownMenuItem className="text-xs" onSelect={() => { void handleCreate('post'); }}>
+                Post
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-xs" onSelect={() => { void handleCreate('page'); }}>
+                Page
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Select
             value={genModelId}
             onValueChange={(v) => setGenModel(v === '__default__' ? '' : v)}
@@ -1979,7 +2363,7 @@ export function SEOModule() {
           </Select>
           <ViewsToolbar
             show="columns"
-            columns={TOGGLE_COLUMNS}
+            columns={COLUMNS_MENU}
             visible={cols}
             onToggleColumn={toggleCol}
             views={views}
@@ -2237,7 +2621,7 @@ export function SEOModule() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedData.map((row, idx) => (
+              {displayRows.map(({ row, depth }, idx) => (
                 <Fragment key={row.id}>
                   <TableRow
                     onMouseEnter={() => setHoveredId(row.id)}
@@ -2260,7 +2644,7 @@ export function SEOModule() {
                         <span className="text-[11px] tabular-nums text-muted-foreground">{idx + 1}</span>
                       )}
                     </TableCell>
-                    {orderedCols.map((key) => renderCell(key, row))}
+                    {orderedCols.map((key) => renderCell(key, row, depth))}
                   </TableRow>
                   {expandedRows.has(row.id) && (
                     <HeadingRows
@@ -2277,6 +2661,20 @@ export function SEOModule() {
             </TableBody>
           </Table>
         </div>
+      )}
+      {/* Interlink proposals — a dialog, so it is the same review surface
+          wherever the table is scrolled to (owner 2026-08-20). Portals to the
+          body, so it is mounted here with the other modals rather than inside
+          the table's scroll container. */}
+      {hierarchyOn && proposals !== null && (
+        <InterlinkPanel
+          proposals={proposals}
+          applyingKey={applyingKey}
+          onAccept={handleAcceptProposal}
+          onReject={dropProposal}
+          onAcceptAll={handleAcceptAllProposals}
+          onClose={() => setProposals(null)}
+        />
       )}
       {/* Generate mode prompt — asked before any bulk / column generate so existing
           content is never silently overwritten. */}

@@ -47,6 +47,32 @@ export interface SeoRow {
   linksScannedAt: string;
 }
 
+/** childId → parentId. A page absent from the map is a root. */
+export type HierarchyMap = Record<number, number>;
+
+/**
+ * One proposed internal link, from the hierarchy.
+ *
+ * `anchor` empty + `reason` set is an honest refusal, not an error — the
+ * generator only ever wraps wording ALREADY on the page, so "no safe
+ * occurrence" is a legitimate outcome worth showing rather than hiding.
+ */
+export interface InterlinkProposal {
+  sourceId: number;
+  targetId: number;
+  sourceTitle: string;
+  targetTitle: string;
+  url: string;
+  /** 'up' = child → its pillar; 'down' = pillar → a child. */
+  direction: 'up' | 'down';
+  anchor: string;
+  reason: string;
+  /** Permalink paths — titles alone are not an identity (a post and a page can
+   *  share one, which renders as "X → X" and reads like a self-link bug). */
+  sourcePath: string;
+  targetPath: string;
+}
+
 /** Schema.org types a post can advertise (matches PCM_SEO_Schema::TYPES). */
 export const SCHEMA_TYPES = ['Article', 'WebPage', 'BreadcrumbList', 'FAQPage', 'HowTo', 'Product'] as const;
 

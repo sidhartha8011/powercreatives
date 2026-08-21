@@ -44,6 +44,7 @@ require_once __DIR__ . '/page-state.php';
 require_once __DIR__ . '/remote-headings.php';
 require_once __DIR__ . '/page-inventory.php';
 require_once __DIR__ . '/editing.php';
+require_once __DIR__ . '/interlinks.php';
 
 class PCM_SEO_Service
 {

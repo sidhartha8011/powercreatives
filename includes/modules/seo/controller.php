@@ -63,6 +63,13 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/content/(?P<id>\d+)/links/(?P<idx>\d+)/delete', 'delete_link'),
             array('GET',  '/seo/content/(?P<id>\d+)/links/deleted', 'deleted_links'),
             array('POST', '/seo/links/deleted/(?P<ledger>\d+)/restore', 'restore_deleted_link'),
+            // Interlinks (card 2026-08-20): the pillar/cluster overlay behind the
+            // SEO table's hierarchy view, and the generator it drives.
+            array('GET',  '/seo/interlinks',                 'interlink_hierarchy'),
+            array('POST', '/seo/interlinks/parent',          'interlink_set_parent'),
+            array('POST', '/seo/interlinks/anchors',         'interlink_set_anchors'),
+            array('POST', '/seo/interlinks/propose',         'interlink_propose'),
+            array('POST', '/seo/interlinks/apply',           'interlink_apply'),
             array('GET',  '/seo/content/(?P<id>\d+)/headings', 'get_headings'),
             array('GET',  '/seo/content/(?P<id>\d+)/content-nodes', 'get_content_nodes'),
             array('POST', '/seo/content/(?P<id>\d+)/headings/(?P<idx>\d+)', 'update_heading'),
@@ -99,6 +106,11 @@ class PCM_REST_SEO extends PCM_REST_Base
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/remove', 'remote_remove_link', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/rel', 'remote_set_link_rel', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/(?P<idx>\d+)/delete', 'remote_delete_link', array(), 'manage_options'),
+            array('GET',  '/seo/sites/(?P<id>\d+)/interlinks',         'remote_interlink_hierarchy', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/interlinks/parent',  'remote_interlink_set_parent', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/interlinks/anchors', 'remote_interlink_set_anchors', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/interlinks/propose', 'remote_interlink_propose', array(), 'manage_options'),
+            array('POST', '/seo/sites/(?P<id>\d+)/interlinks/apply',   'remote_interlink_apply', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/links/deleted', 'remote_deleted_links', array(), 'manage_options'),
             array('POST', '/seo/sites/(?P<id>\d+)/links/deleted/(?P<ledger>\d+)/restore', 'remote_restore_deleted_link', array(), 'manage_options'),
             array('GET',  '/seo/sites/(?P<id>\d+)/content/(?P<post>\d+)/headings', 'remote_get_headings', array(), 'manage_options'),
@@ -1526,6 +1538,250 @@ class PCM_REST_SEO extends PCM_REST_Base
     }
 
     /** POST /seo/links/deleted/{ledger}/restore — put a deleted link back on its page. */
+    // ── Interlinks: the hierarchy overlay + generator ───────────────────
+    //
+    // The overlay is OURS (wp_pcm_seo_page_parents), never WordPress'
+    // post_parent — see PCM_SEO_Interlinks' header for why. siteId 0 = local.
+
+    /**
+     * Rows come from the CLIENT because the table already has them — asking the
+     * hub to re-list every page (and, on a connected site, re-walk the REST API)
+     * purely to learn titles it just rendered would be a second round trip for
+     * data already on screen. Everything is re-sanitised here regardless; the
+     * only field that reaches content is the URL, and it is esc_url_raw'd and
+     * then esc_url'd again at insert.
+     *
+     * @return array<int,array{id:int,title:string,permalink:string,primaryKeyword:string}>
+     */
+    private function interlink_rows_from(array $params): array
+    {
+        $out = array();
+        foreach ((array) ($params['rows'] ?? array()) as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $id = absint($row['id'] ?? 0);
+            if ($id <= 0) {
+                continue;
+            }
+            $out[] = array(
+                'id'             => $id,
+                'title'          => sanitize_text_field((string) ($row['title'] ?? '')),
+                'permalink'      => esc_url_raw((string) ($row['permalink'] ?? '')),
+                'primaryKeyword' => sanitize_text_field((string) ($row['primaryKeyword'] ?? '')),
+            );
+        }
+        return $out;
+    }
+
+    /** Only 'up' / 'down' survive; an empty request means both. */
+    private function interlink_directions_from(array $params): array
+    {
+        $raw = (array) ($params['directions'] ?? array());
+        $ok  = array_values(array_intersect(array('up', 'down'), array_map('sanitize_key', $raw)));
+        return $ok ?: array('up', 'down');
+    }
+
+    public function interlink_hierarchy(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        return $this->success(array(
+            'map'     => PCM_SEO_Interlinks::parent_map((int) $user->id, 0),
+            'anchors' => PCM_SEO_Interlinks::anchors_map((int) $user->id, 0),
+        ));
+    }
+
+    public function interlink_set_anchors(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user   = $this->get_current_pcm_user();
+        $params = $request->get_json_params() ?: array();
+        $post   = absint($params['postId'] ?? 0);
+
+        if (!current_user_can('edit_post', $post)) {
+            return new WP_Error('pcm_forbidden', __('You cannot edit that page.', 'power-creatives'), array('status' => 403));
+        }
+
+        $result = PCM_SEO_Interlinks::set_anchors(
+            (int) $user->id,
+            0,
+            $post,
+            array_map('sanitize_text_field', (array) ($params['anchors'] ?? array()))
+        );
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('anchors' => PCM_SEO_Interlinks::anchors_map((int) $user->id, 0)));
+    }
+
+    public function interlink_set_parent(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user   = $this->get_current_pcm_user();
+        $params = $request->get_json_params() ?: array();
+        $post   = absint($params['postId'] ?? 0);
+
+        if (!current_user_can('edit_post', $post)) {
+            return new WP_Error('pcm_forbidden', __('You cannot edit that page.', 'power-creatives'), array('status' => 403));
+        }
+
+        $result = PCM_SEO_Interlinks::set_parent((int) $user->id, 0, $post, absint($params['parentId'] ?? 0));
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('map' => PCM_SEO_Interlinks::parent_map((int) $user->id, 0)));
+    }
+
+    public function interlink_propose(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user   = $this->get_current_pcm_user();
+        $params = $request->get_json_params() ?: array();
+        $rows   = $this->interlink_rows_from($params);
+        $map    = PCM_SEO_Interlinks::parent_map((int) $user->id, 0);
+
+        // Only pages actually IN the hierarchy need their body read.
+        $ids = array_values(array_unique(array_merge(array_keys($map), array_map('intval', array_values($map)))));
+
+        return $this->success(array(
+            'proposals' => PCM_SEO_Interlinks::propose(
+                $rows,
+                PCM_SEO_Interlinks::bodies_local($ids),
+                $map,
+                array(
+                    'directions' => $this->interlink_directions_from($params),
+                    'anchors'    => PCM_SEO_Interlinks::anchors_map((int) $user->id, 0),
+                )
+            ),
+        ));
+    }
+
+    public function interlink_apply(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $params = $request->get_json_params() ?: array();
+        $source = absint($params['sourceId'] ?? 0);
+
+        if (!current_user_can('edit_post', $source)) {
+            return new WP_Error('pcm_forbidden', __('You cannot edit that page.', 'power-creatives'), array('status' => 403));
+        }
+
+        $result = PCM_SEO_Interlinks::apply_local(
+            $source,
+            esc_url_raw((string) ($params['url'] ?? '')),
+            sanitize_text_field((string) ($params['anchor'] ?? ''))
+        );
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
+    // ── Interlinks on a connected site (manage_options) ─────────────────
+
+    public function remote_interlink_hierarchy(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        return $this->success(array(
+            'map'     => PCM_SEO_Interlinks::parent_map((int) $user->id, (int) $site->id),
+            'anchors' => PCM_SEO_Interlinks::anchors_map((int) $user->id, (int) $site->id),
+        ));
+    }
+
+    public function remote_interlink_set_anchors(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = PCM_SEO_Interlinks::set_anchors(
+            (int) $user->id,
+            (int) $site->id,
+            absint($params['postId'] ?? 0),
+            array_map('sanitize_text_field', (array) ($params['anchors'] ?? array()))
+        );
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('anchors' => PCM_SEO_Interlinks::anchors_map((int) $user->id, (int) $site->id)));
+    }
+
+    public function remote_interlink_set_parent(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $result = PCM_SEO_Interlinks::set_parent(
+            (int) $user->id,
+            (int) $site->id,
+            absint($params['postId'] ?? 0),
+            absint($params['parentId'] ?? 0)
+        );
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success(array('map' => PCM_SEO_Interlinks::parent_map((int) $user->id, (int) $site->id)));
+    }
+
+    public function remote_interlink_propose(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $rows   = $this->interlink_rows_from($params);
+        $map    = PCM_SEO_Interlinks::parent_map((int) $user->id, (int) $site->id);
+        $ids    = array_values(array_unique(array_merge(array_keys($map), array_map('intval', array_values($map)))));
+
+        // postId => type, so each body read hits the right REST route.
+        $types = array();
+        foreach ((array) ($params['types'] ?? array()) as $pid => $type) {
+            $types[absint($pid)] = sanitize_key((string) $type);
+        }
+
+        return $this->success(array(
+            'proposals' => PCM_SEO_Interlinks::propose(
+                $rows,
+                PCM_SEO_Interlinks::bodies_remote($site, $ids, $types),
+                $map,
+                array(
+                    'directions' => $this->interlink_directions_from($params),
+                    'anchors'    => PCM_SEO_Interlinks::anchors_map((int) $user->id, (int) $site->id),
+                )
+            ),
+        ));
+    }
+
+    public function remote_interlink_apply(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $user = $this->get_current_pcm_user();
+        $site = PCM_DB::get_site(absint($request->get_param('id')), (int) $user->id);
+        if (!$site) {
+            return $this->not_found('Site');
+        }
+        $params = $request->get_json_params() ?: array();
+        $type   = sanitize_key((string) ($params['type'] ?? 'page'));
+
+        $result = PCM_SEO_Interlinks::apply_remote(
+            $site,
+            absint($params['sourceId'] ?? 0),
+            $type,
+            esc_url_raw((string) ($params['url'] ?? '')),
+            sanitize_text_field((string) ($params['anchor'] ?? ''))
+        );
+        if ($result instanceof WP_Error) {
+            return $result;
+        }
+        return $this->success($result);
+    }
+
     public function restore_deleted_link(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
         $user   = $this->get_current_pcm_user();

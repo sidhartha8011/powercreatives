@@ -873,6 +873,55 @@ class PCM_Schema
             KEY idx_userId (userId)
         ) $charset_collate;";
         dbDelta($sql);
+
+        // ── SEO page hierarchy (v1.48.0) ──
+        // The pillar/cluster overlay behind the SEO table's hierarchy view and
+        // its interlink generator: one row per CHILD naming its parent page.
+        // Deliberately OUR OWN table rather than WordPress' post_parent —
+        // writing post_parent on a hierarchical type rewrites the permalink,
+        // which would 404 live client URLs. This is a planning layer only; the
+        // client's site is never restructured by it.
+        // It is also the only storage that works everywhere: the sibling
+        // grouping field `clusterLabel` lives in post meta, which a connected
+        // site with no active connector silently DROPS (see REMOTE_META_FIELDS
+        // in the SEO table) — a hub-side table has no such hole.
+        // siteId 0 = this site's own post. UNIQUE(child) is what makes the
+        // shape a tree: a page has at most one parent.
+        $sql = "CREATE TABLE {$prefix}seo_page_parents (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            userId bigint(20) unsigned NOT NULL,
+            siteId int(11) DEFAULT 0 NOT NULL,
+            postId bigint(20) unsigned NOT NULL,
+            parentPostId bigint(20) unsigned NOT NULL,
+            updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY uq_child (userId,siteId,postId),
+            KEY idx_parent (userId,siteId,parentPostId)
+        ) $charset_collate;";
+        dbDelta($sql);
+
+        // ── SEO page anchors (v1.49.0) ──
+        // User-defined anchor phrases per PAGE-AS-LINK-TARGET, consumed by the
+        // interlink generator ahead of primaryKeyword/title. Born from the
+        // dental site: the keyword was ENGLISH ("dental clinic gothenburg"),
+        // the copy SWEDISH, so no proposal could ever anchor — these are the
+        // phrases in the site's own language.
+        // Its own table, NOT a column on seo_page_parents: that table is keyed
+        // by CHILD, so a root pillar — the page that most needs anchors — has
+        // no row there to put a column on. Same overlay rationale as the
+        // hierarchy: hub-side, works with no connector, never touches the site.
+        // anchors = JSON array of phrases.
+        $sql = "CREATE TABLE {$prefix}seo_page_anchors (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            userId bigint(20) unsigned NOT NULL,
+            siteId int(11) DEFAULT 0 NOT NULL,
+            postId bigint(20) unsigned NOT NULL,
+            anchors text NOT NULL,
+            updatedAt datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY uq_page (userId,siteId,postId)
+        ) $charset_collate;";
+        dbDelta($sql);
     }
 
     /**
@@ -1343,6 +1392,8 @@ class PCM_Schema
             'seo_views',
             'seo_dynamic_rules',
             'seo_deleted_links',
+            'seo_page_parents',
+            'seo_page_anchors',
             'seo_tenants',
             'seo_hmac_nonces',
             'delivery_assignments',

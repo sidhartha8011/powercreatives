@@ -36,7 +36,7 @@ define('PCM_VERSION', '1.7.0');
 // Resolved ABOVE both to 1.45.0 so installs that already sat on OUR 1.43.0 (and would
 // therefore fail the `< 1.43.0` gate) still receive the Business Spine migration via
 // the idempotent catch-up step in PCM_Activator::maybe_upgrade().
-define('PCM_DB_VERSION', '1.47.0');
+define('PCM_DB_VERSION', '1.49.0');
 define('PCM_PLUGIN_FILE', __FILE__);
 define('PCM_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PCM_PLUGIN_URL', plugin_dir_url(__FILE__));

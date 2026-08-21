@@ -531,6 +531,60 @@ export const ROUTE_MAP: Record<string, RouteConfig> = {
         method: "POST",
         transform: (input: any) => ({ url: `seo/links/deleted/${input.ledgerId}/restore` }),
     },
+    // ── Interlinks: the pillar/cluster overlay + its generator ──
+    // Both scopes are routed here side by side deliberately — the SEO table
+    // picks local vs remote the same way it does for every other action
+    // (`isLocal ? … : …`), so the two must stay symmetric.
+    "seo.interlinkHierarchy": {
+        endpoint: "seo/interlinks",
+        method: "GET",
+        transform: () => ({ url: `seo/interlinks` }),
+    },
+    "seo.interlinkSetParent": {
+        endpoint: "seo/interlinks",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/interlinks/parent`, body: { postId: input.postId, parentId: input.parentId } }),
+    },
+    "seo.interlinkSetAnchors": {
+        endpoint: "seo/interlinks",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/interlinks/anchors`, body: { postId: input.postId, anchors: input.anchors } }),
+    },
+    "seo.interlinkPropose": {
+        endpoint: "seo/interlinks",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/interlinks/propose`, body: { rows: input.rows, directions: input.directions } }),
+    },
+    "seo.interlinkApply": {
+        endpoint: "seo/interlinks",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/interlinks/apply`, body: { sourceId: input.sourceId, url: input.url, anchor: input.anchor } }),
+    },
+    "seo.remoteInterlinkHierarchy": {
+        endpoint: "seo/sites",
+        method: "GET",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/interlinks` }),
+    },
+    "seo.remoteInterlinkSetParent": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/interlinks/parent`, body: { postId: input.postId, parentId: input.parentId } }),
+    },
+    "seo.remoteInterlinkSetAnchors": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/interlinks/anchors`, body: { postId: input.postId, anchors: input.anchors } }),
+    },
+    "seo.remoteInterlinkPropose": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/interlinks/propose`, body: { rows: input.rows, types: input.types, directions: input.directions } }),
+    },
+    "seo.remoteInterlinkApply": {
+        endpoint: "seo/sites",
+        method: "POST",
+        transform: (input: any) => ({ url: `seo/sites/${input.siteId}/interlinks/apply`, body: { sourceId: input.sourceId, type: input.type, url: input.url, anchor: input.anchor } }),
+    },
     // ── Heading editor (expandable rows) — local ──
     "seo.getHeadings": {
         endpoint: "seo/content",

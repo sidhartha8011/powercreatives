@@ -651,7 +651,11 @@ class PCM_SEO_Local
      *  (which many cache plugins SKIP vs. an editor save) shows on the live page. A bare Cloudflare
      *  proxy with no WP integration must be purged manually. Mirrors the connector's purge so the
      *  OWN site behaves like a connected one. */
-    private static function purge_post_caches(int $post_id): void
+    // public (was private, v1.48.0): the interlink applier writes post_content
+    // the same way the link editors do, so it must bust the same caches —
+    // otherwise a link is inserted and the live page keeps serving the old
+    // markup, which reads to the user as "it did nothing".
+    public static function purge_post_caches(int $post_id): void
     {
         if (function_exists('clean_post_cache'))            { clean_post_cache($post_id); }
         if (function_exists('rocket_clean_post'))           { rocket_clean_post($post_id); }            // WP Rocket
